@@ -86,6 +86,11 @@ jobs:
       - name: Build AppImage
         run: PYTHON=python3.12 packaging/build-appimage.sh
 
+      - name: Tests
+        run: |
+          build-appimage/venv/bin/pip install -q pytest
+          QT_QPA_PLATFORM=offscreen build-appimage/venv/bin/python -m pytest -q tests
+
       - name: Self-test of the AppImage
         run: APPIMAGE_EXTRACT_AND_RUN=1 ./MultiChat-x86_64.AppImage --selftest
 
