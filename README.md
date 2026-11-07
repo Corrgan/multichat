@@ -39,7 +39,24 @@ pip install -r requirements.txt
 python main.py
 ```
 
-## AppImage bauen
+## AppImage herunterladen
+
+Fertige AppImages gibt es unter [Releases](https://github.com/Corrgan/multichat/releases) – automatisch von GitHub Actions gebaut, mit SHA256-Prüfsumme. Sie laufen auf Systemen mit glibc ≥ 2.35 (z. B. Ubuntu 22.04+, Debian 12+, Fedora 36+, aktuelles Arch).
+
+```bash
+chmod +x MultiChat-x86_64.AppImage
+sha256sum -c MultiChat-x86_64.AppImage.sha256   # optional: Download prüfen
+./MultiChat-x86_64.AppImage
+```
+
+### Automatischer Build (GitHub Actions)
+
+Der Workflow [`.github/workflows/appimage.yml`](.github/workflows/appimage.yml) baut die AppImage in einem Ubuntu-22.04-Container und testet sie mit `--selftest`:
+
+- **Manuell:** Actions → *AppImage* → *Run workflow* → die AppImage liegt danach als Artefakt am Lauf (14 Tage).
+- **Release:** `APP_VERSION` in `logsetup.py` anheben, committen, dann `git tag v<Version> && git push origin v<Version>` – der Workflow erstellt das Release mit AppImage und Prüfsumme. Passt der Tag nicht zu `APP_VERSION`, bricht er mit einer Meldung ab.
+
+## AppImage selbst bauen
 
 ```bash
 cd multichat
@@ -47,7 +64,7 @@ cd multichat
 ./MultiChat-x86_64.AppImage
 ```
 
-Das Skript legt eine eigene Python-Umgebung in `build-appimage/` an, bündelt die App mit PyInstaller und packt sie mit `appimagetool` (wird automatisch geladen). Ergebnis: eine einzelne Datei mit ca. 90 MB.
+Das Skript legt eine eigene Python-Umgebung in `build-appimage/` an, bündelt die App mit PyInstaller und packt sie mit `appimagetool` (wird automatisch geladen). Ergebnis: eine einzelne Datei mit ca. 105 MB. Mit `PYTHON=python3.12 ./build-appimage.sh` wählst du einen bestimmten Python-Interpreter.
 
 - **libmpv** kommt standardmäßig vom System (siehe Installation). Das ist klein und passt sicher zu deinen Grafiktreibern. Mit `MPV_BUNDLE=1 ./build-appimage.sh` wird libmpv samt FFmpeg mitgebündelt (~270 MB, läuft dann ohne installiertes mpv).
 

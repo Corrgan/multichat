@@ -23,7 +23,8 @@ TOOL="$BUILD/appimagetool-$ARCH.AppImage"
 
 echo "==> Python-Umgebung"
 mkdir -p "$BUILD"
-[ -d "$BUILD/venv" ] || python3 -m venv "$BUILD/venv"
+# PYTHON=python3.12 ./build-appimage.sh nimmt einen bestimmten Interpreter (z. B. in der CI)
+[ -d "$BUILD/venv" ] || "${PYTHON:-python3}" -m venv "$BUILD/venv"
 # shellcheck disable=SC1091
 . "$BUILD/venv/bin/activate"
 pip install -q --upgrade pip
