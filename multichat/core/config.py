@@ -29,7 +29,7 @@ def load_config() -> dict:
         "extra_emotes": True,
         "debug_log": False,
         "language": "auto",
-        "video": {"enabled": True, "quality": {}, "audio": None, "sizes": [440, 860]},
+        "video": {"enabled": True, "quality": {}, "volume": {}, "audio": None, "sizes": [440, 860]},
         "overlay": {"enabled": False, "port": OVERLAY_PORT},
     }
     try:

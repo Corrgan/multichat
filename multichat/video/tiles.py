@@ -10,7 +10,7 @@ import time
 
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 from PyQt6.QtWidgets import (
-    QComboBox, QFrame, QHBoxLayout, QLabel, QSizePolicy, QStackedWidget, QStyle, QToolButton, QVBoxLayout, QWidget,
+    QComboBox, QFrame, QHBoxLayout, QLabel, QSizePolicy, QSlider, QStackedWidget, QStyle, QToolButton, QVBoxLayout, QWidget,
 )
 
 from ..core.i18n import _
@@ -29,9 +29,9 @@ ENDED_RETRY = 10
 
 class VideoTile(QFrame):
     audio_requested = pyqtSignal(object)
-    quality_changed = pyqtSignal()
+    quality_changed = pyqtSignal()  # also emitted when the volume changes (→ settings are saved)
 
-    def __init__(self, platform: str, name: str, color: str, quality: str, runner) -> None:
+    def __init__(self, platform: str, name: str, color: str, quality: str, runner, volume: int = 100) -> None:
         super().__init__()
         self.platform = platform
         self.runner = runner
@@ -63,6 +63,14 @@ class VideoTile(QFrame):
         self.audio_btn.setIcon(self.icon_off)
         self.audio_btn.setToolTip(_("Sound of this tile on/off (the others are muted)"))
         self.audio_btn.clicked.connect(lambda: self.audio_requested.emit(self))
+        self.volume = max(0, min(100, int(volume)))
+        self.vol = QSlider(Qt.Orientation.Horizontal)
+        self.vol.setRange(0, 100)
+        self.vol.setValue(self.volume)
+        self.vol.setFixedWidth(80)
+        self.vol.setToolTip(_("Volume: {percent} %").format(percent=self.volume))
+        self.vol.valueChanged.connect(self._on_volume)
+        self.vol.sliderReleased.connect(self.quality_changed)  # save once, not on every step
         reload_btn = QToolButton()
         reload_btn.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_BrowserReload))
         reload_btn.setToolTip(_("Reload stream"))
@@ -81,6 +89,7 @@ class VideoTile(QFrame):
         head.addWidget(self.status, 1)
         head.addWidget(self.qbox)
         head.addWidget(self.audio_btn)
+        head.addWidget(self.vol)
         head.addWidget(reload_btn)
         head.addWidget(self.stop_btn)
 
@@ -89,6 +98,7 @@ class VideoTile(QFrame):
         self.message.setWordWrap(True)
         self.message.setStyleSheet("background:#000; color:#777; font-size:13px")
         self.video = MpvWidget(platform, ytdl=platform == "youtube")
+        self._apply_volume()
         self.video.clicked.connect(lambda: self.audio_requested.emit(self))
         self.stack = QStackedWidget()
         self.stack.addWidget(self.message)
@@ -249,6 +259,19 @@ class VideoTile(QFrame):
         if self.value:
             self.start()
 
+    def _on_volume(self, value: int) -> None:
+        self.volume = value
+        self.vol.setToolTip(_("Volume: {percent} %").format(percent=value))
+        self._apply_volume()
+        if not self.vol.isSliderDown():  # wheel/keyboard: save right away
+            self.quality_changed.emit()
+
+    def _apply_volume(self) -> None:
+        try:
+            self.video.player.volume = self.volume
+        except Exception:  # noqa: BLE001
+            pass
+
     def set_muted(self, muted: bool) -> None:
         self.muted = muted
         try:
@@ -305,7 +328,8 @@ class VideoPanel(QWidget):
         self.empty.setStyleSheet("color:#888")
         lay.addWidget(self.empty, 1)
         for p, name, color in platforms:
-            tile = VideoTile(p, name, color, config.get("quality", {}).get(p, DEFAULT_QUALITY), runner)
+            tile = VideoTile(p, name, color, config.get("quality", {}).get(p, DEFAULT_QUALITY), runner,
+                             volume=(config.get("volume") or {}).get(p, 100))
             tile.audio_requested.connect(self.toggle_audio)
             tile.quality_changed.connect(self.changed)
             tile.setVisible(False)
@@ -338,7 +362,11 @@ class VideoPanel(QWidget):
             t.set_muted(p != self.audio)
 
     def state(self) -> dict:
-        return {"quality": {p: t.quality for p, t in self.tiles.items()}, "audio": self.audio}
+        return {
+            "quality": {p: t.quality for p, t in self.tiles.items()},
+            "volume": {p: t.volume for p, t in self.tiles.items()},
+            "audio": self.audio,
+        }
 
     def shutdown(self) -> None:
         for tile in self.tiles.values():

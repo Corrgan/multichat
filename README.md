@@ -113,7 +113,7 @@ docs/                 additional documentation
 - **Twitch:** channel name, e.g. `channelname`
 - **Kick:** channel name (slug), e.g. `channelname`
 - **YouTube:** channel, e.g. `@channelname`, `https://www.youtube.com/@channelname` or a `UC…` channel ID. The app checks every minute whether the channel is live, connects to the running stream automatically and waits for the next one after the stream ends. A video URL/ID still works if you want a specific stream.
-- **Connect / Disconnect** starts or stops all chats and video tiles.
+- **Connect / Disconnect** starts or stops all chats and video tiles; the ▶/■ button next to each channel connects or disconnects just that one (chat and video).
 - **Show:** checkboxes hide or show platforms in the chat view.
 - Each message starts with the platform's icon (the website's favicon, as in a browser tab). If it can't be loaded, a coloured abbreviation (TW/KI/YT) is shown instead.
 - **Click on a name** to open the menu: mention, copy text, delete message, timeout (1 min / 10 min / 1 h), ban.
@@ -138,6 +138,7 @@ Chat on the left, one video tile per configured channel on the right. They start
 - **Audio:** only one tile plays sound at a time (blue border). Click into the video or on the speaker icon to move the sound there; a second click mutes everything.
 - **Quality** per tile: 360p, 480p (default), 720p or Source. Three streams at 480p need about 5–8 Mbit/s in total.
 - **Offline:** the tile shows "offline" and checks again every minute. After a stream ends it keeps looking; for YouTube this also finds the channel's next live stream.
+- **Sound:** the speaker button (or a click on the video) picks the tile you hear; the slider next to it sets that tile's volume (saved).
 - **Reload** (arrow icon) if a stream hangs; **stop/start** (■/▶) pauses just that tile.
 - **View → Video tiles** hides the column and stops the streams (saves bandwidth). The splitter between chat and videos can be dragged.
 - Videos run a few seconds behind the live signal, just like the browser player.

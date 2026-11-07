@@ -91,7 +91,26 @@ def test_connect_disconnect(window, app):
     assert w.status_labels["twitch"].full == "connected (#examplechan)"
     w.disconnect_all()
     app.processEvents()
-    assert w.readers == [] and w.status_labels["twitch"].full == "disconnected"
+    assert w.readers == {} and w.status_labels["twitch"].full == "disconnected"
+
+
+def test_single_platform_connect_disconnect(window, app):
+    w = window
+    w.inputs["twitch"].setText("examplechan")
+    w.inputs["kick"].setText("examplekick")
+    w.inputs["youtube"].setText("")
+    w.connect_all()
+    assert set(w.readers) == {"twitch", "kick"}
+    assert w.row_buttons["youtube"].isEnabled() is False  # nothing entered
+    w.toggle_platform("kick")  # disconnect only Kick
+    app.processEvents()
+    assert set(w.readers) == {"twitch"} and w.status_labels["kick"].full == "disconnected"
+    assert w.connect_btn.text() == "Reconnect" and w.disconnect_btn.isEnabled()
+    old_gen = w.conn_gen["kick"]
+    w.toggle_platform("kick")  # and back
+    assert set(w.readers) == {"twitch", "kick"} and w.conn_gen["kick"] == old_gen + 1
+    w.disconnect_all()
+    assert w.readers == {} and not w.disconnect_btn.isEnabled()
 
 
 @pytest.mark.parametrize("lang,view,help_", [("en", "View", "Help"), ("de", "Ansicht", "Hilfe"),

@@ -16,7 +16,7 @@ import aiohttp
 from PyQt6.QtCore import QObject, QProcess, Qt, QTimer, QUrl, pyqtSignal
 from PyQt6.QtGui import QActionGroup, QCursor, QDesktopServices, QImageReader
 from PyQt6.QtWidgets import (
-    QApplication, QCheckBox, QComboBox, QDialog, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMenu, QMessageBox, QPushButton, QSplitter,
+    QApplication, QCheckBox, QComboBox, QDialog, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMenu, QMessageBox, QPushButton, QSplitter, QStyle, QToolButton,
     QVBoxLayout, QWidget,
 )
 
@@ -86,8 +86,8 @@ class MainWindow(QMainWindow):
         qt_formats = {bytes(f).decode().lower() for f in QImageReader.supportedImageFormats()}
         # gif before png: 7TV only offers GIF (not PNG) for animated emotes when WebP is unavailable
         self.emotes = EmoteStore(lambda: self.session, [f for f in ("webp", "gif", "png") if f in qt_formats])
-        self.readers: list = []
-        self.conn_gen = 0  # increases with every connect/disconnect
+        self.readers: dict = {}  # platform → running chat reader (concurrent future)
+        self.conn_gen = {p: 0 for p in PLATFORMS}  # increases with every (dis)connect of a platform
         self.messages: OrderedDict[int, ChatMessage] = OrderedDict()
         self._incoming: list[ChatMessage] = []
         self._flush_timer = QTimer(self, singleShot=True, interval=FLUSH_MS)
@@ -99,6 +99,7 @@ class MainWindow(QMainWindow):
         self._build_menus()
         self.apply_config()
         self.refresh_accounts()
+        self._update_conn_buttons()
 
     # ---- Configuration --------------------------------------------------- #
     def load_config(self) -> dict:
@@ -149,6 +150,9 @@ class MainWindow(QMainWindow):
             "youtube": QLineEdit(placeholderText=_("@channel – or video URL")),
         }
         self.status_labels = {p: CopyLabel("–", max_chars=28) for p in PLATFORMS}
+        self.row_buttons: dict[str, QToolButton] = {}
+        self.icon_play = self.style().standardIcon(QStyle.StandardPixmap.SP_MediaPlay)
+        self.icon_stop = self.style().standardIcon(QStyle.StandardPixmap.SP_MediaStop)
         grid = QGridLayout()
         for row, p in enumerate(PLATFORMS):
             grid.addWidget(QLabel(f"<b style='color:{BADGES[p][0]}'>{NAMES[p]}</b>"), row, 0)
@@ -157,7 +161,13 @@ class MainWindow(QMainWindow):
             lbl.setStyleSheet("color:#888")
             lbl.setFixedWidth(170)
             grid.addWidget(lbl, row, 2)
+            btn = QToolButton()
+            btn.setToolTip(_("Connect / disconnect this channel"))
+            btn.clicked.connect(lambda _checked=False, p=p: self.toggle_platform(p))
+            self.row_buttons[p] = btn
+            grid.addWidget(btn, row, 3)
             self.inputs[p].returnPressed.connect(self.connect_all)
+            self.inputs[p].textChanged.connect(self._update_conn_buttons)
         grid.setColumnStretch(1, 1)
 
         self.connect_btn = QPushButton(_("Connect"))
@@ -165,7 +175,6 @@ class MainWindow(QMainWindow):
         self.disconnect_btn = QPushButton(_("Disconnect"))
         self.disconnect_btn.setToolTip(_("Stop all chats and videos"))
         self.disconnect_btn.clicked.connect(self.disconnect_all)
-        self.disconnect_btn.setEnabled(False)
         conn_row = QHBoxLayout()
         conn_row.addWidget(self.connect_btn, 3)
         conn_row.addWidget(self.disconnect_btn, 1)
@@ -354,7 +363,7 @@ class MainWindow(QMainWindow):
             if self.width() < 900:
                 self.resize(1300, max(self.height(), 820))
             if self.readers:  # already connected → start the streams right away
-                self.video.set_sources(self._channels())
+                self.video.set_sources(self._connected_channels())
         else:
             self.config["video"]["sizes"] = self.splitter.sizes()
             self.video.stop_all()  # saves bandwidth
@@ -374,6 +383,10 @@ class MainWindow(QMainWindow):
     def _channels(self) -> dict[str, str]:
         return {p: self.normalize_channel(p, e.text()) or "" for p, e in self.inputs.items()}
 
+    def _connected_channels(self) -> dict[str, str]:
+        """Channels of the connected platforms – only those get a video tile."""
+        return {p: (v if p in self.readers else "") for p, v in self._channels().items()}
+
     def toggle_on_top(self, on: bool) -> None:
         visible = self.isVisible()
         self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, on)
@@ -381,53 +394,79 @@ class MainWindow(QMainWindow):
             self.show()
 
     # ---- Connecting ------------------------------------------------------ #
-    def _stop_readers(self) -> None:
-        self.conn_gen += 1  # ignore status messages from the old connections from now on
-        for t in self.readers:
-            t.cancel()
-        self.readers.clear()
+    def _stop_reader(self, p: str) -> None:
+        self.conn_gen[p] += 1  # ignore status messages from the old connection from now on
+        fut = self.readers.pop(p, None)
+        if fut:
+            fut.cancel()
+
+    def _emit(self, ev) -> None:
+        (self.bridge.message if isinstance(ev, ChatMessage) else self.bridge.deletion).emit(ev)
+
+    def connect_platform(self, p: str) -> None:
+        """(Re)connects the chat – and the video tile, if shown – of one platform."""
+        self._stop_reader(p)
+        gen = self.conn_gen[p]
+        value = self.normalize_channel(p, self.inputs[p].text())
+        if value is None:
+            self.set_status(p, _("invalid channel name"))
+        elif not value:
+            self.set_status(p, "–")
+        else:
+            def status(platform: str, template: str, **kw) -> None:
+                # readers pass an English template – logged in English, shown translated
+                log.info("[%s] %s", platform, template.format(**kw))
+                self.bridge.status.emit(platform, _(template).format(**kw), gen)
+
+            runners = {"twitch": run_twitch, "kick": run_kick, "youtube": run_youtube}
+            coro = runners[p](value, self._emit, status, self.emotes)
+            self.readers[p] = asyncio.run_coroutine_threadsafe(coro, self.loop)
+        if self.video_action.isChecked():
+            self.video.set_sources(self._connected_channels())
+        self._update_conn_buttons()
+
+    def disconnect_platform(self, p: str) -> None:
+        if p not in self.readers:
+            return
+        self._stop_reader(p)
+        self.set_status(p, _("disconnected"))
+        self.video.set_sources(self._connected_channels())  # stops and hides its tile
+        log.info("%s: connection closed", NAMES[p])
+        self._update_conn_buttons()
+
+    def toggle_platform(self, p: str) -> None:
+        if p in self.readers:
+            self.disconnect_platform(p)
+        else:
+            self.save_config()
+            self.connect_platform(p)
 
     def connect_all(self) -> None:
-        self._stop_readers()
         self.save_config()
-        gen = self.conn_gen
-
-        def emit(ev) -> None:
-            (self.bridge.message if isinstance(ev, ChatMessage) else self.bridge.deletion).emit(ev)
-
-        def status(platform: str, template: str, **kw) -> None:
-            # readers pass an English template – logged in English, shown translated
-            log.info("[%s] %s", platform, template.format(**kw))
-            self.bridge.status.emit(platform, _(template).format(**kw), gen)
-
-        runners = {"twitch": run_twitch, "kick": run_kick, "youtube": run_youtube}
-        for p, edit in self.inputs.items():
-            value = self.normalize_channel(p, edit.text())
-            if value is None:
-                self.set_status(p, _("invalid channel name"))
-                continue
-            if not value:
-                self.set_status(p, "–")
-                continue
-            coro = runners[p](value, emit, status, self.emotes)
-            self.readers.append(asyncio.run_coroutine_threadsafe(coro, self.loop))
-        self.connect_btn.setText(_("Reconnect"))
-        self.disconnect_btn.setEnabled(bool(self.readers))
-        if self.video_action.isChecked():
-            self.video.set_sources(self._channels())
+        for p in PLATFORMS:
+            self.connect_platform(p)
 
     def disconnect_all(self) -> None:
-        self._stop_readers()
-        self.video.stop_all()
         for p in PLATFORMS:
+            self._stop_reader(p)
             self.set_status(p, _("disconnected") if self.inputs[p].text().strip() else "–")
-        self.connect_btn.setText(_("Connect"))
-        self.disconnect_btn.setEnabled(False)
+        self.video.stop_all()
+        self._update_conn_buttons()
         log.info("All connections closed")
         self.statusBar().showMessage(_("Disconnected – chats and videos stopped"), 5000)
 
+    def _update_conn_buttons(self) -> None:
+        if not hasattr(self, "connect_btn"):
+            return
+        self.connect_btn.setText(_("Reconnect") if self.readers else _("Connect"))
+        self.disconnect_btn.setEnabled(bool(self.readers))
+        for p, btn in self.row_buttons.items():
+            on = p in self.readers
+            btn.setIcon(self.icon_stop if on else self.icon_play)
+            btn.setEnabled(on or bool(self.inputs[p].text().strip()))
+
     def _reader_status(self, platform: str, text: str, gen: int) -> None:
-        if gen == self.conn_gen:  # drop messages from a connection that was already closed
+        if gen == self.conn_gen[platform]:  # drop messages from a connection that was already closed
             self.set_status(platform, text)
 
     def set_status(self, platform: str, text: str) -> None:
@@ -677,7 +716,7 @@ class MainWindow(QMainWindow):
     # ---- Shutdown -------------------------------------------------------- #
     def closeEvent(self, event) -> None:  # noqa: N802
         self.save_config()
-        for t in self.readers:
+        for t in self.readers.values():
             t.cancel()
         self.video.shutdown()
 
