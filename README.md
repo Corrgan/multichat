@@ -207,7 +207,7 @@ The overlay only answers requests from this computer (`127.0.0.1` / `localhost`)
   - channel emotes: Twitch channels get 7TV + BTTV + FFZ, Kick channels 7TV (if the streamer has linked a 7TV account)
   - for identical names: channel before global, 7TV before BTTV before FFZ
   - channel emotes are loaded when connecting, so the first seconds of chat may still show text
-  - animated emotes are still images in the app window and animated in the OBS overlay
+  - animated emotes (GIF/WebP) play in the app window and in the OBS overlay
   - if Qt lacks the WebP plugin (some distribution packages), the app uses PNG/GIF; otherwise install `qt6-image-formats-plugins` or use the pip package
 - On Wayland, **Always on top** may be ignored depending on the compositor. The video tiles work on X11 and Wayland.
 - If the app doesn't start on X11 ("xcb platform plugin"): `sudo apt install libxcb-cursor0`.

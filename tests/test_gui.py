@@ -51,13 +51,16 @@ def test_chat_and_moderation_menu(window):
     w.add_message(ChatMessage("youtube", "vid", "Carol", "greetings", msg_id="y1", user_id="UC3"))
     troll = ChatMessage("twitch", "chan", "Troll", "spam spam", msg_id="m2", user_id="9")
     w.add_message(troll)
+    w._flush_messages()  # messages are shown in batches
     alice, bob = list(w.messages.values())[:2]
     assert "<b>world</b>" in w.view.toPlainText()  # HTML in messages is shown as text
     w.apply_deletion(Deletion("twitch", user_id="9"))
     assert troll.deleted and not alice.deleted
     w.filters["kick"].setChecked(False)
+    w._render_now()
     assert "Bob" not in w.view.toPlainText()
     w.filters["kick"].setChecked(True)
+    w._render_now()
     assert "Bob" in w.view.toPlainText()
 
     shown = []
@@ -125,3 +128,24 @@ def test_send_403_explains_restrictions(window, monkeypatch):
     with pytest.raises(ApiError) as e:
         asyncio.run(window.send_to("kick", "examplechan", "hi"))
     assert e.value.status == 403 and "followers" in str(e.value) and "Forbidden" in str(e.value)
+
+
+def test_batching_keeps_order_and_limit(window):
+    w = window
+    for i in range(1200):
+        w.add_message(ChatMessage("twitch", "chan", f"u{i}", f"m{i}"))
+    assert not w.messages  # nothing rendered before the flush
+    w._flush_messages()
+    assert len(w.messages) == main_window.MAX_MESSAGES
+    users = [m.user for m in w.messages.values()]
+    assert users[0] == "u200" and users[-1] == "u1199"
+
+
+def test_channel_input_normalisation():
+    n = main_window.MainWindow.normalize_channel
+    assert n("twitch", "https://www.twitch.tv/ExampleChan") == "examplechan"
+    assert n("twitch", "#examplechan") == "examplechan"
+    assert n("kick", "kick.com/example-chan") == "example-chan"
+    assert n("twitch", "bad name\r\nPRIVMSG #x :hi") is None
+    assert n("kick", "../../api") is None
+    assert n("youtube", "@examplechannel") == "@examplechannel"

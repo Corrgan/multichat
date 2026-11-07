@@ -13,7 +13,7 @@ from pathlib import Path
 
 import aiohttp
 
-from PyQt6.QtCore import QObject, QProcess, Qt, QUrl, pyqtSignal
+from PyQt6.QtCore import QObject, QProcess, Qt, QTimer, QUrl, pyqtSignal
 from PyQt6.QtGui import QActionGroup, QCursor, QDesktopServices, QImageReader
 from PyQt6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDialog, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMenu, QMessageBox, QPushButton, QSplitter,
@@ -23,6 +23,7 @@ from PyQt6.QtWidgets import (
 from ..accounts import ApiError, KickAccount, SecretStore, TwitchAccount, YouTubeAccount
 from ..accounts.store import choose_backend
 from ..chat import ChatMessage, Deletion, EmoteStore, run_kick, run_twitch, run_youtube
+from ..chat.models import kick_channel, twitch_channel
 from ..core import i18n
 from ..core.config import CONF_DIR, CONFIG, OVERLAY_PORT, load_config, load_config_apps, write_private
 from ..core.constants import BADGES, LOGIN_DOCS, NAMES, PLATFORMS
@@ -39,6 +40,8 @@ log = logging.getLogger("multichat")
 
 TIMEOUTS = [(60, "Timeout 1 min"), (600, "Timeout 10 min"), (3600, "Timeout 1 h")]
 MAX_MESSAGES = 1000
+FLUSH_MS = 100  # incoming messages are shown in batches – busy chats send hundreds per second
+MAX_INPUT = 500  # longest message the platforms accept
 
 
 class Bridge(QObject):
@@ -81,10 +84,16 @@ class MainWindow(QMainWindow):
         self.accounts = {"twitch": TwitchAccount(*args), "kick": KickAccount(*args), "youtube": YouTubeAccount(*args)}
         self.overlay = OverlayServer(self.loop)
         qt_formats = {bytes(f).decode().lower() for f in QImageReader.supportedImageFormats()}
-        self.emotes = EmoteStore(lambda: self.session, [f for f in ("webp", "png", "gif") if f in qt_formats])
+        # gif before png: 7TV only offers GIF (not PNG) for animated emotes when WebP is unavailable
+        self.emotes = EmoteStore(lambda: self.session, [f for f in ("webp", "gif", "png") if f in qt_formats])
         self.readers: list = []
         self.conn_gen = 0  # increases with every connect/disconnect
         self.messages: OrderedDict[int, ChatMessage] = OrderedDict()
+        self._incoming: list[ChatMessage] = []
+        self._flush_timer = QTimer(self, singleShot=True, interval=FLUSH_MS)
+        self._flush_timer.timeout.connect(self._flush_messages)
+        self._render_timer = QTimer(self, singleShot=True, interval=150)  # coalesces full re-renders
+        self._render_timer.timeout.connect(self._render_now)
 
         self._build_ui()
         self._build_menus()
@@ -180,6 +189,7 @@ class MainWindow(QMainWindow):
         send = QHBoxLayout()
         self.target = QComboBox()
         self.input = QLineEdit()
+        self.input.setMaxLength(MAX_INPUT)
         self.input.returnPressed.connect(self.send)
         self.send_btn = QPushButton(_("Send"))
         self.send_btn.clicked.connect(self.send)
@@ -295,6 +305,7 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(_("Error: {error}").format(error=exc), 12000)
             if on_error:
                 on_error()
+            self.refresh_accounts()  # e.g. logged out after a rejected refresh token
             return
         if label:
             self.statusBar().showMessage(f"{label} ✓", 6000)
@@ -349,8 +360,19 @@ class MainWindow(QMainWindow):
             self.video.stop_all()  # saves bandwidth
             self.video.setVisible(False)
 
+    @staticmethod
+    def normalize_channel(platform: str, value: str) -> str | None:
+        """Channel as the platform expects it (name from a URL, lower case); None if invalid."""
+        value = value.strip()
+        if not value or platform == "youtube":
+            return value
+        try:
+            return twitch_channel(value) if platform == "twitch" else kick_channel(value)
+        except ValueError:
+            return None
+
     def _channels(self) -> dict[str, str]:
-        return {p: e.text().strip() for p, e in self.inputs.items()}
+        return {p: self.normalize_channel(p, e.text()) or "" for p, e in self.inputs.items()}
 
     def toggle_on_top(self, on: bool) -> None:
         visible = self.isVisible()
@@ -380,7 +402,10 @@ class MainWindow(QMainWindow):
 
         runners = {"twitch": run_twitch, "kick": run_kick, "youtube": run_youtube}
         for p, edit in self.inputs.items():
-            value = edit.text().strip()
+            value = self.normalize_channel(p, edit.text())
+            if value is None:
+                self.set_status(p, _("invalid channel name"))
+                continue
             if not value:
                 self.set_status(p, "–")
                 continue
@@ -420,26 +445,44 @@ class MainWindow(QMainWindow):
         bar.setValue(bar.maximum())
 
     def add_message(self, msg: ChatMessage) -> None:
-        self.messages[msg.uid] = msg
+        """Queues a message; _flush_messages shows the batch (one layout pass instead of one per message)."""
+        self._incoming.append(msg)
+        if not self._flush_timer.isActive():
+            self._flush_timer.start()
+
+    def _flush_messages(self) -> None:
+        batch, self._incoming = self._incoming[-MAX_MESSAGES:], []
+        if not batch:
+            return
+        for msg in batch:
+            self.messages[msg.uid] = msg
+            self.overlay.publish(message_payload(msg))
         while len(self.messages) > MAX_MESSAGES:
             self.messages.popitem(last=False)
-        self.overlay.publish(message_payload(msg))
-        if self.filters[msg.platform].isChecked():
-            at_bottom = self._at_bottom()
-            self.view.append(self.msg_html(msg))
-            if at_bottom:
-                self._scroll_bottom()
+        if self._render_timer.isActive():
+            return  # a full re-render is due anyway
+        shown = [m for m in batch if self.filters[m.platform].isChecked()]
+        if not shown:
+            return
+        at_bottom = self._at_bottom()
+        self.view.append_many([self.msg_html(m) for m in shown])
+        if at_bottom:
+            self._scroll_bottom()
 
     def render_all(self) -> None:
+        """Requests a full re-render (filters, deletions, failed images); coalesced."""
+        self._render_timer.start()
+
+    def _render_now(self) -> None:
+        self._flush_messages()
         at_bottom = self._at_bottom()
         self.view.clear()
-        for m in self.messages.values():
-            if self.filters[m.platform].isChecked():
-                self.view.append(self.msg_html(m))
+        self.view.append_many([self.msg_html(m) for m in self.messages.values() if self.filters[m.platform].isChecked()])
         if at_bottom:
             self._scroll_bottom()
 
     def apply_deletion(self, ev: Deletion) -> None:
+        self._flush_messages()  # the message to delete may still be queued
         changed = False
         for m in self.messages.values():
             if m.platform != ev.platform or m.deleted:
@@ -452,6 +495,7 @@ class MainWindow(QMainWindow):
             self.render_all()
 
     def clear_chat(self) -> None:
+        self._incoming.clear()
         self.messages.clear()
         self.view.clear()
 
@@ -530,7 +574,7 @@ class MainWindow(QMainWindow):
         plats = [target] if target else [p for p in PLATFORMS if self.accounts[p].logged_in]
         sent = False
         for p in plats:
-            channel = self.inputs[p].text().strip()
+            channel = self.normalize_channel(p, self.inputs[p].text())
             if not channel:
                 self.statusBar().showMessage(_("No {platform} channel entered").format(platform=NAMES[p]), 6000)
                 continue

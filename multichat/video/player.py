@@ -141,6 +141,7 @@ class MpvWidget(QOpenGLWidget):
             terminal=False,
             cache=True,
             demuxer_max_bytes="32MiB",
+            demuxer_max_back_bytes="4MiB",  # no seeking back in live streams – default is 50 MiB per tile
             mute=True,
             user_agent=DEFAULT_UA,
             loglevel="warn",
