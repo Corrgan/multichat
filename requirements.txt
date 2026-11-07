@@ -1,0 +1,8 @@
+PyQt6>=6.5
+websockets>=12.0
+aiohttp>=3.9
+pytchat>=0.5.5
+curl_cffi>=0.7
+requests>=2.31
+mpv>=1.0.5
+yt-dlp[default]>=2025.11.12

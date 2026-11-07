@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=MultiChat
+Comment=Twitch-, Kick- und YouTube-Chat in einem Fenster
+Exec=multichat
+Icon=multichat
+Categories=Network;Chat;
+Terminal=false
+StartupWMClass=multichat
