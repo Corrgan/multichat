@@ -17,7 +17,7 @@ import threading
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
-APP_VERSION = "0.9.1"
+APP_VERSION = "0.10"
 
 LOG_DIR = Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local" / "state") / "multichat"
 LOG_FILE = LOG_DIR / "multichat.log"
@@ -46,6 +46,7 @@ def redact(text: str) -> str:
 
 class RedactingFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:
+        record.levelname = logging.getLevelName(record.levelno).upper()  # Streamlink benennt Stufen klein um
         return redact(super().format(record))
 
 

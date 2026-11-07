@@ -21,6 +21,14 @@ from aiohttp import WSMsgType, web
 
 from clients import ChatMessage, Deletion
 
+# Plattform-Symbole: die Favicons der Seiten, zur Laufzeit geladen (wie im Browser-Tab).
+# Erst die Seite selbst, dann Googles Favicon-Dienst; schlägt beides fehl → Text-Kürzel.
+FAVICONS = {
+    "twitch": ["https://www.twitch.tv/favicon.ico", "https://www.google.com/s2/favicons?domain=twitch.tv&sz=32"],
+    "kick": ["https://kick.com/favicon.ico", "https://www.google.com/s2/favicons?domain=kick.com&sz=32"],
+    "youtube": ["https://www.youtube.com/favicon.ico", "https://www.google.com/s2/favicons?domain=youtube.com&sz=32"],
+}
+
 OVERLAY_HTML = r"""<!doctype html>
 <html><head><meta charset="utf-8"><title>MultiChat Overlay</title>
 <style>
@@ -35,6 +43,7 @@ body{font:600 var(--size)/1.4 "Inter","Segoe UI","Noto Sans",sans-serif;color:#f
   border-radius:4px;font-size:.62em;line-height:1.5;color:#000;text-shadow:none;vertical-align:.15em}
 .u{margin-right:.15em}
 img.e{height:1.5em;vertical-align:middle;margin:-.25em 0}
+img.pi{width:1em;height:1em;vertical-align:-.12em;margin-right:.35em;filter:drop-shadow(0 0 2px rgba(0,0,0,.7))}
 @keyframes in{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
 </style></head><body><div id="chat"></div>
 <script>
@@ -44,13 +53,22 @@ const show=(q.get("platforms")||"twitch,kick,youtube").split(",");
 const badges=q.get("badges")!=="0";
 if(q.get("size"))document.documentElement.style.setProperty("--size",q.get("size")+"px");
 const B={twitch:["#9146FF","TW"],kick:["#53FC18","KI"],youtube:["#FF0000","YT"]};
+const ICONS=__FAVICONS__;
+function badge(p){
+  const urls=[...(ICONS[p]||[])];
+  const txt=()=>{const b=document.createElement("span");b.className="b";
+    b.style.background=B[p][0];b.textContent=B[p][1];return b;};
+  if(!urls.length)return txt();
+  const i=new Image();i.className="pi";i.alt=B[p][1];
+  i.onerror=()=>{urls.length?(i.src=urls.shift()):i.replaceWith(txt());};
+  i.src=urls.shift();return i;
+}
 const chat=document.getElementById("chat");
 function add(m){
   if(!show.includes(m.platform))return;
   const d=document.createElement("div");d.className="m";
   d.dataset.p=m.platform;d.dataset.mid=m.msg_id||"";d.dataset.uid=m.user_id||"";
-  if(badges){const b=document.createElement("span");b.className="b";
-    b.style.background=B[m.platform][0];b.textContent=B[m.platform][1];d.append(b);}
+  if(badges){d.append(badge(m.platform));}
   const u=document.createElement("span");u.className="u";u.style.color=m.color||"#b9a3e3";
   u.textContent=m.user+":";d.append(u," ");
   for(const p of m.parts){
@@ -128,7 +146,8 @@ class OverlayServer:
         self.runner = None
 
     async def _index(self, request: web.Request) -> web.Response:
-        return web.Response(text=OVERLAY_HTML, content_type="text/html")
+        page = OVERLAY_HTML.replace("__FAVICONS__", json.dumps(FAVICONS))
+        return web.Response(text=page, content_type="text/html")
 
     async def _ws(self, request: web.Request) -> web.WebSocketResponse:
         ws = web.WebSocketResponse(heartbeat=30)

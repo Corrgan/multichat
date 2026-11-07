@@ -239,6 +239,9 @@ class VideoTile(QFrame):
         self.gen = 0
         self.state = "idle"
         self.muted = True
+        self._closer = None  # beendet den laufenden Streamlink-Datenstrom
+        self._ads = None
+        self._title = ""
         self.setFrameShape(QFrame.Shape.StyledPanel)
 
         style = self.style()
@@ -309,9 +312,27 @@ class VideoTile(QFrame):
             self.value = value
             self.start() if value else self.stop()
 
+    def _release(self) -> None:
+        """Laufenden Streamlink-Datenstrom beenden (und nie geladene Pipes schließen)."""
+        if self._closer:
+            try:
+                self._closer()
+            except Exception:  # noqa: BLE001
+                pass
+        self._closer = None
+        self._ads = None
+        pending = self.video._pending
+        if pending and pending[0].startswith("fdclose://"):
+            try:
+                os.close(int(pending[0].split("//", 1)[1]))
+            except (OSError, ValueError):
+                pass
+        self.video._pending = None
+
     def start(self) -> None:
         self.retry.stop()
         self.watch.stop()
+        self._release()
         self.gen += 1
         if not self.value:
             return
@@ -328,7 +349,7 @@ class VideoTile(QFrame):
         self.retry.stop()
         self.watch.stop()
         self.state = "idle"
-        self.video._pending = None
+        self._release()
         try:
             self.video.player.command("stop")
         except Exception:  # noqa: BLE001
@@ -354,9 +375,16 @@ class VideoTile(QFrame):
             return "error", str(e)
 
     def _resolved(self, gen: int, res) -> None:
-        if gen != self.gen:
-            return  # inzwischen neu gestartet
         kind, data = res
+        if gen != self.gen:  # inzwischen neu gestartet → Ergebnis verwerfen
+            if kind == "ok" and data.closer:
+                data.closer()
+                if data.pipe_fd is not None:
+                    try:
+                        os.close(data.pipe_fd)
+                    except OSError:
+                        pass
+            return
         log.info("Video %s: %s%s", self.platform, kind, f" – {data}" if kind == "error" else "")
         if kind == "ok":
             p = self.video.player
@@ -367,6 +395,7 @@ class VideoTile(QFrame):
             if data.ytdl_format:
                 p["ytdl-format"] = data.ytdl_format
             self.stack.setCurrentIndex(1)
+            self._closer, self._ads, self._title = data.closer, data.ads, data.title
             self.video.play(data.url, **opts)
             self.state = "playing"
             self.set_status(f"live: {data.title}" if data.title else "live")
@@ -383,6 +412,14 @@ class VideoTile(QFrame):
     def _check(self) -> None:
         if self.state != "playing":
             return
+        if self._ads is not None:  # Twitch: übersprungene Werbung anzeigen statt stummem Standbild
+            ad_text = "live – Werbepause wird übersprungen, gleich geht's weiter …"
+            if self._ads.active:
+                if self.status.full != ad_text:
+                    log.info("Video %s: Werbepause wird übersprungen", self.platform)
+                self.set_status(ad_text)
+            elif self.status.full == ad_text:
+                self.set_status(f"live: {self._title}" if self._title else "live")
         try:
             idle = self.video.player.idle_active
         except Exception:  # noqa: BLE001
@@ -430,6 +467,7 @@ class VideoTile(QFrame):
         self.gen += 1
         self.retry.stop()
         self.watch.stop()
+        self._release()
         self.video.shutdown()
 
 

@@ -35,7 +35,7 @@ echo "==> PyInstaller"
 MPV_PY="$(python3 -c 'import mpv; print(mpv.__file__)')"
 pyinstaller --noconfirm --clean --windowed --name multichat \
   --distpath "$BUILD/dist" --workpath "$BUILD/work" --specpath "$BUILD" \
-  --collect-all pytchat --collect-all curl_cffi --collect-submodules yt_dlp --collect-all yt_dlp_ejs \
+  --collect-all pytchat --collect-all curl_cffi --collect-submodules yt_dlp --collect-all yt_dlp_ejs --collect-all streamlink \
   --hidden-import PyQt6.QtNetwork --hidden-import PyQt6.QtOpenGLWidgets \
   --exclude-module mpv --add-data "$MPV_PY:." \
   --hidden-import queue --hidden-import concurrent.futures --hidden-import ctypes.util \

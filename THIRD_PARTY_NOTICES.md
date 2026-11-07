@@ -19,6 +19,7 @@ Die AppImage enthält die Lizenztexte aller gebündelten Python-Pakete unter
 | PyQt6-Qt6 (Qt 6) | LGPL-3.0-only | https://www.qt.io/ |
 | PyQt6-sip | BSD-2-Clause | https://github.com/Python-SIP/sip |
 | python-mpv (`mpv`) | GPL-2.0-or-later oder LGPL-2.1-or-later | https://github.com/jaseg/python-mpv |
+| streamlink | BSD-2-Clause | https://github.com/streamlink/streamlink |
 | yt-dlp | Unlicense | https://github.com/yt-dlp/yt-dlp |
 | yt-dlp-ejs | Unlicense AND MIT AND ISC | https://github.com/yt-dlp/ejs |
 | pytchat | MIT | https://github.com/taizan-hokuto/pytchat |
@@ -50,6 +51,18 @@ Die AppImage enthält die Lizenztexte aller gebündelten Python-Pakete unter
 | brotli | MIT | https://github.com/google/brotli |
 | pycryptodomex | BSD-2-Clause, teilweise Public Domain | https://www.pycryptodome.org |
 | mutagen | GPL-2.0-or-later | https://github.com/quodlibet/mutagen |
+| isodate | BSD-3-Clause | https://github.com/gweis/isodate |
+| lxml | BSD-3-Clause | https://lxml.de/ |
+| pycountry | LGPL-2.1-only | https://github.com/pycountry/pycountry |
+| pycryptodome | BSD-2-Clause, teilweise Public Domain | https://www.pycryptodome.org |
+| PySocks | BSD-3-Clause | https://github.com/Anorov/PySocks |
+| trio | MIT OR Apache-2.0 | https://github.com/python-trio/trio |
+| trio-websocket | MIT | https://github.com/python-trio/trio-websocket |
+| outcome | MIT OR Apache-2.0 | https://github.com/python-trio/outcome |
+| sniffio | MIT OR Apache-2.0 | https://github.com/python-trio/sniffio |
+| sortedcontainers | Apache-2.0 | https://github.com/grantjenks/python-sortedcontainers |
+| wsproto | MIT | https://github.com/python-hyper/wsproto |
+| websocket-client | Apache-2.0 | https://github.com/websocket-client/websocket-client |
 
 ## Weitere Bestandteile der AppImage
 
@@ -97,5 +110,9 @@ unterstützten Dienste zu benennen.
 - **Inhalte:** Chat-Nachrichten, Emotes, Videos und andere Inhalte werden zur
   Laufzeit von den Diensten geladen und nicht mit MultiChat verteilt. Die Rechte daran
   liegen bei den jeweiligen Urhebern.
+- **Plattform-Symbole:** Die kleinen Symbole vor den Chat-Nachrichten sind die Favicons
+  der jeweiligen Website (bzw. über Googles Favicon-Dienst), die MultiChat wie ein Browser
+  zur Laufzeit lädt, um die Herkunft einer Nachricht zu kennzeichnen. Sie sind nicht Teil
+  dieses Repositorys oder der AppImage und bleiben Marken ihrer Inhaber.
 - **Login:** Für Login und Moderation werden eigene Entwickler-Apps des Nutzers bei
   den Plattformen verwendet. MultiChat liefert keine Zugangsdaten mit.

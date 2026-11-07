@@ -68,7 +68,7 @@ from logsetup import (
     setup_logging,
     tail,
 )
-from overlay import OverlayServer, deletion_payload, message_payload
+from overlay import FAVICONS, OverlayServer, deletion_payload, message_payload
 from video import CopyLabel, VideoPanel
 
 log = logging.getLogger("multichat")
@@ -85,6 +85,7 @@ DEV_CONSOLES = {
     "kick": "https://kick.com/settings/developer",
     "youtube": "https://console.cloud.google.com/apis/credentials",
 }
+BROWSER_UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36"
 LOGIN_DOCS = "https://github.com/Corrgan/multichat/blob/main/docs/LOGIN.md"
 TIMEOUTS = [("Timeout 1 Min.", 60), ("Timeout 10 Min.", 600), ("Timeout 1 Std.", 3600)]
 MAX_MESSAGES = 1000
@@ -133,7 +134,7 @@ class ChatView(QTextBrowser):
             if key not in self.pending and key not in self.failed:
                 self.pending.add(key)
                 req = QNetworkRequest(url)
-                req.setHeader(QNetworkRequest.KnownHeaders.UserAgentHeader, "Mozilla/5.0 MultiChat")
+                req.setHeader(QNetworkRequest.KnownHeaders.UserAgentHeader, BROWSER_UA)
                 reply = self.nam.get(req)
                 reply.finished.connect(lambda r=reply, k=key: self._loaded(r, k))
             return self.placeholder
@@ -545,9 +546,15 @@ class MainWindow(QMainWindow):
         body = "".join(self._part_html(p) for p in m.parts)
         if m.deleted:
             body = f"<s style='color:#666'>{body}</s> <i style='color:#666'>(gelöscht)</i>"
+        icon = next((u for u in FAVICONS.get(m.platform, []) if u not in self.view.failed), None)
+        badge = (
+            f"<img src='{html.escape(icon, quote=True)}' width='16' height='16' align='middle'>"
+            if icon
+            else f"<span style='background:{color};color:#000;font-size:11px'>&nbsp;{tag}&nbsp;</span>"
+        )
         return (
             f"<span style='color:#888'>{ts}</span> "
-            f"<span style='background:{color};color:#000;font-size:11px'>&nbsp;{tag}&nbsp;</span> "
+            f"{badge} "
             f"<a href='msg:{m.uid}' style='color:{name_color};font-weight:bold;text-decoration:none'>"
             f"{html.escape(m.user)}</a>: {body}"
         )
@@ -776,9 +783,29 @@ def run_ytdlp(args: list[str]) -> None:
     sys.exit(yt_dlp.main(args))
 
 
+def selftest() -> None:
+    """`multichat --selftest`: prüft, ob alle Bausteine ladbar sind (z. B. in der AppImage)."""
+    import importlib
+
+    ok = True
+    for mod in ("streamlink", "streamlink.plugins.twitch", "yt_dlp", "pytchat", "curl_cffi", "aiohttp", "websockets"):
+        try:
+            m = importlib.import_module(mod)
+            print(f"OK    {mod} {getattr(m, '__version__', '')}")
+        except Exception as e:  # noqa: BLE001
+            ok = False
+            print(f"FEHLT {mod}: {e}")
+    from video import MPV_ERROR, load_mpv
+
+    print("OK    libmpv" if load_mpv() else f"FEHLT libmpv: {MPV_ERROR}")
+    sys.exit(0 if ok else 1)
+
+
 def main() -> None:
     if len(sys.argv) > 1 and sys.argv[1] == "--yt-dlp":
         run_ytdlp(sys.argv[2:])
+    if len(sys.argv) > 1 and sys.argv[1] == "--selftest":
+        selftest()
     try:
         debug = bool(json.loads(CONFIG.read_text()).get("debug_log"))
     except Exception:  # noqa: BLE001

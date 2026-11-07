@@ -9,8 +9,12 @@
 from __future__ import annotations
 
 import logging
+import os
 import re
+import threading
+import time
 from dataclasses import dataclass, field
+from typing import Callable
 from urllib.parse import urljoin
 
 from clients import _fetch_kick_json, youtube_target
@@ -41,6 +45,27 @@ class Stream:
     audio_url: str | None = None
     headers: dict = field(default_factory=dict)
     ytdl_format: str | None = None  # gesetzt → mpv lädt die URL selbst über yt-dlp (ytdl_hook)
+    closer: Callable[[], None] | None = None  # beendet einen Streamlink-Datenstrom
+    pipe_fd: int | None = None  # Lese-Ende der Pipe (gehört mpv, sobald geladen)
+    ads: "AdWatch | None" = None  # meldet übersprungene Twitch-Werbung
+
+
+class AdWatch(logging.Handler):
+    """Hört auf Streamlink-Meldungen zu Werbepausen und merkt sich, bis wann sie dauern."""
+
+    def __init__(self) -> None:
+        super().__init__(logging.INFO)
+        self.until = 0.0
+
+    def emit(self, record: logging.LogRecord) -> None:
+        msg = record.getMessage().lower()
+        if "advertisement" in msg or "pre-roll" in msg or "ad segment" in msg and "will skip" not in msg:
+            m = re.search(r"(\d+(?:\.\d+)?)\s*second", msg)
+            self.until = max(self.until, time.time() + (float(m.group(1)) if m else 30.0) + 3)
+
+    @property
+    def active(self) -> bool:
+        return time.time() < self.until
 
 
 def quality_height(name: str) -> int:
@@ -207,13 +232,109 @@ def _kick(slug: str, max_h: int) -> Stream:
     return Stream(chosen, live.get("session_title") or "")
 
 
+def _pick_streamlink(names, max_h: int) -> str:
+    """Wählt aus Streamlink-Namen wie „480p“, „720p60“ die beste Variante ≤ max_h."""
+    cands = []
+    for name in names:
+        m = re.fullmatch(r"(\d+)p(\d+)?", name)
+        if m:
+            cands.append((int(m.group(1)), int(m.group(2) or 30), name))
+    if not cands:
+        return "best" if "best" in names else next(iter(names))
+    if not max_h:
+        return max(cands)[2]
+    fitting = [c for c in cands if c[0] <= max_h] or [min(cands)]
+    return max(fitting)[2]
+
+
+def _twitch(channel: str, max_h: int) -> Stream:
+    """Twitch über Streamlink: Werbeblöcke werden herausgefiltert (disable-ads).
+    Die Daten gehen über eine Pipe an mpv („fdclose://N“)."""
+    try:
+        from streamlink import Streamlink  # type: ignore
+        from streamlink.options import Options  # type: ignore
+    except ImportError:
+        log.warning("Streamlink fehlt – Twitch läuft ohne Werbefilter über yt-dlp")
+        return _ytdlp(f"https://www.twitch.tv/{channel}", max_h)
+
+    url = f"https://www.twitch.tv/{channel}"
+    session = Streamlink()
+    try:
+        _name, plugin_cls, resolved = session.resolve_url(url)
+        plugin = plugin_cls(session, resolved, options=Options({"disable-ads": True}))
+        streams = plugin.streams()
+    except Exception as e:  # noqa: BLE001
+        msg = str(e)
+        log.info("Streamlink %s: %s", url, msg)
+        if "offline" in msg.lower() or "no playable streams" in msg.lower():
+            raise Offline("offline") from e
+        raise RuntimeError(f"Streamlink: {msg[:150]}") from e
+    if not streams:
+        raise Offline("offline")
+    name = _pick_streamlink(streams, max_h)
+    title = ""
+    try:
+        title = plugin.get_title() or ""
+    except Exception:  # noqa: BLE001
+        pass
+
+    ads = AdWatch()
+    sl_log = logging.getLogger("streamlink")
+    if sl_log.getEffectiveLevel() > logging.INFO:  # Streamlink-Standard ist WARNING → Werbemeldungen kämen nie an
+        sl_log.setLevel(logging.INFO)
+    sl_log.addHandler(ads)
+    try:
+        src = streams[name].open()
+    except Exception as e:  # noqa: BLE001
+        logging.getLogger("streamlink").removeHandler(ads)
+        raise RuntimeError(f"Streamlink: Stream lässt sich nicht öffnen ({e})") from e
+    log.info("Twitch %s: Streamlink-Variante %s (Werbefilter an)", channel, name)
+
+    rfd, wfd = os.pipe()
+    stop = threading.Event()
+
+    def pump() -> None:
+        try:
+            while not stop.is_set():
+                data = src.read(65536)
+                if not data:
+                    log.info("Twitch %s: Streamlink-Datenstrom beendet", channel)
+                    break
+                view = memoryview(data)
+                while view:
+                    n = os.write(wfd, view)
+                    view = view[n:]
+        except (BrokenPipeError, OSError, ValueError):
+            pass  # mpv hat die Pipe geschlossen (Stopp/Neustart)
+        except Exception as e:  # noqa: BLE001
+            log.warning("Twitch %s: Streamlink-Fehler: %s", channel, e)
+        finally:
+            for f in (src.close, lambda: os.close(wfd)):
+                try:
+                    f()
+                except Exception:  # noqa: BLE001
+                    pass
+            logging.getLogger("streamlink").removeHandler(ads)
+
+    threading.Thread(target=pump, name=f"streamlink-{channel}", daemon=True).start()
+
+    def close() -> None:
+        stop.set()
+        try:
+            src.close()
+        except Exception:  # noqa: BLE001
+            pass
+
+    return Stream(f"fdclose://{rfd}", title, closer=close, pipe_fd=rfd, ads=ads)
+
+
 def resolve(platform: str, value: str, quality: str) -> Stream:
     """Liefert den Stream oder wirft Offline / RuntimeError."""
     max_h = quality_height(quality)
     value = value.strip()
     log.debug("Suche Stream: %s %r (%s)", platform, value, quality)
     if platform == "twitch":
-        return _ytdlp(f"https://www.twitch.tv/{value.lower().lstrip('#')}", max_h)
+        return _twitch(value.lower().lstrip("#"), max_h)
     if platform == "kick":
         return _kick(value, max_h)
     return _youtube(value, max_h)

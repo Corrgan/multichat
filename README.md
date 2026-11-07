@@ -62,6 +62,7 @@ Das Skript legt eine eigene Python-Umgebung in `build-appimage/` an, bündelt di
 - **YouTube:** Kanal, z. B. `@kanalname`, `https://www.youtube.com/@kanalname` oder eine `UC…`-Kanal-ID. Die App prüft jede Minute, ob der Kanal live ist, verbindet sich automatisch mit dem laufenden Stream und wartet nach Stream-Ende auf den nächsten. Eine Video-URL/-ID geht weiterhin, wenn du einen bestimmten Stream willst.
 - **Verbinden / Trennen:** „Verbinden“ startet Chats und Video-Kacheln, „Trennen“ stoppt alles wieder.
 - **Anzeigen:** Häkchen blenden Plattformen in der Ansicht ein/aus.
+- Vor jeder Nachricht steht das Symbol der Plattform (das Favicon der Website, wie im Browser-Tab). Ist es nicht ladbar, erscheint stattdessen ein farbiges Kürzel (TW/KI/YT).
 
 ### Video-Kacheln
 
@@ -73,7 +74,9 @@ Links der Chat, rechts eine Video-Kachel pro eingetragenem Kanal. Sie starten mi
 - **Neu laden** (Pfeil-Symbol), falls ein Stream hängt; **Stopp/Start** (■/▶) hält nur diese eine Kachel an.
 - **Ansicht → Video-Kacheln** blendet die Spalte aus und stoppt die Streams (spart Bandbreite). Den Trenner zwischen Chat und Videos kannst du verschieben.
 - Die Videos laufen ein paar Sekunden hinter dem Live-Signal, wie im Browser-Player.
-- Twitch und YouTube werden über `yt-dlp` geladen, Kick direkt über die Kick-API. Wenn eine Plattform etwas ändert, hilft oft `pip install -U yt-dlp` (bzw. AppImage neu bauen).
+- **Twitch** läuft über [Streamlink](https://streamlink.github.io/) mit Werbefilter: Werbeblöcke werden übersprungen (die Kachel zeigt dann „Werbepause wird übersprungen“ und das Bild steht kurz), statt mitten im Stream das Bild zu zerstören.
+- **YouTube** wird über `yt-dlp` geladen, **Kick** direkt über die Kick-API. Wenn eine Plattform etwas ändert, hilft oft `pip install -U yt-dlp streamlink` (bzw. AppImage neu bauen).
+- `MultiChat-x86_64.AppImage --selftest` prüft, ob alle Bausteine (Streamlink, yt-dlp, libmpv …) ladbar sind.
 - **Klick auf einen Namen** öffnet das Menü: erwähnen, Text kopieren, Nachricht löschen, Timeout (1 Min./10 Min./1 Std.), Bannen.
 - **Sendezeile unten:** an eine Plattform oder an „Alle“ angemeldeten schreiben.
 - Einstellungen: `~/.config/multichat/config.json`, Logins: `~/.config/multichat/tokens.json` (beide nur für dich lesbar).
