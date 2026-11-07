@@ -132,11 +132,11 @@ jobs:
           sudo apt-get install -y --no-install-recommends flatpak flatpak-builder appstream elfutils
           flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
 
-      - name: Cache of the native libraries (mpv, ffmpeg …)
-        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25  # v5.1.0
+      - name: Restore the flatpak-builder cache (mpv, ffmpeg …)
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25  # v5.1.0
         with:
           path: .flatpak-builder
-          key: flatpak-${{ hashFiles('packaging/flatpak/*.yml', 'packaging/flatpak/*.json') }}
+          key: flatpak-${{ github.run_id }}
           restore-keys: flatpak-
 
       - name: Validate metainfo
@@ -148,6 +148,13 @@ jobs:
             --repo=build-flatpak/repo build-flatpak/app packaging/flatpak/io.github.Corrgan.MultiChat.yml
           flatpak build-bundle --runtime-repo=https://dl.flathub.org/repo/flathub.flatpakrepo \
             build-flatpak/repo MultiChat-x86_64.flatpak io.github.Corrgan.MultiChat
+
+      - name: Save the flatpak-builder cache
+        if: always()  # also after a failed build, so finished modules are not rebuilt
+        uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25  # v5.1.0
+        with:
+          path: .flatpak-builder
+          key: flatpak-${{ github.run_id }}
 
       - name: Self-test of the Flatpak
         run: |
