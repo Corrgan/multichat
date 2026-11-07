@@ -20,10 +20,11 @@ from PyQt6.QtWidgets import (
     QVBoxLayout, QWidget,
 )
 
-from ..accounts import KickAccount, TokenStore, TwitchAccount, YouTubeAccount
+from ..accounts import KickAccount, SecretStore, TwitchAccount, YouTubeAccount
+from ..accounts.store import choose_backend
 from ..chat import ChatMessage, Deletion, EmoteStore, run_kick, run_twitch, run_youtube
 from ..core import i18n
-from ..core.config import CONFIG, OVERLAY_PORT, TOKENS, load_config, write_private
+from ..core.config import CONF_DIR, CONFIG, OVERLAY_PORT, load_config, load_config_apps, write_private
 from ..core.constants import BADGES, LOGIN_DOCS, NAMES, PLATFORMS
 from ..core.i18n import _
 from ..core.logsetup import LOG_DIR, LOG_FILE, asyncio_exception_handler, set_debug, tail
@@ -67,7 +68,15 @@ class MainWindow(QMainWindow):
         threading.Thread(target=self.loop.run_forever, daemon=True).start()
         self.session = asyncio.run_coroutine_threadsafe(self._make_session(), self.loop).result()
 
-        store = TokenStore(TOKENS)
+        backend, files = choose_backend(CONF_DIR)
+        store = SecretStore("tokens", backend, files)
+        self.apps = SecretStore("apps", backend, files)  # client IDs and secrets of the developer apps
+        if self.config.pop("apps", None):  # older versions kept them in config.json
+            legacy = load_config_apps()
+            if legacy and not self.apps.all():
+                self.apps.replace_all(legacy)
+            write_private(CONFIG, self.config)
+        log.info("Secrets: stored in %s", backend.name)
         args = (store, self.app_creds, lambda: self.session)
         self.accounts = {"twitch": TwitchAccount(*args), "kick": KickAccount(*args), "youtube": YouTubeAccount(*args)}
         self.overlay = OverlayServer(self.loop)
@@ -117,7 +126,7 @@ class MainWindow(QMainWindow):
             self.overlay_action.setChecked(True)
 
     def app_creds(self, platform: str) -> tuple[str, str]:
-        app = self.config["apps"].get(platform) or {}
+        app = self.apps.get(platform)
         return app.get("client_id", ""), app.get("client_secret", "")
 
     async def _make_session(self) -> aiohttp.ClientSession:
@@ -576,10 +585,9 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(_("Logged out of {platform}").format(platform=NAMES[platform]), 5000)
 
     def edit_apps(self) -> None:
-        dlg = AppsDialog(self, self.config["apps"])
+        dlg = AppsDialog(self, self.apps.all())
         if dlg.exec() == QDialog.DialogCode.Accepted:
-            self.config["apps"] = dlg.values()
-            self.save_config()
+            self.apps.replace_all(dlg.values())
 
     # ---- Overlay --------------------------------------------------------- #
     def overlay_url(self) -> str:

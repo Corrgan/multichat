@@ -19,6 +19,7 @@ dependencies = [
     "mpv>=1.0.5",
     "yt-dlp[default]>=2025.11.12",
     "streamlink>=7.0",
+    "keyring>=25",
 ]
 
 [project.optional-dependencies]

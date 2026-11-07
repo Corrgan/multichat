@@ -66,6 +66,10 @@ def selftest() -> None:
     ok = ok and not missing
     print(f"MISSING locales: {', '.join(missing)}" if missing else f"OK      locales ({len(i18n.LANGUAGES)} languages)")
     print("OK      icon" if app_icon_path().is_file() else "MISSING multichat.png")
+    from .accounts.store import system_keyring
+
+    kr = system_keyring()
+    print(f"OK      secrets: keyring ({type(kr).__name__})" if kr else "OK      secrets: files (no system keyring)")
     sys.exit(0 if ok else 1)
 
 

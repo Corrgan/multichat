@@ -38,6 +38,12 @@ The AppImage contains the license texts of all bundled Python packages under
 | urllib3 | MIT | https://urllib3.readthedocs.io |
 | charset-normalizer | MIT | https://github.com/jawah/charset_normalizer |
 | idna | BSD-3-Clause | https://github.com/kjd/idna |
+| keyring | MIT | https://github.com/jaraco/keyring |
+| SecretStorage | BSD-3-Clause | https://github.com/mitya57/secretstorage |
+| jeepney | MIT | https://gitlab.com/takluyver/jeepney |
+| cryptography | Apache-2.0 OR BSD-3-Clause | https://github.com/pyca/cryptography |
+| jaraco.classes, jaraco.context, jaraco.functools | MIT | https://github.com/jaraco |
+| more-itertools | MIT | https://github.com/more-itertools/more-itertools |
 | certifi | MPL-2.0 | https://github.com/certifi/python-certifi |
 | httpx | BSD-3-Clause | https://www.python-httpx.org |
 | httpcore | BSD-3-Clause | https://www.encode.io/httpcore |

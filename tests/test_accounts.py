@@ -8,7 +8,7 @@ from pathlib import Path
 import aiohttp
 from aiohttp import web
 
-from multichat.accounts import KickAccount, TokenStore, TwitchAccount, oauth
+from multichat.accounts import FileBackend, KickAccount, SecretStore, TwitchAccount, oauth
 from multichat.chat.models import ChatMessage
 
 
@@ -17,7 +17,7 @@ def test_accounts(tmp_path, monkeypatch):
     monkeypatch.setattr(KickAccount, "token_url", "http://127.0.0.1:18999/token")
     monkeypatch.setattr(TwitchAccount, "API", "http://127.0.0.1:18999/helix")
     monkeypatch.setattr(KickAccount, "API", "http://127.0.0.1:18999/kick")
-    asyncio.run(_run(tmp_path / "tokens.json"))
+    asyncio.run(_run(tmp_path))
 
 
 
@@ -42,15 +42,15 @@ async def fake_api(req):
         return web.json_response({"data": [{"is_sent": True}]})
     return web.Response(status=204)
 
-async def _run(tmp: Path):
+async def _run(tmp_dir: Path):
     app = web.Application()
     app.router.add_post("/token", fake_token)
     app.router.add_route("*", "/{tail:.*}", fake_api)
     runner = web.AppRunner(app); await runner.setup()
     await web.TCPSite(runner, "127.0.0.1", 18999).start()
-    base = "http://127.0.0.1:18999"
     session = aiohttp.ClientSession()
-    store = TokenStore(tmp)
+    store = SecretStore("tokens", FileBackend(tmp_dir))
+    tmp = tmp_dir / "tokens.json"
     creds = lambda p: ("CID", "SECRET")
 
     # simulate the browser: call the callback with code + state

@@ -11,7 +11,6 @@ from .constants import PLATFORMS
 
 CONF_DIR = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config") / "multichat"
 CONFIG = CONF_DIR / "config.json"
-TOKENS = CONF_DIR / "tokens.json"
 OVERLAY_PORT = 17564
 
 
@@ -32,7 +31,6 @@ def load_config() -> dict:
         "language": "auto",
         "video": {"enabled": True, "quality": {}, "audio": None, "sizes": [440, 860]},
         "overlay": {"enabled": False, "port": OVERLAY_PORT},
-        "apps": {},
     }
     try:
         data = json.loads(CONFIG.read_text())
@@ -41,7 +39,9 @@ def load_config() -> dict:
     for p in PLATFORMS:  # migrate the format of the first version
         if isinstance(data.get(p), str):
             cfg["channels"][p] = data[p]
-    for key in ("channels", "show", "overlay", "apps", "video"):
+    if data.get("apps"):
+        cfg["apps"] = True  # marker: older version kept the developer apps here (see load_config_apps)
+    for key in ("channels", "show", "overlay", "video"):
         cfg[key].update(data.get(key) or {})
     cfg["on_top"] = bool(data.get("on_top", False))
     cfg["extra_emotes"] = bool(data.get("extra_emotes", True))
@@ -52,3 +52,11 @@ def load_config() -> dict:
 
 def save_config(cfg: dict) -> None:
     write_private(CONFIG, cfg)
+
+
+def load_config_apps() -> dict:
+    """Developer apps from config.json of older versions (now in the secret store)."""
+    try:
+        return dict(json.loads(CONFIG.read_text()).get("apps") or {})
+    except Exception:  # noqa: BLE001
+        return {}
