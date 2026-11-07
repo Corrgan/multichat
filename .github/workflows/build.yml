@@ -129,7 +129,7 @@ jobs:
       - name: flatpak-builder and Flathub
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends flatpak flatpak-builder appstream
+          sudo apt-get install -y --no-install-recommends flatpak flatpak-builder appstream elfutils
           flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
 
       - name: Cache of the native libraries (mpv, ffmpeg …)
