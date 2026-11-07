@@ -6,7 +6,7 @@
 # - Pushing a tag (e.g. `git tag v0.10 && git push origin v0.10`): additionally a GitHub release
 #   with the AppImage and checksum – but only for tags of the form vX.Y where Y is a single digit
 #   or ends in 0 (v0.10, v0.20, v1.6, v2.0). Other tags (v0.11, v0.15, v0.10.1 …) build nothing.
-#   The tag must also match APP_VERSION in logsetup.py.
+#   The tag must also match __version__ in multichat/__init__.py.
 #
 # Builds run in an Ubuntu 22.04 container (glibc 2.35), so the AppImage runs on all systems
 # with glibc ≥ 2.35, e.g. Ubuntu 22.04+, Debian 12+, Fedora 36+, current Arch.
@@ -74,17 +74,17 @@ jobs:
 
       - uses: actions/checkout@v7
 
-      - name: Check tag against APP_VERSION
+      - name: Check tag against __version__
         if: startsWith(github.ref, 'refs/tags/v')
         run: |
-          V=$(python3.12 -c 'import re; print(re.search(r"APP_VERSION = \"(.+?)\"", open("logsetup.py").read()).group(1))')
+          V=$(python3.12 -c 'import re; print(re.search(r"__version__ = \"(.+?)\"", open("multichat/__init__.py").read()).group(1))')
           if [ "v$V" != "$GITHUB_REF_NAME" ]; then
-            echo "::error::Tag $GITHUB_REF_NAME does not match APP_VERSION $V in logsetup.py"
+            echo "::error::Tag $GITHUB_REF_NAME does not match __version__ $V in multichat/__init__.py"
             exit 1
           fi
 
       - name: Build AppImage
-        run: PYTHON=python3.12 ./build-appimage.sh
+        run: PYTHON=python3.12 packaging/build-appimage.sh
 
       - name: Self-test of the AppImage
         run: APPIMAGE_EXTRACT_AND_RUN=1 ./MultiChat-x86_64.AppImage --selftest

@@ -1,113 +1,43 @@
-#!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 Corrgan
-"""MultiChat – Twitch, Kick and YouTube chat in one window.
-
-Reading works without logging in. To send and moderate, log in to the respective
-platform under "Accounts". "Overlay" starts a browser source for OBS.
-"""
+"""Main window: channel inputs, chat, menus, video column."""
 from __future__ import annotations
 
 import asyncio
-import html
-import json
 import logging
 import os
-import platform as py_platform
 import sys
 import threading
-import time
 from collections import OrderedDict
 from pathlib import Path
 
 import aiohttp
-from PyQt6.QtCore import QT_VERSION_STR, QObject, QProcess, Qt, QUrl, pyqtSignal
-from PyQt6.QtGui import QActionGroup, QCursor, QDesktopServices, QIcon, QImage, QImageReader, QPixmap, QTextDocument
-from PyQt6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
+
+from PyQt6.QtCore import QObject, QProcess, Qt, QUrl, pyqtSignal
+from PyQt6.QtGui import QActionGroup, QCursor, QDesktopServices, QImageReader
 from PyQt6.QtWidgets import (
-    QApplication,
-    QCheckBox,
-    QComboBox,
-    QDialog,
-    QDialogButtonBox,
-    QFormLayout,
-    QGridLayout,
-    QGroupBox,
-    QHBoxLayout,
-    QLabel,
-    QLineEdit,
-    QMainWindow,
-    QMenu,
-    QMessageBox,
-    QPushButton,
-    QSplitter,
-    QTextBrowser,
-    QVBoxLayout,
-    QWidget,
+    QApplication, QCheckBox, QComboBox, QDialog, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMenu, QMessageBox, QPushButton, QSplitter,
+    QVBoxLayout, QWidget,
 )
 
-if getattr(sys, "frozen", False):
-    # Bundled app (AppImage/PyInstaller): child processes such as the browser used for
-    # the login should use the system libraries, not the bundled ones.
-    _orig = os.environ.pop("LD_LIBRARY_PATH_ORIG", None)
-    if _orig is not None:
-        os.environ["LD_LIBRARY_PATH"] = _orig
-    else:
-        os.environ.pop("LD_LIBRARY_PATH", None)
-
-import i18n
-from accounts import REDIRECT_URI, KickAccount, TokenStore, TwitchAccount, YouTubeAccount
-from clients import ChatMessage, Deletion, run_kick, run_twitch, run_youtube
-from emotes import EmoteStore
-from i18n import _
-from logsetup import (
-    APP_VERSION,
-    LOG_DIR,
-    LOG_FILE,
-    asyncio_exception_handler,
-    install_qt_handler,
-    log_system_info,
-    set_debug,
-    setup_logging,
-    tail,
-)
-from overlay import FAVICONS, OverlayServer, deletion_payload, message_payload
-from video import CopyLabel, VideoPanel
+from ..accounts import KickAccount, TokenStore, TwitchAccount, YouTubeAccount
+from ..chat import ChatMessage, Deletion, EmoteStore, run_kick, run_twitch, run_youtube
+from ..core import i18n
+from ..core.config import CONFIG, OVERLAY_PORT, TOKENS, load_config, write_private
+from ..core.constants import BADGES, LOGIN_DOCS, NAMES, PLATFORMS
+from ..core.i18n import _
+from ..core.logsetup import LOG_DIR, LOG_FILE, asyncio_exception_handler, set_debug, tail
+from ..overlay.server import OverlayServer, deletion_payload, message_payload
+from ..video.tiles import VideoPanel
+from .chat_view import ChatView
+from .dialogs import AboutDialog, AppsDialog
+from .widgets import CopyLabel
 
 log = logging.getLogger("multichat")
 
-APP_ID = "multichat"  # Wayland app ID – must match multichat.desktop
-CONF_DIR = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config") / "multichat"
-CONFIG = CONF_DIR / "config.json"
-TOKENS = CONF_DIR / "tokens.json"
 
-PLATFORMS = ("twitch", "kick", "youtube")
-NAMES = {"twitch": "Twitch", "kick": "Kick", "youtube": "YouTube"}
-BADGES = {"twitch": ("#9146FF", "TW"), "kick": ("#53FC18", "KI"), "youtube": ("#FF0000", "YT")}
-DEV_CONSOLES = {
-    "twitch": "https://dev.twitch.tv/console/apps",
-    "kick": "https://kick.com/settings/developer",
-    "youtube": "https://console.cloud.google.com/apis/credentials",
-}
-BROWSER_UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36"
-REPO_URL = "https://github.com/Corrgan/multichat"
-LOGIN_DOCS = f"{REPO_URL}/blob/main/docs/LOGIN.md"
 TIMEOUTS = [(60, "Timeout 1 min"), (600, "Timeout 10 min"), (3600, "Timeout 1 h")]
 MAX_MESSAGES = 1000
-EMOTE_H = 22
-OVERLAY_PORT = 17564
-IMAGE_RES = QTextDocument.ResourceType.ImageResource.value
-
-
-def write_private(path: Path, data: dict) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w") as f:
-        json.dump(data, f, indent=2)
-
-
-def app_icon_path() -> Path:
-    return i18n.resource_dir() / "multichat.png"
 
 
 class Bridge(QObject):
@@ -117,135 +47,6 @@ class Bridge(QObject):
     deletion = pyqtSignal(object)
     status = pyqtSignal(str, str, int)  # platform, text, connection generation
     result = pyqtSignal(object, object)
-
-
-class ChatView(QTextBrowser):
-    """Chat view that loads emote images asynchronously."""
-
-    rerender_needed = pyqtSignal()
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.setOpenLinks(False)
-        self.setStyleSheet("QTextBrowser { background:#18181b; color:#efeff1; font-size:14px; border:none; }")
-        self.nam = QNetworkAccessManager(self)
-        self.cache: dict[str, QImage] = {}
-        self.pending: set[str] = set()
-        self.failed: set[str] = set()
-        self.placeholder = QImage(EMOTE_H, EMOTE_H, QImage.Format.Format_ARGB32)
-        self.placeholder.fill(Qt.GlobalColor.transparent)
-
-    def loadResource(self, rtype, url: QUrl):  # noqa: N802
-        if int(getattr(rtype, "value", rtype)) == IMAGE_RES and url.scheme() in ("http", "https"):
-            key = url.toString()
-            if key in self.cache:
-                return self.cache[key]
-            if key not in self.pending and key not in self.failed:
-                self.pending.add(key)
-                req = QNetworkRequest(url)
-                req.setHeader(QNetworkRequest.KnownHeaders.UserAgentHeader, BROWSER_UA)
-                reply = self.nam.get(req)
-                reply.finished.connect(lambda r=reply, k=key: self._loaded(r, k))
-            return self.placeholder
-        return super().loadResource(rtype, url)
-
-    def _loaded(self, reply: QNetworkReply, key: str) -> None:
-        self.pending.discard(key)
-        img = QImage()
-        ok = reply.error() == QNetworkReply.NetworkError.NoError and img.loadFromData(reply.readAll())
-        reply.deleteLater()
-        if not ok:
-            self.failed.add(key)
-            self.rerender_needed.emit()
-            return
-        self.cache[key] = img
-        doc = self.document()
-        doc.addResource(IMAGE_RES, QUrl(key), img)
-        doc.markContentsDirty(0, doc.characterCount())
-
-
-class AppsDialog(QDialog):
-    """Enter client ID and secret of the user's own developer apps."""
-
-    def __init__(self, parent: QWidget, apps: dict) -> None:
-        super().__init__(parent)
-        self.setWindowTitle(_("Developer apps"))
-        self.setMinimumWidth(520)
-        lay = QVBoxLayout(self)
-        intro = QLabel(
-            _(
-                "To log in you need your own free developer app per platform. Enter exactly "
-                "<b>{redirect}</b> as its redirect URL and copy the client ID and secret here."
-            ).format(redirect=REDIRECT_URI)
-            + f" <a href='{LOGIN_DOCS}'>{_('Step-by-step guide with all options')}</a>"
-        )
-        intro.setWordWrap(True)
-        intro.setOpenExternalLinks(True)
-        lay.addWidget(intro)
-        self.fields: dict[str, tuple[QLineEdit, QLineEdit]] = {}
-        for p in PLATFORMS:
-            box = QGroupBox(NAMES[p])
-            form = QFormLayout(box)
-            link = QLabel(f"<a href='{DEV_CONSOLES[p]}'>{DEV_CONSOLES[p]}</a>")
-            link.setOpenExternalLinks(True)
-            cid = QLineEdit(apps.get(p, {}).get("client_id", ""))
-            sec = QLineEdit(apps.get(p, {}).get("client_secret", ""))
-            sec.setEchoMode(QLineEdit.EchoMode.Password)
-            form.addRow(_("Console:"), link)
-            form.addRow(_("Client ID:"), cid)
-            form.addRow(_("Client secret:"), sec)
-            self.fields[p] = (cid, sec)
-            lay.addWidget(box)
-        bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
-        bb.accepted.connect(self.accept)
-        bb.rejected.connect(self.reject)
-        lay.addWidget(bb)
-
-    def values(self) -> dict:
-        return {p: {"client_id": c.text().strip(), "client_secret": s.text().strip()} for p, (c, s) in self.fields.items()}
-
-
-class AboutDialog(QDialog):
-    """Help → About MultiChat."""
-
-    def __init__(self, parent: QWidget) -> None:
-        super().__init__(parent)
-        self.setWindowTitle(_("About MultiChat"))
-        self.setMinimumWidth(460)
-        lay = QVBoxLayout(self)
-        head = QHBoxLayout()
-        icon = QLabel()
-        pix = QPixmap(str(app_icon_path()))
-        if not pix.isNull():
-            icon.setPixmap(pix.scaled(72, 72, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
-        head.addWidget(icon)
-        title = QLabel(
-            f"<h2 style='margin:0'>MultiChat</h2>"
-            f"<div>{_('Version {version}').format(version=APP_VERSION)}</div>"
-            f"<div style='color:#888'>{_('Twitch, Kick and YouTube chat in one window')}</div>"
-        )
-        head.addWidget(title, 1)
-        lay.addLayout(head)
-        license_link = f"<a href='{REPO_URL}/blob/main/LICENSE'>GNU GPL v3.0 or later</a>"
-        notices_link = f"<a href='{REPO_URL}/blob/main/THIRD_PARTY_NOTICES.md'>THIRD_PARTY_NOTICES</a>"
-        repo_text = REPO_URL.removeprefix("https://")
-        body = QLabel(
-            f"<p><a href='{REPO_URL}'>{repo_text}</a></p>"
-            "<p>" + _("Free software under the {license}.").format(license=license_link) + "<br>"
-            + _("Uses third-party libraries under their own licenses – see {notices}.").format(notices=notices_link)
-            + "</p>"
-            "<p>" + _("Not affiliated with Twitch, Kick, YouTube/Google, 7TV, BetterTTV or FrankerFaceZ.") + "</p>"
-            f"<p style='color:#888'>Qt {QT_VERSION_STR} · Python {py_platform.python_version()} · "
-            f"{QApplication.platformName()}</p>"
-        )
-        body.setWordWrap(True)
-        body.setOpenExternalLinks(True)
-        body.setTextInteractionFlags(Qt.TextInteractionFlag.TextBrowserInteraction)
-        lay.addWidget(body)
-        bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
-        bb.rejected.connect(self.reject)
-        bb.accepted.connect(self.accept)
-        lay.addWidget(bb)
 
 
 class MainWindow(QMainWindow):
@@ -597,32 +398,8 @@ class MainWindow(QMainWindow):
     def set_status(self, platform: str, text: str) -> None:
         self.status_labels[platform].set_full(text)
 
-    # ---- Rendering ------------------------------------------------------- #
-    def _part_html(self, part) -> str:
-        kind, value, alt = part
-        if kind == "emote" and value not in self.view.failed:
-            return f"<img src='{html.escape(value, quote=True)}' height='{EMOTE_H}' align='middle'>"
-        return html.escape(alt if kind == "emote" else value)
-
     def msg_html(self, m: ChatMessage) -> str:
-        color, tag = BADGES[m.platform]
-        name_color = html.escape(m.color or "#b9a3e3", quote=True)
-        ts = time.strftime("%H:%M", time.localtime(m.timestamp))
-        body = "".join(self._part_html(p) for p in m.parts)
-        if m.deleted:
-            body = f"<s style='color:#666'>{body}</s> <i style='color:#666'>({html.escape(_('deleted'))})</i>"
-        icon = next((u for u in FAVICONS.get(m.platform, []) if u not in self.view.failed), None)
-        badge = (
-            f"<img src='{html.escape(icon, quote=True)}' width='16' height='16' align='middle'>"
-            if icon
-            else f"<span style='background:{color};color:#000;font-size:11px'>&nbsp;{tag}&nbsp;</span>"
-        )
-        return (
-            f"<span style='color:#888'>{ts}</span> "
-            f"{badge} "
-            f"<a href='msg:{m.uid}' style='color:{name_color};font-weight:bold;text-decoration:none'>"
-            f"{html.escape(m.user)}</a>: {body}"
-        )
+        return self.view.message_html(m)
 
     def _at_bottom(self) -> bool:
         bar = self.view.verticalScrollBar()
@@ -847,34 +624,6 @@ class MainWindow(QMainWindow):
         super().closeEvent(event)
 
 
-def load_config() -> dict:
-    cfg = {
-        "channels": {p: "" for p in PLATFORMS},
-        "show": {p: True for p in PLATFORMS},
-        "on_top": False,
-        "extra_emotes": True,
-        "debug_log": False,
-        "language": "auto",
-        "video": {"enabled": True, "quality": {}, "audio": None, "sizes": [440, 860]},
-        "overlay": {"enabled": False, "port": OVERLAY_PORT},
-        "apps": {},
-    }
-    try:
-        data = json.loads(CONFIG.read_text())
-    except Exception:  # noqa: BLE001
-        return cfg
-    for p in PLATFORMS:  # migrate the format of the first version
-        if isinstance(data.get(p), str):
-            cfg["channels"][p] = data[p]
-    for key in ("channels", "show", "overlay", "apps", "video"):
-        cfg[key].update(data.get(key) or {})
-    cfg["on_top"] = bool(data.get("on_top", False))
-    cfg["extra_emotes"] = bool(data.get("extra_emotes", True))
-    cfg["debug_log"] = bool(data.get("debug_log", False))
-    cfg["language"] = str(data.get("language") or "auto")
-    return cfg
-
-
 def restart_app(win: QMainWindow) -> None:
     """Start a new instance (AppImage, frozen binary or source) and close this one."""
     if os.environ.get("APPIMAGE"):
@@ -882,70 +631,9 @@ def restart_app(win: QMainWindow) -> None:
     elif getattr(sys, "frozen", False):
         prog, args = sys.executable, []
     else:
-        prog, args = sys.executable, [str(Path(sys.argv[0]).resolve())]
+        prog, args = sys.executable, ["-m", "multichat"]
     log.info("Restarting: %s %s", prog, " ".join(args))
     win.close()
-    QProcess.startDetached(prog, args)
+    # from the directory that contains the package, so `-m multichat` also works from a source checkout
+    QProcess.startDetached(prog, args, str(Path(__file__).resolve().parents[2]))
     QApplication.quit()
-
-
-def run_ytdlp(args: list[str]) -> None:
-    """`multichat --yt-dlp …` behaves like the yt-dlp program (for mpv's ytdl_hook)."""
-    import yt_dlp  # type: ignore
-
-    if not any(a.startswith("--js-runtimes") for a in args):
-        for rt in ("deno", "node", "bun", "quickjs"):
-            args = ["--js-runtimes", rt, *args]
-    sys.exit(yt_dlp.main(args))
-
-
-def selftest() -> None:
-    """`multichat --selftest`: checks that all components can be loaded (e.g. in the AppImage)."""
-    import importlib
-
-    ok = True
-    for mod in ("streamlink", "streamlink.plugins.twitch", "yt_dlp", "pytchat", "curl_cffi", "aiohttp", "websockets"):
-        try:
-            m = importlib.import_module(mod)
-            print(f"OK      {mod} {getattr(m, '__version__', '')}")
-        except Exception as e:  # noqa: BLE001
-            ok = False
-            print(f"MISSING {mod}: {e}")
-    from video import MPV_ERROR, load_mpv
-
-    print("OK      libmpv" if load_mpv() else f"MISSING libmpv: {MPV_ERROR}")
-    missing = [
-        code for code, _name in i18n.LANGUAGES
-        if code != "en" and not (i18n.resource_dir() / "locales" / f"{code}.json").is_file()
-    ]
-    ok = ok and not missing
-    print(f"MISSING locales: {', '.join(missing)}" if missing else f"OK      locales ({len(i18n.LANGUAGES)} languages)")
-    print("OK      icon" if app_icon_path().is_file() else "MISSING multichat.png")
-    sys.exit(0 if ok else 1)
-
-
-def main() -> None:
-    if len(sys.argv) > 1 and sys.argv[1] == "--yt-dlp":
-        run_ytdlp(sys.argv[2:])
-    if len(sys.argv) > 1 and sys.argv[1] == "--selftest":
-        selftest()
-    config = load_config()
-    setup_logging(config["debug_log"])
-    QApplication.setDesktopFileName(APP_ID)  # Wayland app ID → KDE/GNOME find multichat.desktop
-    app = QApplication(sys.argv)
-    app.setApplicationName("MultiChat")
-    app.setApplicationVersion(APP_VERSION)
-    if app_icon_path().is_file():
-        app.setWindowIcon(QIcon(str(app_icon_path())))  # window icon, also without a .desktop file
-    lang = i18n.set_language(config["language"])
-    i18n.install_qt_translator(app)
-    install_qt_handler()
-    log_system_info()
-    log.info("Language: %s (setting: %s)", lang, config["language"])
-    win = MainWindow(config)
-    win.show()
-    sys.exit(app.exec())
-
-
-if __name__ == "__main__":
-    main()

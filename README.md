@@ -49,21 +49,21 @@ git clone https://github.com/Corrgan/multichat.git
 cd multichat
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
-python main.py
+pip install -e .
+multichat            # or: python -m multichat
 ```
 
 ## Building the AppImage yourself
 
 ```bash
 cd multichat
-./build-appimage.sh
+packaging/build-appimage.sh
 ./MultiChat-x86_64.AppImage
 ```
 
-The script creates its own Python environment in `build-appimage/`, bundles the app with PyInstaller and packs it with `appimagetool` (downloaded automatically). The result is a single file of about 105 MB. `PYTHON=python3.12 ./build-appimage.sh` selects a specific Python interpreter.
+The script creates its own Python environment in `build-appimage/`, bundles the app with PyInstaller and packs it with `appimagetool` (downloaded automatically). The result is a single file of about 105 MB. `PYTHON=python3.12 packaging/build-appimage.sh` selects a specific Python interpreter.
 
-- **libmpv** is taken from the system by default (see Requirements) – small, and guaranteed to match your graphics drivers. `MPV_BUNDLE=1 ./build-appimage.sh` bundles libmpv and FFmpeg (~270 MB, then runs without mpv installed).
+- **libmpv** is taken from the system by default (see Requirements) – small, and guaranteed to match your graphics drivers. `MPV_BUNDLE=1 packaging/build-appimage.sh` bundles libmpv and FFmpeg (~270 MB, then runs without mpv installed).
 - The AppImage runs on systems with **at least the glibc version of the build machine**, so build on the oldest distribution you want to support.
 - If FUSE is missing (`dlopen(): error loading libfuse.so.2`): `sudo apt install libfuse2` or `libfuse2t64`, or start it with `--appimage-extract-and-run`.
 - To add it to your application menu, use e.g. [Gear Lever](https://flathub.org/apps/it.mijorus.gearlever) or AppImageLauncher.
@@ -73,8 +73,25 @@ The script creates its own Python environment in `build-appimage/`, bundles the 
 The workflow [`.github/workflows/appimage.yml`](.github/workflows/appimage.yml) builds the AppImage in an Ubuntu 22.04 container and tests it with `--selftest`:
 
 - **Manual:** Actions → *AppImage* → *Run workflow* → the AppImage is attached to the run as an artifact (14 days).
-- **Release:** bump `APP_VERSION` in `logsetup.py`, commit, then `git tag v<version> && git push origin v<version>` – the workflow creates the release with the AppImage and checksum. If the tag doesn't match `APP_VERSION`, it stops with an error.
+- **Release:** bump `__version__` in `multichat/__init__.py`, commit, then `git tag v<version> && git push origin v<version>` – the workflow creates the release with the AppImage and checksum. If the tag doesn't match `__version__`, it stops with an error.
 - **Which tags create a release:** only `vX.Y` where the second number is a single digit or ends in 0 – e.g. `v0.10`, `v0.20`, `v1.6`, `v2.0`. Intermediate versions such as `v0.11`, `v0.15` or `v0.10.1` don't trigger a build.
+
+## Project layout
+
+```
+multichat/            the application (Python package)
+  app.py              start-up, --selftest, --yt-dlp
+  core/               configuration, paths, logging, translations
+  chat/               chat readers per platform, 7TV/BTTV/FFZ emotes
+  accounts/           logins (OAuth), sending and moderating per platform
+  video/              stream lookup (Streamlink, yt-dlp, Kick API) and the mpv video tiles
+  overlay/            local web server for the OBS overlay
+  ui/                 main window, chat view, dialogs
+  resources/          icon, overlay page, translations (locales/)
+packaging/            AppImage build script, .desktop file
+tests/                automated tests (pytest)
+docs/                 additional documentation
+```
 
 ## Usage
 
@@ -94,7 +111,7 @@ Reading works without logging in. To send and moderate you need to be logged in 
 
 The interface is available in English, German, French, Spanish, Japanese and Chinese (simplified). By default it follows the system language; **View → Language** switches it (takes effect after a restart). Log messages stay in English.
 
-The French, Spanish, Japanese and Chinese translations were not done by native speakers – corrections are very welcome: edit the file in [`locales/`](locales) and open a pull request.
+The French, Spanish, Japanese and Chinese translations were not done by native speakers – corrections are very welcome: edit the file in [`multichat/resources/locales/`](multichat/resources/locales) and open a pull request.
 
 **Help → About MultiChat** shows the version, the project link and the licenses.
 

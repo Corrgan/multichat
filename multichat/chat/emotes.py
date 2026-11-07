@@ -17,7 +17,8 @@ from typing import Callable
 
 import aiohttp
 
-from clients import Part
+from .models import Part
+
 
 log = logging.getLogger("multichat.emotes")
 

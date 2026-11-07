@@ -17,8 +17,10 @@ from dataclasses import dataclass, field
 from typing import Callable
 from urllib.parse import urljoin
 
-from clients import _fetch_kick_json, youtube_target
-from i18n import _
+from ..chat.kick import fetch_kick_json
+from ..chat.youtube import youtube_target
+from ..core.i18n import _
+
 
 log = logging.getLogger("multichat.streams")
 
@@ -198,7 +200,7 @@ def check_dns(host: str) -> None:
 
 def _youtube(value: str, max_h: int) -> Stream:
     """Finds the live video via the channel page; mpv plays it with yt-dlp."""
-    from clients import YT_COOKIES, YT_HEADERS, parse_live_page
+    from ..chat.youtube import YT_COOKIES, YT_HEADERS, parse_live_page
 
     kind, target = youtube_target(value)
     check_dns("manifest.googlevideo.com")
@@ -220,7 +222,7 @@ def _youtube(value: str, max_h: int) -> Stream:
 
 
 def _kick(slug: str, max_h: int) -> Stream:
-    data = _fetch_kick_json(slug.lower().strip())
+    data = fetch_kick_json(slug.lower().strip())
     live = data.get("livestream")
     url = data.get("playback_url")
     if not live or not url:

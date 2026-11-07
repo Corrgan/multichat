@@ -10,8 +10,9 @@ from __future__ import annotations
 
 import json
 import logging
-import sys
-from pathlib import Path
+
+from .paths import RESOURCES
+
 
 log = logging.getLogger("multichat.i18n")
 
@@ -31,9 +32,8 @@ _lang = "en"
 _qt_translators: list = []
 
 
-def resource_dir() -> Path:
-    """Directory with bundled data files (PyInstaller: sys._MEIPASS)."""
-    return Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
+def locale_file(code: str):
+    return RESOURCES / "locales" / f"{code}.json"
 
 
 def system_language() -> str:
@@ -53,7 +53,7 @@ def set_language(code: str | None) -> str:
         code = system_language()
     _catalog = {}
     if code != "en":
-        path = resource_dir() / "locales" / f"{code}.json"
+        path = locale_file(code)
         try:
             _catalog = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError) as e:

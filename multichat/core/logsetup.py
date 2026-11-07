@@ -17,7 +17,8 @@ import threading
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
-APP_VERSION = "0.11"
+from .. import __version__ as APP_VERSION
+
 
 LOG_DIR = Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local" / "state") / "multichat"
 LOG_FILE = LOG_DIR / "multichat.log"

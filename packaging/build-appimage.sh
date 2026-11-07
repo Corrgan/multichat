@@ -1,19 +1,19 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 Corrgan
-# Builds MultiChat-<arch>.AppImage from this directory.
+# Builds MultiChat-<arch>.AppImage in the repository root.
 #
-#   ./build-appimage.sh
+#   packaging/build-appimage.sh
 #
 # Requirements: python3 (with the venv module), curl, ~1 GB of free space.
 # The video tiles need libmpv on the machine the app runs on:
 #   Ubuntu/Debian: sudo apt install libmpv2   Fedora: sudo dnf install mpv-libs
 #   Arch: sudo pacman -S mpv
-# Bundle everything (no system requirement, ~270 MB):  MPV_BUNDLE=1 ./build-appimage.sh
+# Bundle everything (no system requirement, ~270 MB):  MPV_BUNDLE=1 packaging/build-appimage.sh
 # Tip: build on the oldest distribution you want to support – the AppImage then runs
 # on all newer ones too (it needs at least the glibc of the build system).
 set -euo pipefail
-cd "$(dirname "$(readlink -f "$0")")"
+cd "$(dirname "$(readlink -f "$0")")/.."  # repository root
 
 ARCH="$(uname -m)"
 BUILD="build-appimage"
@@ -23,12 +23,15 @@ TOOL="$BUILD/appimagetool-$ARCH.AppImage"
 
 echo "==> Python environment"
 mkdir -p "$BUILD"
-# PYTHON=python3.12 ./build-appimage.sh uses a specific interpreter (e.g. in CI)
+# PYTHON=python3.12 packaging/build-appimage.sh uses a specific interpreter (e.g. in CI)
 [ -d "$BUILD/venv" ] || "${PYTHON:-python3}" -m venv "$BUILD/venv"
 # shellcheck disable=SC1091
 . "$BUILD/venv/bin/activate"
 pip install -q --upgrade pip
-pip install -q -r requirements.txt pyinstaller
+# dependencies from pyproject.toml (the app itself is taken from the source tree)
+python3 -c 'import tomllib; print("\n".join(tomllib.load(open("pyproject.toml", "rb"))["project"]["dependencies"]))' \
+  > "$BUILD/requirements.txt"
+pip install -q -r "$BUILD/requirements.txt" pyinstaller
 
 echo "==> PyInstaller"
 # python-mpv is NOT analysed (otherwise PyInstaller would bundle the build machine's
@@ -39,18 +42,18 @@ pyinstaller --noconfirm --clean --windowed --name multichat \
   --collect-all pytchat --collect-all curl_cffi --collect-submodules yt_dlp --collect-all yt_dlp_ejs --collect-all streamlink \
   --hidden-import PyQt6.QtNetwork --hidden-import PyQt6.QtOpenGLWidgets \
   --exclude-module mpv --add-data "$MPV_PY:." \
-  --add-data "$PWD/multichat.png:." --add-data "$PWD/locales:locales" \
+  --paths "$PWD" --add-data "$PWD/multichat/resources:multichat/resources" \
   --hidden-import queue --hidden-import concurrent.futures --hidden-import ctypes.util \
-  main.py
+  packaging/entry.py
 
 echo "==> AppDir"
 rm -rf "$APPDIR"
 mkdir -p "$APPDIR/usr/bin" "$APPDIR/usr/share/applications" "$APPDIR/usr/share/icons/hicolor/256x256/apps"
 cp -a "$BUILD/dist/multichat/." "$APPDIR/usr/bin/"
-cp multichat.desktop "$APPDIR/"
-cp multichat.desktop "$APPDIR/usr/share/applications/"
-cp multichat.png "$APPDIR/"
-cp multichat.png "$APPDIR/usr/share/icons/hicolor/256x256/apps/"
+cp packaging/multichat.desktop "$APPDIR/"
+cp packaging/multichat.desktop "$APPDIR/usr/share/applications/"
+cp multichat/resources/multichat.png "$APPDIR/"
+cp multichat/resources/multichat.png "$APPDIR/usr/share/icons/hicolor/256x256/apps/"
 ln -sf multichat.png "$APPDIR/.DirIcon"
 
 echo "==> License texts"
