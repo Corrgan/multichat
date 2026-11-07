@@ -92,6 +92,7 @@ modules:
   - name: libplacebo
     buildsystem: meson
     config-opts:
+      - --libdir=lib
       - -Dvulkan=disabled
       - -Dshaderc=disabled
       - -Dglslang=disabled
@@ -113,6 +114,8 @@ modules:
 
   - name: libdisplay-info
     buildsystem: meson
+    config-opts:
+      - --libdir=lib
     sources:
       - type: archive
         url: https://gitlab.freedesktop.org/emersion/libdisplay-info/-/archive/0.2.0/libdisplay-info-0.2.0.tar.gz
@@ -121,6 +124,7 @@ modules:
   - name: mpv
     buildsystem: meson
     config-opts:
+      - --libdir=lib
       - -Dlibmpv=true
       - -Dcplayer=false
       - -Dbuild-date=false
