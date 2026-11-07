@@ -42,9 +42,11 @@ def ytdl_wrapper() -> str:
         return _WRAPPER
     import os
     import shlex
+    import tempfile
 
     base = Path(os.environ.get("XDG_RUNTIME_DIR") or Path.home() / ".cache") / "multichat"
-    base.mkdir(parents=True, exist_ok=True)
+    base.mkdir(mode=0o700, parents=True, exist_ok=True)
+    base.chmod(0o700)
     path = base / "yt-dlp"
     if getattr(sys, "frozen", False):
         cmd = f"exec {shlex.quote(sys.executable)} --yt-dlp \"$@\""
@@ -54,8 +56,12 @@ def ytdl_wrapper() -> str:
             f"PYTHONPATH={shlex.quote(str(src))}${{PYTHONPATH:+:$PYTHONPATH}} "
             f"exec {shlex.quote(sys.executable)} -m multichat --yt-dlp \"$@\""
         )
-    path.write_text(f"#!/bin/sh\n{cmd}\n")
-    path.chmod(0o755)
+    # written to a private temporary file and moved into place atomically
+    fd, tmp = tempfile.mkstemp(dir=base, prefix=".yt-dlp-")
+    with os.fdopen(fd, "w") as f:
+        f.write(f"#!/bin/sh\n{cmd}\n")
+    os.chmod(tmp, 0o700)
+    os.replace(tmp, path)
     _WRAPPER = str(path)
     log.debug("yt-dlp wrapper for mpv: %s → %s", path, cmd)
     return _WRAPPER

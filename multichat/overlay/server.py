@@ -16,12 +16,15 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 
 from aiohttp import WSMsgType, web
 
 from ..chat.models import ChatMessage, Deletion
 from ..core.constants import FAVICONS
 from ..core.paths import resource
+
+log = logging.getLogger("multichat.overlay")
 
 
 
@@ -77,11 +80,25 @@ class OverlayServer:
             await self.runner.cleanup()
         self.runner = None
 
+    def _allowed(self, request: web.Request) -> bool:
+        """Only this machine: the Host header stops DNS rebinding, the Origin header stops
+        other websites in the browser from reading the chat over the WebSocket."""
+        hosts = {f"127.0.0.1:{self.port}", f"localhost:{self.port}"}
+        origin = request.headers.get("Origin")
+        if request.host not in hosts or (origin is not None and origin not in {f"http://{h}" for h in hosts}):
+            log.warning("Overlay: rejected request (Host %r, Origin %r)", request.host, origin)
+            return False
+        return True
+
     async def _index(self, request: web.Request) -> web.Response:
+        if not self._allowed(request):
+            return web.Response(status=403, text="forbidden")
         page = resource("overlay.html").read_text(encoding="utf-8").replace("__FAVICONS__", json.dumps(FAVICONS))
         return web.Response(text=page, content_type="text/html")
 
     async def _ws(self, request: web.Request) -> web.WebSocketResponse:
+        if not self._allowed(request):
+            return web.Response(status=403, text="forbidden")
         ws = web.WebSocketResponse(heartbeat=30)
         await ws.prepare(request)
         self.clients.add(ws)

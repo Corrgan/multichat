@@ -28,3 +28,21 @@ def test_overlay_page_and_websocket():
             await ov.stop()
 
     asyncio.run(run())
+
+
+def test_overlay_rejects_foreign_origin_and_host():
+    async def run():
+        ov = OverlayServer(asyncio.get_running_loop())
+        await ov.start(PORT)
+        try:
+            async with aiohttp.ClientSession() as s:
+                async with s.get(f"http://127.0.0.1:{PORT}/", headers={"Host": "evil.example:80"}) as r:
+                    assert r.status == 403  # DNS rebinding
+                async with s.get(f"http://127.0.0.1:{PORT}/ws", headers={"Origin": "https://evil.example"}) as r:
+                    assert r.status == 403  # other website in the browser
+                async with s.ws_connect(f"http://localhost:{PORT}/ws", origin=f"http://localhost:{PORT}") as ws:
+                    assert not ws.closed  # the overlay page itself (OBS) is fine
+        finally:
+            await ov.stop()
+
+    asyncio.run(run())

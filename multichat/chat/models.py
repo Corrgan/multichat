@@ -4,11 +4,13 @@
 from __future__ import annotations
 
 import itertools
+import re
 import time
 from dataclasses import dataclass, field
 from typing import Callable, Union
 
 _uid = itertools.count(1)
+_COLOR_RE = re.compile(r"#[0-9a-fA-F]{6}")
 
 # A message part: ("text", text, "") or ("emote", image_url, emote_name)
 Part = tuple
@@ -31,6 +33,9 @@ class ChatMessage:
     def __post_init__(self) -> None:
         if not self.parts:
             self.parts = [("text", self.text, "")]
+        # name colours come from the platforms; only accept #RRGGBB (ends up in HTML/CSS)
+        if self.color and not _COLOR_RE.fullmatch(self.color):
+            self.color = None
 
 
 @dataclass
