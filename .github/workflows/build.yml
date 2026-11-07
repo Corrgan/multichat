@@ -5,7 +5,8 @@
 # - Manual (Actions → Build → "Run workflow"): both as downloadable artifacts.
 # - Pushing a tag (e.g. `git tag v0.20 && git push origin v0.20`): additionally a GitHub release
 #   with both files and checksums – but only for tags of the form vX.Y where Y is a single digit
-#   or ends in 0 (v0.10, v0.20, v1.6, v2.0). Other tags (v0.11, v0.15, v0.10.1 …) build nothing.
+#   or ends in 0 (v0.10, v0.20, v1.6, v2.0), plus the exceptions in EXTRA_RELEASES (v0.25).
+#   Other tags (v0.11, v0.15, v0.10.1 …) build nothing.
 #   The tag must also match __version__ in multichat/__init__.py.
 #
 # The AppImage is built in an Ubuntu 22.04 container (glibc 2.35), so it runs on all systems
@@ -35,11 +36,15 @@ jobs:
         env:
           EVENT: ${{ github.event_name }}
           TAG: ${{ github.ref_name }}
+          EXTRA_RELEASES: v0.25  # one-off exceptions to the rule (v0.25: first Flatpak)
         run: |
           if [ "$EVENT" = "workflow_dispatch" ]; then
             echo "build=true" >> "$GITHUB_OUTPUT"
           elif [[ "$TAG" =~ ^v[0-9]+\.([0-9]|[0-9]+0)$ ]]; then
             echo "Tag $TAG matches the release rule"
+            echo "build=true" >> "$GITHUB_OUTPUT"
+          elif [[ " $EXTRA_RELEASES " == *" $TAG "* ]]; then
+            echo "Tag $TAG is an extra release"
             echo "build=true" >> "$GITHUB_OUTPUT"
           else
             echo "::notice::Tag $TAG is not a release tag (only vX.Y with Y a single digit or ending in 0) – no build"
