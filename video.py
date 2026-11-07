@@ -129,6 +129,9 @@ class MpvWidget(QOpenGLWidget):
         self.setMinimumSize(160, 90)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         mlog = logging.getLogger(f"multichat.mpv.{name}")
+        # ffmpeg has one process-wide log callback, so mpv hands its messages to an
+        # arbitrary player – log them under their own name instead of a platform's
+        flog = logging.getLogger("multichat.mpv.ffmpeg")
         levels = {"fatal": logging.CRITICAL, "error": logging.ERROR, "warn": logging.WARNING, "info": logging.INFO}
 
         self.last_error = ""
@@ -143,7 +146,10 @@ class MpvWidget(QOpenGLWidget):
                     self.last_error = re.sub(r"\s*\(caused by .*$", "", short)[:160]
                 elif not self.last_error:  # only the generic "youtube-dl failed"
                     self.last_error = msg
-            mlog.log(levels.get(level, logging.DEBUG), "[%s] %s", component, msg)
+            lvl = levels.get(level, logging.DEBUG)
+            if component == "libmpv_render" and "OpenGL error INVALID_ENUM" in msg:
+                lvl = logging.DEBUG  # common with Mesa when creating textures, harmless
+            (flog if component.startswith("ffmpeg") else mlog).log(lvl, "[%s] %s", component, msg)
 
         extra = {}
         if ytdl:

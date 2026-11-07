@@ -34,7 +34,8 @@ _SECRET_PATTERNS = [
         ),
         r"\1***",
     ),
-    (re.compile(r"([?&]code=)[^&\s\"']+"), r"\1***"),  # OAuth code in redirect URLs
+    (re.compile(r"([?&]code=)[^&\s\"']+"), r"\1***"),  # OAuth code in redirect URLs    # cookies in HTTP headers, e.g. "Cookie: …" or hpack's b'cookie'=b'…'
+    (re.compile(r"(?i)(\b(?:set-)?cookie['\"]?\s*[=:,]\s*b?['\"]?)[^'\"\n]+"), r"\1***"),
 ]
 
 
@@ -64,7 +65,7 @@ def setup_logging(debug: bool = False) -> Path:
     root.addHandler(sh)
     set_debug(debug)
     # keep libraries from being too chatty
-    for noisy in ("websockets", "aiohttp.access", "urllib3", "asyncio", "httpx", "httpcore"):
+    for noisy in ("websockets", "aiohttp.access", "urllib3", "asyncio", "httpx", "httpcore", "hpack", "h2", "hyperframe"):
         logging.getLogger(noisy).setLevel(logging.WARNING)
 
     def excepthook(etype, value, tb):
