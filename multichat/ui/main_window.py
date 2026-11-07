@@ -20,7 +20,7 @@ from PyQt6.QtWidgets import (
     QVBoxLayout, QWidget,
 )
 
-from ..accounts import KickAccount, SecretStore, TwitchAccount, YouTubeAccount
+from ..accounts import ApiError, KickAccount, SecretStore, TwitchAccount, YouTubeAccount
 from ..accounts.store import choose_backend
 from ..chat import ChatMessage, Deletion, EmoteStore, run_kick, run_twitch, run_youtube
 from ..core import i18n
@@ -280,17 +280,18 @@ class MainWindow(QMainWindow):
     # ---- Helpers --------------------------------------------------------- #
     def run(self, coro, then=None, label: str | None = None, on_error=None):
         """Run a coroutine in the asyncio thread; the result arrives in the Qt thread."""
+        name = getattr(coro, "__qualname__", "action")  # English name for the log (the label is translated)
         fut = asyncio.run_coroutine_threadsafe(coro, self.loop)
-        fut.add_done_callback(lambda f: self.bridge.result.emit((then, label, on_error), f))
+        fut.add_done_callback(lambda f: self.bridge.result.emit((then, label, on_error, name), f))
         return fut
 
     def _on_result(self, meta, fut) -> None:
-        then, label, on_error = meta
+        then, label, on_error, name = meta
         if fut.cancelled():
             return
         exc = fut.exception()
         if exc:
-            log.error("%s failed: %s", label or "Action", exc, exc_info=exc)
+            log.error("%s failed: %s", name, exc, exc_info=exc)
             self.statusBar().showMessage(_("Error: {error}").format(error=exc), 12000)
             if on_error:
                 on_error()
@@ -533,10 +534,26 @@ class MainWindow(QMainWindow):
             if not channel:
                 self.statusBar().showMessage(_("No {platform} channel entered").format(platform=NAMES[p]), 6000)
                 continue
-            self.run(self.accounts[p].send(channel, text), label=_("Sent to {platform}").format(platform=NAMES[p]))
+            self.run(self.send_to(p, channel, text), label=_("Sent to {platform}").format(platform=NAMES[p]))
             sent = True
         if sent:
             self.input.clear()
+
+    async def send_to(self, platform: str, channel: str, text: str) -> None:
+        try:
+            await self.accounts[platform].send(channel, text)
+        except ApiError as e:
+            if e.status != 403:
+                raise
+            # the platforms only say "Forbidden" – explain the usual causes
+            raise ApiError(
+                _(
+                    "{platform} rejected the message ({error}). The chat may be restricted (followers or "
+                    "subscribers only, slow mode, verified accounts only) or the developer app lacks the "
+                    "permission to send."
+                ).format(platform=NAMES[platform], error=e),
+                status=403,
+            ) from e
 
     # ---- Accounts -------------------------------------------------------- #
     def refresh_accounts(self) -> None:

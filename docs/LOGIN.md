@@ -160,6 +160,7 @@ only at this moment (you can create a new one later).
 | Twitch: login fails at the end (e.g. "invalid client") | Client Type is *Public* instead of *Confidential* – public apps have no secret; create a new app with *Confidential* |
 | Sending works, moderating doesn't | you're not a moderator on the channel |
 | Kick: login or an action is rejected | a required scope isn't ticked in the Kick app |
+| Sending fails with "rejected the message (… 403 …)" | the channel restricts its chat (followers only – often with a minimum follow time –, subscribers only, slow mode, verified accounts only); check in the browser whether you can write there. If it fails in your own channel as well, `chat:write` (Kick) is missing in the developer app – tick it, then log out and in again |
 | "session expired – please log in again" | token expired (with Google in Testing status after 7 days) – log in again |
 
 The log always has more details: **Help → Copy log**.

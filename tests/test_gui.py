@@ -113,3 +113,15 @@ def test_languages_and_about(app, monkeypatch, lang, view, help_):
     finally:
         w.close()
         i18n.set_language("en")
+
+
+def test_send_403_explains_restrictions(window, monkeypatch):
+    from multichat.accounts import ApiError
+
+    async def forbidden(channel, text):
+        raise ApiError("Kick (403): Forbidden", status=403)
+
+    monkeypatch.setattr(window.accounts["kick"], "send", forbidden)
+    with pytest.raises(ApiError) as e:
+        asyncio.run(window.send_to("kick", "examplechan", "hi"))
+    assert e.value.status == 403 and "followers" in str(e.value) and "Forbidden" in str(e.value)

@@ -123,6 +123,7 @@
   "{host} cannot be resolved (DNS)": "{host} ne peut pas être résolu (DNS)",
   "{host} is blocked by your DNS blocker (→ {addresses})": "{host} est bloqué par votre bloqueur DNS (→ {addresses})",
   "{platform} login failed ({status}): {error}": "Échec de la connexion à {platform} ({status}) : {error}",
+  "{platform} rejected the message ({error}). The chat may be restricted (followers or subscribers only, slow mode, verified accounts only) or the developer app lacks the permission to send.": "{platform} a refusé le message ({error}). Le chat est peut-être restreint (abonnés ou followers uniquement, mode lent, comptes vérifiés uniquement) ou l'application développeur n'a pas l'autorisation d'envoyer.",
   "{platform} session expired – please log in again": "Session {platform} expirée – veuillez vous reconnecter",
   "{platform}: {user} – log out": "{platform} : {user} – se déconnecter",
   "{user} banned": "{user} banni"

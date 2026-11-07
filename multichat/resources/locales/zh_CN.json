@@ -123,6 +123,7 @@
   "{host} cannot be resolved (DNS)": "无法解析 {host}（DNS）",
   "{host} is blocked by your DNS blocker (→ {addresses})": "{host} 被你的 DNS 拦截器屏蔽（→ {addresses}）",
   "{platform} login failed ({status}): {error}": "{platform} 登录失败（{status}）：{error}",
+  "{platform} rejected the message ({error}). The chat may be restricted (followers or subscribers only, slow mode, verified accounts only) or the developer app lacks the permission to send.": "{platform} 拒绝了该消息（{error}）。聊天可能受到限制（仅限关注者或订阅者、慢速模式、仅限已验证账户），或开发者应用缺少发送权限。",
   "{platform} session expired – please log in again": "{platform} 会话已过期 – 请重新登录",
   "{platform}: {user} – log out": "{platform}：{user} – 退出登录",
   "{user} banned": "已封禁 {user}"

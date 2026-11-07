@@ -47,7 +47,9 @@ def success_html() -> str:
 
 
 class ApiError(Exception):
-    pass
+    def __init__(self, message: str, status: int | None = None) -> None:
+        super().__init__(message)
+        self.status = status  # HTTP status of the platform API, if any
 
 
 def _short_error(text: str) -> str:
@@ -219,7 +221,7 @@ class Account:
             return await self.request(method, url, _retry=False, headers=extra, **kw)
         if status >= 400:
             log.warning("%s %s %s → HTTP %s: %s", self.name, method, url.split("?")[0], status, text[:300])
-            raise ApiError(f"{self.name} ({status}): {_short_error(text)}")
+            raise ApiError(f"{self.name} ({status}): {_short_error(text)}", status=status)
         log.debug("%s %s %s → HTTP %s", self.name, method, url.split("?")[0], status)
         return json.loads(text) if text.strip() else None
 

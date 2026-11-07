@@ -123,6 +123,7 @@
   "{host} cannot be resolved (DNS)": "{host} を名前解決できません（DNS）",
   "{host} is blocked by your DNS blocker (→ {addresses})": "{host} は DNS ブロッカーでブロックされています（→ {addresses}）",
   "{platform} login failed ({status}): {error}": "{platform} のログインに失敗しました（{status}）：{error}",
+  "{platform} rejected the message ({error}). The chat may be restricted (followers or subscribers only, slow mode, verified accounts only) or the developer app lacks the permission to send.": "{platform} がメッセージを拒否しました（{error}）。チャットが制限されている（フォロワー/サブスクライバー限定、低速モード、認証済みアカウント限定）か、開発者アプリに送信の権限がない可能性があります。",
   "{platform} session expired – please log in again": "{platform} のセッションが期限切れです – もう一度ログインしてください",
   "{platform}: {user} – log out": "{platform}：{user} – ログアウト",
   "{user} banned": "{user} を BAN しました"
