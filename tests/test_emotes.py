@@ -10,10 +10,10 @@ def seven(name, eid, files=("1x.webp","2x.webp","1x.png","2x.png")):
     return {"name": name, "data": {"host": {"url": f"//cdn.7tv.app/emote/{eid}", "files": [{"name": f} for f in files]}}}
 FAKE = {
   "https://7tv.io/v3/emote-sets/global": {"emotes": [seven("EZ","g1"), seven("Clap","g2")]},
-  "https://api.betterttv.net/3/cached/emotes/global": [{"id":"b1","code":"catJAM"}, {"id":"b2","code":"EZ"}],
+  "https://api.betterttv.net/3/cached/emotes/global": [{"id":"5f1b0186cf6d2144653d2970","code":"catJAM"}, {"id":"5f1b0186cf6d2144653d2971","code":"EZ"}],
   "https://api.frankerfacez.com/v1/set/global": {"default_sets":[3], "sets":{"3":{"emoticons":[{"name":"ZreknarF","urls":{"1":"//cdn.frankerfacez.com/emote/1/1","2":"//cdn.frankerfacez.com/emote/1/2"}}]}, "4":{"emoticons":[{"name":"NOTDEFAULT","urls":{"1":"x"}}]}}},
   "https://7tv.io/v3/users/twitch/123": {"emote_set": {"emotes": [seven("peepoHey","c1")]}},
-  "https://api.betterttv.net/3/cached/users/twitch/123": {"channelEmotes":[{"id":"cb","code":"KEKW"}], "sharedEmotes":[{"id":"sb","code":"Clap"}]},
+  "https://api.betterttv.net/3/cached/users/twitch/123": {"channelEmotes":[{"id":"5f1b0186cf6d2144653d2972","code":"KEKW"}], "sharedEmotes":[{"id":"5f1b0186cf6d2144653d2973","code":"Clap"}]},
   "https://api.frankerfacez.com/v1/room/id/123": {"sets":{"9":{"emoticons":[{"name":"OMEGALUL","urls":{"2":"https://cdn.frankerfacez.com/emote/9/2"}}]}}},
   "https://7tv.io/v3/users/kick/77": {"emote_set": {"emotes": [seven("kickHype","k1", files=("1x.webp","2x.webp"))]}},
   "https://7tv.io/v3/users/twitch/404": None,
@@ -43,9 +43,17 @@ async def _run():
     kinds = [(k, a or v) for k, v, a in p]
     assert kinds == [("emote","Kappa"),("text"," "),("emote","EZ"),("text","  "),("emote","catJAM"),("text"," KEKW, "),("emote","KEKW")], kinds
     assert "".join(a if k=="emote" else v for k,v,a in p) == text
-    assert dict((a,v) for k,v,a in p if k=="emote")["catJAM"] == "https://cdn.betterttv.net/emote/b1/2x"
+    assert dict((a,v) for k,v,a in p if k=="emote")["catJAM"] == "https://cdn.betterttv.net/emote/5f1b0186cf6d2144653d2970/2x"
     p = s.apply("kick", "examplekick", kick_parts("kickHype [emote:5:KEKW] peepoHey"))
     assert [a for k,v,a in p if k=="emote"] == ["kickHype","KEKW"], p   # peepoHey is a Twitch channel emote only
     s.enabled = False
     assert s.apply("twitch","chan",[("text","EZ","")]) == [("text","EZ","")]
     
+
+
+def test_non_https_urls_are_dropped():
+    s = EmoteStore(lambda: None, ["png"])
+    assert s._ffz_parse({"1": {"emoticons": [{"name": "A", "urls": {"2": "http://x.invalid/a"}},
+                                             {"name": "B", "urls": {"2": "//cdn.example/b"}}]}}) == {"B": "https://cdn.example/b"}
+    assert s._7tv_url({"data": {"host": {"url": "file:///etc", "files": [{"name": "2x.png"}]}}}) is None
+    assert s._bttv_parse([{"id": "../../x", "code": "C"}]) == {}

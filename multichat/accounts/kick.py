@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import logging
 
-from ..chat.models import ChatMessage
+from ..chat.models import ChatMessage, kick_channel
 from ..core.i18n import _
 from .oauth import Account, ApiError
 
@@ -25,7 +25,7 @@ class KickAccount(Account):
         return {"user_id": u["user_id"], "user_name": u["name"]}
 
     async def broadcaster_id(self, channel: str) -> int:
-        slug = channel.lower().strip()
+        slug = kick_channel(channel)
         if slug not in self._cache:
             data = (await self.request("GET", f"{self.API}/channels", params={"slug": slug}))["data"]
             if not data:

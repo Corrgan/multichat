@@ -104,6 +104,7 @@
   "disconnected": "desconectado",
   "error: {error} – retrying in {seconds} s": "error: {error} – reintentando en {seconds} s",
   "getting chatroom ID …": "obteniendo el ID de la sala …",
+  "invalid channel name": "nombre de canal no válido",
   "key rejected – trying the next one …": "clave rechazada – probando la siguiente …",
   "live": "en directo",
   "live – skipping ad break, back in a moment …": "en directo – saltando la pausa publicitaria, vuelve enseguida …",

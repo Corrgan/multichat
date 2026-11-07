@@ -80,6 +80,7 @@ class Account:
         self.creds = creds
         self._session = session
         self._cache: dict = {}
+        self._refresh_lock: asyncio.Lock | None = None
 
     # ---- State --------------------------------------------------------- #
     @property
@@ -134,7 +135,7 @@ class Account:
 
         async def callback(request: web.Request) -> web.Response:
             q = request.query
-            if q.get("state") != state:
+            if not secrets.compare_digest(q.get("state", ""), state):
                 return web.Response(text=_("Invalid login state – please try again."), status=400)
             if not code_fut.done():
                 if "code" in q:
@@ -186,7 +187,10 @@ class Account:
             status = r.status
         if status >= 400:
             log.warning("%s token request (%s) → HTTP %s: %s", self.name, data.get("grant_type"), status, text[:300])
-            raise ApiError(_("{platform} login failed ({status}): {error}").format(platform=self.name, status=status, error=_short_error(text)))
+            raise ApiError(
+                _("{platform} login failed ({status}): {error}").format(platform=self.name, status=status, error=_short_error(text)),
+                status=status,
+            )
         body = json.loads(text)
         out = {
             "access_token": body["access_token"],
@@ -196,28 +200,47 @@ class Account:
             out["refresh_token"] = body["refresh_token"]
         return out
 
-    async def _refresh(self) -> None:
-        rt = self.tokens.get("refresh_token")
-        if not rt:
-            raise ApiError(_("{platform} session expired – please log in again").format(platform=self.name))
-        cid, secret = self.creds(self.platform)
-        tok = await self._token_request(
-            {"grant_type": "refresh_token", "refresh_token": rt, "client_id": cid, "client_secret": secret}
-        )
-        self.store.update(self.platform, **tok)
+    async def _refresh(self, stale_token: str | None = None) -> None:
+        """Renews the access token. Several requests may need this at the same time; the
+        platforms rotate refresh tokens, so only one refresh may run – the others reuse it."""
+        if self._refresh_lock is None:
+            self._refresh_lock = asyncio.Lock()
+        async with self._refresh_lock:
+            tok = self.tokens
+            if tok.get("access_token") != stale_token and tok.get("expires_at", 0) > time.time() + 60:
+                return  # another request refreshed it meanwhile
+            rt = tok.get("refresh_token")
+            expired = ApiError(_("{platform} session expired – please log in again").format(platform=self.name), status=401)
+            if not rt:
+                raise expired
+            cid, secret = self.creds(self.platform)
+            try:
+                new = await self._token_request(
+                    {"grant_type": "refresh_token", "refresh_token": rt, "client_id": cid, "client_secret": secret}
+                )
+            except ApiError as e:
+                if e.status in (400, 401):  # refresh token revoked or expired → log out cleanly
+                    log.warning("%s: refresh token rejected – logging out", self.name)
+                    self.logout()
+                    raise expired from e
+                raise
+            self.store.update(self.platform, **new)
 
     async def request(self, method: str, url: str, *, _retry: bool = True, **kw):
         if not self.logged_in:
             raise ApiError(_("Not logged in to {platform}").format(platform=self.name))
         if self.tokens.get("expires_at", 0) < time.time() + 60:
-            await self._refresh()
+            await self._refresh(self.tokens.get("access_token"))
         extra = kw.pop("headers", {})
-        headers = {"Authorization": f"Bearer {self.tokens['access_token']}", **self.extra_headers(), **extra}
+        token = self.tokens.get("access_token")
+        if not token:
+            raise ApiError(_("Not logged in to {platform}").format(platform=self.name))
+        headers = {"Authorization": f"Bearer {token}", **self.extra_headers(), **extra}
         async with self.session.request(method, url, headers=headers, **kw) as r:
             text = await r.text()
             status = r.status
         if status == 401 and _retry:
-            await self._refresh()
+            await self._refresh(token)
             return await self.request(method, url, _retry=False, headers=extra, **kw)
         if status >= 400:
             log.warning("%s %s %s → HTTP %s: %s", self.name, method, url.split("?")[0], status, text[:300])

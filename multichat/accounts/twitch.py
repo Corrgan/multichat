@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import logging
 
-from ..chat.models import ChatMessage
+from ..chat.models import ChatMessage, twitch_channel
 from ..core.i18n import _
 from .oauth import Account, ApiError
 
@@ -29,7 +29,7 @@ class TwitchAccount(Account):
         return {"user_id": u["id"], "user_name": u["display_name"]}
 
     async def broadcaster_id(self, channel: str) -> str:
-        login = channel.lower().lstrip("#")
+        login = twitch_channel(channel)
         if login not in self._cache:
             data = (await self.request("GET", f"{self.API}/users", params={"login": login}))["data"]
             if not data:

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import itertools
+import random
 import re
 import time
 from dataclasses import dataclass, field
@@ -49,6 +50,47 @@ class Deletion:
 Event = Union[ChatMessage, Deletion]
 Emit = Callable[[Event], None]
 Status = Callable[..., None]  # status(platform, template, **values)
+
+
+class Backoff:
+    """Reconnect delays: 5 s, 10 s, 20 s … up to 2 min, with some jitter so several
+    clients don't reconnect in lockstep. A connection that held for a while resets it."""
+
+    def __init__(self, first: float = 5, maximum: float = 120, stable: float = 60) -> None:
+        self.first, self.maximum, self.stable = first, maximum, stable
+        self.failures = 0
+        self.started = time.monotonic()
+
+    def connected(self) -> None:
+        self.started = time.monotonic()
+
+    def next(self) -> int:
+        if time.monotonic() - self.started >= self.stable:
+            self.failures = 0
+        delay = min(self.maximum, self.first * 2**self.failures)
+        self.failures += 1
+        self.started = time.monotonic()
+        return max(1, round(delay * random.uniform(0.85, 1.15)))
+
+
+_TWITCH_RE = re.compile(r"^(?:(?:https?://)?(?:www\.|m\.)?twitch\.tv/)?[#@]?([a-z0-9_]{1,25})/?$")
+_KICK_RE = re.compile(r"^(?:(?:https?://)?(?:www\.)?kick\.com/)?@?([a-z0-9_-]{1,64})/?$")
+
+
+def twitch_channel(value: str) -> str:
+    """Twitch login from a name, #name or twitch.tv URL; ValueError if invalid."""
+    m = _TWITCH_RE.match(value.strip().lower())
+    if not m:
+        raise ValueError(f"invalid Twitch channel name: {value!r}")
+    return m.group(1)
+
+
+def kick_channel(value: str) -> str:
+    """Kick slug from a name or kick.com URL; ValueError if invalid."""
+    m = _KICK_RE.match(value.strip().lower())
+    if not m:
+        raise ValueError(f"invalid Kick channel name: {value!r}")
+    return m.group(1)
 
 
 def with_extra_emotes(emotes, platform: str, channel: str, parts: list[Part]) -> list[Part]:

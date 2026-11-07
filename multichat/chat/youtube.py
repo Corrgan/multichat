@@ -13,7 +13,7 @@ import logging
 import re
 import time
 
-from .models import ChatMessage, Emit, Part, Status, with_extra_emotes as _extra
+from .models import Backoff, ChatMessage, Emit, Part, Status, with_extra_emotes as _extra
 
 log = logging.getLogger("multichat.chat")
 
@@ -21,7 +21,7 @@ log = logging.getLogger("multichat.chat")
 YT_POLL = 60  # seconds between "is the channel live?" checks
 YT_HEADERS = {
     "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36",
-    "Accept-Language": "de-DE,de;q=0.9,en;q=0.8",
+    "Accept-Language": "en-US,en;q=0.8",
 }
 # skips the EU cookie consent page (consent.youtube.com)
 YT_COOKIES = {"SOCS": "CAI", "CONSENT": "YES+cb"}
@@ -99,7 +99,9 @@ async def run_youtube(value: str, emit: Emit, status: Status, emotes=None) -> No
     import pytchat  # type: ignore
 
     kind, target = youtube_target(value)
+    backoff = Backoff(first=15)
     while True:
+        chat = None
         try:
             if kind == "video":
                 vid, title = target, ""
@@ -118,6 +120,7 @@ async def run_youtube(value: str, emit: Emit, status: Status, emotes=None) -> No
                 status("youtube", "live: {title}", title=title)
             else:
                 status("youtube", "connected ({channel})", channel=vid)
+            backoff.connected()
             while chat.is_alive():
                 items = await asyncio.to_thread(lambda: list(chat.get().sync_items()))
                 for c in items:
@@ -142,5 +145,12 @@ async def run_youtube(value: str, emit: Emit, status: Status, emotes=None) -> No
             raise
         except Exception as e:  # noqa: BLE001
             log.warning("YouTube chat %s: %s", value, e, exc_info=True)
-            status("youtube", "error: {error} – retrying in {seconds} s", error=e, seconds=15)
-            await asyncio.sleep(15)
+            delay = backoff.next()
+            status("youtube", "error: {error} – retrying in {seconds} s", error=e, seconds=delay)
+            await asyncio.sleep(delay)
+        finally:
+            if chat is not None:  # stops pytchat's background fetching (also on disconnect)
+                try:
+                    chat.terminate()
+                except Exception:  # noqa: BLE001
+                    pass

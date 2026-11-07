@@ -18,6 +18,7 @@ from typing import Callable
 from urllib.parse import urljoin
 
 from ..chat.kick import fetch_kick_json
+from ..chat.models import twitch_channel
 from ..chat.youtube import youtube_target
 from ..core.i18n import _
 
@@ -346,7 +347,7 @@ def resolve(platform: str, value: str, quality: str) -> Stream:
     value = value.strip()
     log.debug("Looking for stream: %s %r (%s)", platform, value, quality)
     if platform == "twitch":
-        return _twitch(value.lower().lstrip("#"), max_h)
+        return _twitch(twitch_channel(value), max_h)
     if platform == "kick":
         return _kick(value, max_h)
     return _youtube(value, max_h)

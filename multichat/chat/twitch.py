@@ -9,7 +9,7 @@ import logging
 
 import websockets
 
-from .models import ChatMessage, Deletion, Emit, Part, Status, with_extra_emotes as _extra
+from .models import Backoff, ChatMessage, Deletion, Emit, Part, Status, twitch_channel, with_extra_emotes as _extra
 
 log = logging.getLogger("multichat.chat")
 
@@ -53,9 +53,11 @@ def twitch_parts(text: str, emotes: str | None) -> list[Part]:
     spans = []
     for entry in emotes.split("/"):
         eid, _, positions = entry.partition(":")
+        if not eid.replace("_", "").isalnum():  # IDs are digits or emotesv2_<hex>
+            continue
         for rng in positions.split(","):
-            if "-" in rng:
-                a, b = rng.split("-")
+            a, sep, b = rng.partition("-")
+            if sep and a.isdigit() and b.isdigit() and int(a) <= int(b) < len(text):
                 spans.append((int(a), int(b), eid))
     spans.sort()
     out: list[Part] = []
@@ -73,7 +75,8 @@ def twitch_parts(text: str, emotes: str | None) -> list[Part]:
 
 
 async def run_twitch(channel: str, emit: Emit, status: Status, emotes=None) -> None:
-    channel = channel.lower().lstrip("#")
+    channel = twitch_channel(channel)
+    backoff = Backoff()
     while True:
         try:
             status("twitch", "connecting …")
@@ -83,6 +86,7 @@ async def run_twitch(channel: str, emit: Emit, status: Status, emotes=None) -> N
                 await ws.send(f"NICK justinfan{random.randint(10000, 99999)}")
                 await ws.send(f"JOIN #{channel}")
                 status("twitch", "connected (#{channel})", channel=channel)
+                backoff.connected()
                 async for raw in ws:
                     for line in str(raw).split("\r\n"):
                         if not line:
@@ -119,5 +123,6 @@ async def run_twitch(channel: str, emit: Emit, status: Status, emotes=None) -> N
             raise
         except Exception as e:  # noqa: BLE001
             log.warning("Twitch chat #%s: %s", channel, e, exc_info=True)
-            status("twitch", "error: {error} – retrying in {seconds} s", error=e, seconds=5)
-            await asyncio.sleep(5)
+            delay = backoff.next()
+            status("twitch", "error: {error} – retrying in {seconds} s", error=e, seconds=delay)
+            await asyncio.sleep(delay)

@@ -10,7 +10,7 @@ import re
 
 import websockets
 
-from .models import ChatMessage, Deletion, Emit, Part, Status, with_extra_emotes as _extra
+from .models import Backoff, ChatMessage, Deletion, Emit, Part, Status, kick_channel, with_extra_emotes as _extra
 
 log = logging.getLogger("multichat.chat")
 
@@ -26,11 +26,17 @@ def kick_pusher_url(key: str, cluster: str) -> str:
     return f"wss://ws-{cluster}.pusher.com/app/{key}?protocol=7&client=js&version=8.4.0-rc2&flash=false"
 
 
+_PUSHER_KEY_RE = re.compile(r"[0-9a-f]{16,40}")
+_PUSHER_CLUSTER_RE = re.compile(r"[a-z0-9-]{1,16}")
+
+
 def _find_pusher_creds(obj) -> tuple[str, str] | None:
-    """Looks for app_key/cluster anywhere in the response (the format may change)."""
+    """Looks for app_key/cluster anywhere in the response (the format may change).
+    Both end up in the WebSocket host name, so only plausible values are accepted."""
     if isinstance(obj, dict):
-        if obj.get("app_key"):
-            return str(obj["app_key"]), str(obj.get("cluster") or "us2")
+        key, cluster = str(obj.get("app_key") or ""), str(obj.get("cluster") or "us2")
+        if _PUSHER_KEY_RE.fullmatch(key) and _PUSHER_CLUSTER_RE.fullmatch(cluster):
+            return key, cluster
         for v in obj.values():
             found = _find_pusher_creds(v)
             if found:
@@ -111,7 +117,7 @@ def _fetch_kick_channel(slug: str) -> tuple[int, str]:
 def fetch_kick_json(slug: str) -> dict:
     """Channel info from the Kick website API (also contains `livestream` and `playback_url`).
     Kick sits behind Cloudflare, hence curl_cffi (browser fingerprint)."""
-    url = f"https://kick.com/api/v2/channels/{slug}"
+    url = f"https://kick.com/api/v2/channels/{kick_channel(slug)}"
     try:
         from curl_cffi import requests as cf  # type: ignore
 
@@ -138,8 +144,37 @@ def fetch_kick_json(slug: str) -> dict:
     return r.json()
 
 
+def _handle_event(name: str, data: dict, slug: str, emit: Emit, emotes) -> None:
+    if name.endswith("ChatMessageEvent"):
+        sender = data.get("sender") or {}
+        content = str(data.get("content") or "")
+        emit(
+            ChatMessage(
+                platform="kick",
+                channel=slug,
+                user=str(sender.get("username") or "?"),
+                text=_KICK_EMOTE_RE.sub(r"\2", content),
+                parts=_extra(emotes, "kick", slug, kick_parts(content)),
+                color=(sender.get("identity") or {}).get("color"),
+                msg_id=str(data.get("id") or "") or None,
+                user_id=str(sender.get("id") or "") or None,
+            )
+        )
+    elif name.endswith("MessageDeletedEvent"):
+        mid = (data.get("message") or {}).get("id")
+        if mid:
+            emit(Deletion("kick", msg_id=str(mid)))
+    elif name.endswith("UserBannedEvent"):
+        uid = (data.get("user") or {}).get("id")
+        if uid:
+            emit(Deletion("kick", user_id=str(uid)))
+    elif name.endswith("ChatroomClearEvent"):
+        emit(Deletion("kick", clear_all=True))
+
+
 async def run_kick(channel: str, emit: Emit, status: Status, emotes=None) -> None:
-    slug = channel.lower().strip()
+    slug = kick_channel(channel)
+    backoff = Backoff(first=10)
     while True:
         key = ""
         try:
@@ -161,8 +196,11 @@ async def run_kick(channel: str, emit: Emit, status: Status, emotes=None) -> Non
                 )
                 status("kick", "subscribing to chat …")
                 async for raw in ws:
-                    evt = json.loads(raw)
-                    name = evt.get("event", "")
+                    try:
+                        evt = json.loads(raw)
+                        name = str(evt.get("event") or "")
+                    except (ValueError, AttributeError):
+                        continue
                     if name == "pusher:ping":
                         await ws.send(json.dumps({"event": "pusher:pong", "data": {}}))
                         continue
@@ -176,35 +214,17 @@ async def run_kick(channel: str, emit: Emit, status: Status, emotes=None) -> Non
                         elif name == "pusher_internal:subscription_succeeded":
                             log.info("Kick %s: chat subscribed (key %s)", slug, key)
                             status("kick", "connected ({channel})", channel=slug)
+                            backoff.connected()
                         else:
                             log.debug("Kick Pusher: %s %s", name, str(evt.get("data"))[:200])
                         continue
-                    data = json.loads(evt.get("data") or "{}")
-                    if name.endswith("ChatMessageEvent"):
-                        sender = data.get("sender") or {}
-                        content = data.get("content", "")
-                        emit(
-                            ChatMessage(
-                                platform="kick",
-                                channel=slug,
-                                user=sender.get("username", "?"),
-                                text=_KICK_EMOTE_RE.sub(r"\2", content),
-                                parts=_extra(emotes, "kick", slug, kick_parts(content)),
-                                color=(sender.get("identity") or {}).get("color"),
-                                msg_id=str(data.get("id") or "") or None,
-                                user_id=str(sender.get("id") or "") or None,
-                            )
-                        )
-                    elif name.endswith("MessageDeletedEvent"):
-                        mid = (data.get("message") or {}).get("id")
-                        if mid:
-                            emit(Deletion("kick", msg_id=str(mid)))
-                    elif name.endswith("UserBannedEvent"):
-                        uid = (data.get("user") or {}).get("id")
-                        if uid:
-                            emit(Deletion("kick", user_id=str(uid)))
-                    elif name.endswith("ChatroomClearEvent"):
-                        emit(Deletion("kick", clear_all=True))
+                    try:  # one malformed event must not drop the connection
+                        data = evt.get("data") or "{}"
+                        data = json.loads(data) if isinstance(data, str) else data
+                        if isinstance(data, dict):
+                            _handle_event(name, data, slug, emit, emotes)
+                    except Exception as e:  # noqa: BLE001
+                        log.debug("Kick %s: event %s skipped: %s", slug, name, e)
         except asyncio.CancelledError:
             raise
         except KickKeyRejected as e:
@@ -219,9 +239,11 @@ async def run_kick(channel: str, emit: Emit, status: Status, emotes=None) -> Non
                 await asyncio.sleep(1)
                 continue
             log.warning("Kick chat %s: %s", slug, e, exc_info=True)
-            status("kick", "error: {error} – retrying in {seconds} s", error=e, seconds=10)
-            await asyncio.sleep(10)
+            delay = backoff.next()
+            status("kick", "error: {error} – retrying in {seconds} s", error=e, seconds=delay)
+            await asyncio.sleep(delay)
         except Exception as e:  # noqa: BLE001
             log.warning("Kick chat %s: %s", slug, e, exc_info=True)
-            status("kick", "error: {error} – retrying in {seconds} s", error=e, seconds=10)
-            await asyncio.sleep(10)
+            delay = backoff.next()
+            status("kick", "error: {error} – retrying in {seconds} s", error=e, seconds=delay)
+            await asyncio.sleep(delay)

@@ -41,7 +41,7 @@ class FileBackend:
             return None
 
     def save(self, key: str, data: dict) -> None:
-        self.dir.mkdir(parents=True, exist_ok=True)
+        self.dir.mkdir(mode=0o700, parents=True, exist_ok=True)
         path = self.path(key)
         tmp = path.with_suffix(".tmp")
         fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)

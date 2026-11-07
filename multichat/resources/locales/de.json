@@ -104,6 +104,7 @@
   "disconnected": "getrennt",
   "error: {error} – retrying in {seconds} s": "Fehler: {error} – neuer Versuch in {seconds} s",
   "getting chatroom ID …": "hole Chatroom-ID …",
+  "invalid channel name": "ungültiger Kanalname",
   "key rejected – trying the next one …": "Schlüssel abgelehnt – probiere nächsten …",
   "live": "live",
   "live – skipping ad break, back in a moment …": "live – Werbepause wird übersprungen, gleich geht's weiter …",

@@ -52,13 +52,31 @@ class RedactingFormatter(logging.Formatter):
         return redact(super().format(record))
 
 
+class PrivateFileHandler(RotatingFileHandler):
+    """Rotating log file that stays readable only by the user (also after rotation)."""
+
+    def _open(self):
+        stream = super()._open()
+        try:
+            os.chmod(self.baseFilename, 0o600)
+        except OSError:
+            pass
+        return stream
+
+
 def setup_logging(debug: bool = False) -> Path:
-    LOG_DIR.mkdir(parents=True, exist_ok=True)
+    LOG_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
+    try:  # the log names channels and accounts – only for this user
+        LOG_DIR.chmod(0o700)
+        LOG_FILE.touch(mode=0o600, exist_ok=True)
+        LOG_FILE.chmod(0o600)
+    except OSError:
+        pass
     fmt = RedactingFormatter("%(asctime)s %(levelname)-7s %(name)s: %(message)s", "%Y-%m-%d %H:%M:%S")
     root = logging.getLogger()
     for h in list(root.handlers):
         root.removeHandler(h)
-    fh = RotatingFileHandler(LOG_FILE, maxBytes=1_000_000, backupCount=3, encoding="utf-8")
+    fh = PrivateFileHandler(LOG_FILE, maxBytes=1_000_000, backupCount=3, encoding="utf-8")
     fh.setFormatter(fmt)
     sh = logging.StreamHandler(sys.stderr)
     sh.setFormatter(fmt)

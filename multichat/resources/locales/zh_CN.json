@@ -104,6 +104,7 @@
   "disconnected": "已断开",
   "error: {error} – retrying in {seconds} s": "错误：{error} – {seconds} 秒后重试",
   "getting chatroom ID …": "正在获取聊天室 ID …",
+  "invalid channel name": "频道名称无效",
   "key rejected – trying the next one …": "密钥被拒绝 – 正在尝试下一个 …",
   "live": "直播中",
   "live – skipping ad break, back in a moment …": "直播中 – 正在跳过广告，马上回来 …",

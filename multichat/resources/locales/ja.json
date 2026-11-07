@@ -104,6 +104,7 @@
   "disconnected": "切断済み",
   "error: {error} – retrying in {seconds} s": "エラー：{error} – {seconds} 秒後に再試行",
   "getting chatroom ID …": "チャットルーム ID を取得中 …",
+  "invalid channel name": "無効なチャンネル名",
   "key rejected – trying the next one …": "キーが拒否されました – 次を試しています …",
   "live": "ライブ",
   "live – skipping ad break, back in a moment …": "ライブ – 広告をスキップ中、まもなく再開します …",

@@ -26,6 +26,9 @@ from ..core.paths import resource
 
 log = logging.getLogger("multichat.overlay")
 
+MAX_CLIENTS = 16
+MAX_BACKLOG = 500  # messages queued for a slow client before it is disconnected
+
 
 
 
@@ -49,7 +52,8 @@ def deletion_payload(e: Deletion) -> dict:
 class OverlayServer:
     def __init__(self, loop: asyncio.AbstractEventLoop) -> None:
         self.loop = loop
-        self.clients: set[web.WebSocketResponse] = set()
+        self.clients: dict[web.WebSocketResponse, asyncio.Queue] = {}
+        self._page: str | None = None
         self.runner: web.AppRunner | None = None
         self.port: int | None = None
 
@@ -93,22 +97,43 @@ class OverlayServer:
     async def _index(self, request: web.Request) -> web.Response:
         if not self._allowed(request):
             return web.Response(status=403, text="forbidden")
-        page = resource("overlay.html").read_text(encoding="utf-8").replace("__FAVICONS__", json.dumps(FAVICONS))
-        return web.Response(text=page, content_type="text/html")
+        if self._page is None:
+            self._page = resource("overlay.html").read_text(encoding="utf-8").replace("__FAVICONS__", json.dumps(FAVICONS))
+        return web.Response(text=self._page, content_type="text/html",
+                            headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff",
+                                     # the page only talks to this server and shows https images
+                                     "Content-Security-Policy": "default-src 'none'; script-src 'unsafe-inline'; "
+                                     "style-src 'unsafe-inline'; img-src https: data:; "
+                                     f"connect-src 'self' ws://127.0.0.1:{self.port} ws://localhost:{self.port}"})
 
     async def _ws(self, request: web.Request) -> web.WebSocketResponse:
         if not self._allowed(request):
             return web.Response(status=403, text="forbidden")
-        ws = web.WebSocketResponse(heartbeat=30)
+        if len(self.clients) >= MAX_CLIENTS:
+            return web.Response(status=503, text="too many overlay clients")
+        ws = web.WebSocketResponse(heartbeat=30, max_msg_size=4096)  # the page never sends anything big
         await ws.prepare(request)
-        self.clients.add(ws)
+        queue: asyncio.Queue = asyncio.Queue(MAX_BACKLOG)
+        self.clients[ws] = queue
+        writer = asyncio.ensure_future(self._writer(ws, queue))
         try:
             async for msg in ws:
                 if msg.type == WSMsgType.ERROR:
                     break
         finally:
-            self.clients.discard(ws)
+            self.clients.pop(ws, None)
+            writer.cancel()
         return ws
+
+    async def _writer(self, ws: web.WebSocketResponse, queue: asyncio.Queue) -> None:
+        """One writer per client keeps the order of the messages."""
+        try:
+            while True:
+                await ws.send_str(await queue.get())
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 – client gone
+            self.clients.pop(ws, None)
 
     def publish(self, payload: dict) -> None:
         """Thread-safe: may be called from the Qt thread."""
@@ -116,11 +141,10 @@ class OverlayServer:
             self.loop.call_soon_threadsafe(self._broadcast, json.dumps(payload))
 
     def _broadcast(self, data: str) -> None:
-        for ws in list(self.clients):
-            asyncio.ensure_future(self._send(ws, data))
-
-    async def _send(self, ws: web.WebSocketResponse, data: str) -> None:
-        try:
-            await ws.send_str(data)
-        except Exception:  # noqa: BLE001
-            self.clients.discard(ws)
+        for ws, queue in list(self.clients.items()):
+            try:
+                queue.put_nowait(data)
+            except asyncio.QueueFull:  # the browser source stopped reading
+                log.warning("Overlay: client too slow – disconnecting it")
+                self.clients.pop(ws, None)
+                asyncio.ensure_future(ws.close())
