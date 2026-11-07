@@ -1,164 +1,165 @@
-# Login einrichten: Entwickler-Apps für Twitch, Kick und YouTube
+# Login setup: developer apps for Twitch, Kick and YouTube
 
-Zum **Lesen** der Chats braucht MultiChat keinen Login. Zum **Schreiben und Moderieren**
-meldest du dich bei der jeweiligen Plattform an. Dafür verlangt jede Plattform eine eigene,
-kostenlose *Entwickler-App*, die du einmalig selbst anlegst. Sie liefert dir zwei Werte:
+MultiChat doesn't need a login to **read** the chats. To **send and moderate**, you log in to
+the respective platform. Each platform requires its own free *developer app* for that, which
+you create once yourself. It gives you two values:
 
-- **Client-ID** – öffentlich, identifiziert deine App
-- **Client-Secret** – wie ein Passwort behandeln, niemandem zeigen
+- **Client ID** – public, identifies your app
+- **Client secret** – treat it like a password, never share it
 
-Beide trägst du danach in MultiChat unter **Konten → Entwickler-Apps einrichten …** ein und
-klickst auf **Konten → Bei … anmelden**. Der Browser öffnet sich, du bestätigst, fertig.
+Enter both in MultiChat under **„Konten → Entwickler-Apps einrichten …“** (Accounts → Set up
+developer apps), then click **„Konten → Bei … anmelden“** (Accounts → Log in to …). Your
+browser opens, you confirm, done.
 
-> **Wichtig – bei allen drei Plattformen dieselbe Redirect-URL, exakt so:**
+> **Important – the same redirect URL for all three platforms, exactly like this:**
 >
 > ```
 > http://localhost:17563/callback
 > ```
 >
-> `http` (nicht https), `localhost` (nicht 127.0.0.1), Port `17563`, Pfad `/callback`, kein `/` am Ende.
-> MultiChat startet beim Login kurz einen kleinen Webserver auf diesem Port, der die Antwort der Plattform entgegennimmt.
+> `http` (not https), `localhost` (not 127.0.0.1), port `17563`, path `/callback`, no trailing `/`.
+> During login MultiChat briefly starts a small web server on this port that receives the platform's response.
 
-Zum Moderieren musst du außerdem auf dem jeweiligen Kanal **Moderator** sein (oder es ist dein eigener Kanal).
+To moderate, you also need to be a **moderator** on the channel (or it's your own channel).
 
 ---
 
 ## Twitch
 
-**Voraussetzung:** Zwei-Faktor-Authentifizierung (2FA) ist für dein Twitch-Konto aktiv
-([Einstellungen → Sicherheit und Datenschutz](https://www.twitch.tv/settings/security)).
-Nach dem Aktivieren die Entwicklerkonsole einmal neu laden.
+**Prerequisite:** two-factor authentication (2FA) is enabled for your Twitch account
+([Settings → Security and Privacy](https://www.twitch.tv/settings/security)).
+Reload the developer console once after enabling it.
 
-1. Öffne die [Twitch-Entwicklerkonsole → Applications](https://dev.twitch.tv/console/apps) und klicke **Register Your Application**.
-2. Fülle das Formular so aus:
+1. Open the [Twitch developer console → Applications](https://dev.twitch.tv/console/apps) and click **Register Your Application**.
+2. Fill in the form like this:
 
-   | Feld | Wert |
+   | Field | Value |
    |---|---|
-   | **Name** | frei wählbar, muss auf ganz Twitch einmalig sein, z. B. `MultiChat-deinname`. Am besten ohne das Wort „Twitch“. Der Name erscheint bei der Anmeldung im Zustimmungsfenster. |
-   | **OAuth Redirect URLs** | `http://localhost:17563/callback` eintragen und auf **Add** klicken |
-   | **Category** | **Chat Bot** (die Kategorie hat keinen Einfluss auf die Funktion) |
-   | **Client Type** | **Confidential** – nur dieser Typ bekommt ein Client-Secret, und MultiChat braucht es für den Login (Authorization-Code-Flow). *Public* ist für Apps ohne Secret gedacht und funktioniert hier nicht. |
+   | **Name** | anything, but unique across all of Twitch, e.g. `MultiChat-yourname`. Preferably without the word "Twitch". The name is shown in the consent window when you log in. |
+   | **OAuth Redirect URLs** | enter `http://localhost:17563/callback` and click **Add** |
+   | **Category** | **Chat Bot** (the category doesn't affect functionality) |
+   | **Client Type** | **Confidential** – only this type gets a client secret, which MultiChat needs for the login (authorization code flow). *Public* is meant for apps without a secret and doesn't work here. |
 
-3. Captcha bestätigen, **Create** klicken.
-4. Unter **Developer Applications** bei deiner App auf **Manage** klicken.
-5. **Client ID** kopieren. Unter **Client Secret** auf **New Secret** klicken und den Wert kopieren.
-   Ein neues Secret macht das alte ungültig – dann in MultiChat auch das neue eintragen.
+3. Solve the captcha, click **Create**.
+4. Under **Developer Applications**, click **Manage** next to your app.
+5. Copy the **Client ID**. Under **Client Secret**, click **New Secret** and copy the value.
+   A new secret invalidates the old one – enter the new one in MultiChat as well.
 
-**Berechtigungen** (Scopes) stellst du bei Twitch nicht in der App ein; MultiChat fragt sie beim Login an:
-`user:write:chat` (schreiben), `moderator:manage:chat_messages` (Nachrichten löschen),
-`moderator:manage:banned_users` (Timeout/Bann).
+You don't configure **permissions** (scopes) in the Twitch app; MultiChat requests them at login:
+`user:write:chat` (send), `moderator:manage:chat_messages` (delete messages),
+`moderator:manage:banned_users` (timeout/ban).
 
-📖 Doku: [Twitch – Register Your App](https://dev.twitch.tv/docs/authentication/register-app) ·
-[Authentifizierung & Token-Flows](https://dev.twitch.tv/docs/authentication/) ·
-[Forum: Confidential oder Public?](https://discuss.dev.twitch.com/t/what-type-of-client-to-choose/63638)
+📖 Docs: [Twitch – Register Your App](https://dev.twitch.tv/docs/authentication/register-app) ·
+[Authentication & token flows](https://dev.twitch.tv/docs/authentication/) ·
+[Forum: Confidential or Public?](https://discuss.dev.twitch.com/t/what-type-of-client-to-choose/63638)
 
 ---
 
 ## Kick
 
-**Voraussetzung:** Zwei-Faktor-Authentifizierung (2FA) ist für dein Kick-Konto aktiv
-(Kontoeinstellungen → Sicherheit). Ohne 2FA erscheint der Entwickler-Bereich nicht.
+**Prerequisite:** two-factor authentication (2FA) is enabled for your Kick account
+(account settings → security). Without 2FA the developer section doesn't appear.
 
-1. Öffne [kick.com → Einstellungen → Developer](https://kick.com/settings/developer) und klicke **Create new**.
-2. Fülle das Formular so aus:
+1. Open [kick.com → Settings → Developer](https://kick.com/settings/developer) and click **Create new**.
+2. Fill in the form like this:
 
-   | Feld | Wert |
+   | Field | Value |
    |---|---|
-   | **Name** | frei wählbar, z. B. `MultiChat` |
-   | **Description** | frei, z. B. `Persönlicher Multi-Chat` |
+   | **Name** | anything, e.g. `MultiChat` |
+   | **Description** | anything, e.g. `Personal multi-chat` |
    | **Redirect URI** | `http://localhost:17563/callback` |
-   | **Enable Webhooks** | **aus** – MultiChat braucht keine Webhooks |
-   | **Scopes** | genau diese anhaken (siehe unten) |
+   | **Enable Webhooks** | **off** – MultiChat doesn't use webhooks |
+   | **Scopes** | tick exactly these (see below) |
 
-   | Scope | wofür in MultiChat |
+   | Scope | used by MultiChat for |
    |---|---|
-   | `user:read` | deinen Kick-Namen nach dem Login anzeigen |
-   | `channel:read` | die Kanal-ID zum Kanalnamen finden |
-   | `chat:write` | Nachrichten senden |
-   | `moderation:ban` | Timeout und Bann |
-   | `moderation:chat_message:manage` | Nachrichten löschen |
+   | `user:read` | showing your Kick name after login |
+   | `channel:read` | looking up the channel ID for a channel name |
+   | `chat:write` | sending messages |
+   | `moderation:ban` | timeouts and bans |
+   | `moderation:chat_message:manage` | deleting messages |
 
-   Die übrigen Scopes (z. B. `streamkey:read`, `channel:write`, `events:subscribe`) **nicht** anhaken – MultiChat braucht sie nicht.
-3. **Create App** klicken, danach **Client ID** und **Client Secret** kopieren.
+   Leave the other scopes (e.g. `streamkey:read`, `channel:write`, `events:subscribe`) **unticked** – MultiChat doesn't need them.
+3. Click **Create App**, then copy the **Client ID** and **Client Secret**.
 
-Fehlt ein Scope in der App, schlägt der Login oder später die betreffende Aktion fehl – dann die Häkchen prüfen.
+If a scope is missing from the app, the login or the respective action fails later – check the ticks then.
 
-📖 Doku: [Kick – App einrichten](https://github.com/KickEngineering/KickDevDocs/blob/main/getting-started/kick-apps-setup.md) ·
-[Kick – Liste aller Scopes](https://github.com/KickEngineering/KickDevDocs/blob/main/scopes/scopes.md)
-(Quelltext der offiziellen Kick-Entwicklerdoku)
+📖 Docs: [Kick – app setup](https://github.com/KickEngineering/KickDevDocs/blob/main/getting-started/kick-apps-setup.md) ·
+[Kick – list of all scopes](https://github.com/KickEngineering/KickDevDocs/blob/main/scopes/scopes.md)
+(source of the official Kick developer docs)
 
 ---
 
 ## YouTube (Google Cloud)
 
-Bei Google sind es drei Teile: ein **Projekt** mit freigeschalteter YouTube-API, der
-**Zustimmungsbildschirm** (in der Konsole heute „Google Auth Platform“) und der **OAuth-Client**.
-Die Konsole kann auf Deutsch übersetzt sein; die Bereiche heißen dann sinngemäß gleich.
+Google needs three parts: a **project** with the YouTube API enabled, the **consent screen**
+(called "Google Auth Platform" in today's console) and the **OAuth client**.
+The console may be shown in your language; the sections are named equivalently.
 
-### 1. Projekt und API
+### 1. Project and API
 
-1. Öffne die [Google Cloud Console](https://console.cloud.google.com/) und lege oben über die Projektauswahl ein **neues Projekt** an (Name z. B. `multichat`).
-2. Öffne die [API-Bibliothek → YouTube Data API v3](https://console.cloud.google.com/apis/library/youtube.googleapis.com) und klicke **Aktivieren / Enable**.
-   Eine Abrechnung (Billing) ist dafür nicht nötig.
+1. Open the [Google Cloud Console](https://console.cloud.google.com/) and create a **new project** via the project picker at the top (name e.g. `multichat`).
+2. Open the [API library → YouTube Data API v3](https://console.cloud.google.com/apis/library/youtube.googleapis.com) and click **Enable**.
+   Billing is not required for this.
 
-### 2. Zustimmungsbildschirm (Google Auth Platform)
+### 2. Consent screen (Google Auth Platform)
 
-Menü **☰ → Google Auth Platform** (bzw. „APIs & Dienste → OAuth-Zustimmungsbildschirm“) → **Get started / Jetzt starten**:
+Menu **☰ → Google Auth Platform** (or "APIs & Services → OAuth consent screen") → **Get started**:
 
-| Schritt | Wert |
+| Step | Value |
 |---|---|
-| **App information** | App-Name z. B. `MultiChat`, Support-E-Mail: deine Adresse |
-| **Audience / Zielgruppe** | **External / Extern** (mit einem privaten Google-Konto gibt es nur diese Option) |
-| **Contact information** | deine E-Mail-Adresse |
-| **Finish** | Richtlinie („Google API Services: User Data Policy“) bestätigen → **Create** |
+| **App information** | app name e.g. `MultiChat`, support email: your address |
+| **Audience** | **External** (with a personal Google account this is the only option) |
+| **Contact information** | your email address |
+| **Finish** | accept the "Google API Services: User Data Policy" → **Create** |
 
-Danach:
+Then:
 
-- **Audience → Test users → Add users:** das Google-Konto eintragen, mit dem du dich in MultiChat bei YouTube anmeldest (das Konto, dem der YouTube-Kanal gehört bzw. das dort Moderator ist). **Ohne diesen Eintrag verweigert Google den Login.**
-- **Data Access → Add or remove scopes:** `https://www.googleapis.com/auth/youtube.force-ssl` hinzufügen und speichern. (Empfohlen – so siehst du in der Konsole, welche Berechtigung die App nutzt.)
+- **Audience → Test users → Add users:** add the Google account you'll use to log in to YouTube in MultiChat (the account that owns the YouTube channel or is a moderator there). **Without this entry Google refuses the login.**
+- **Data Access → Add or remove scopes:** add `https://www.googleapis.com/auth/youtube.force-ssl` and save. (Recommended – this way the console shows which permission the app uses.)
 
-### 3. OAuth-Client
+### 3. OAuth client
 
 **Google Auth Platform → Clients → Create client**:
 
-| Feld | Wert |
+| Field | Value |
 |---|---|
-| **Application type** | **Web application / Webanwendung** |
-| **Name** | frei, z. B. `MultiChat` |
-| **Authorized JavaScript origins** | leer lassen |
+| **Application type** | **Web application** |
+| **Name** | anything, e.g. `MultiChat` |
+| **Authorized JavaScript origins** | leave empty |
 | **Authorized redirect URIs** | **Add URI** → `http://localhost:17563/callback` |
 
-**Create** klicken. Jetzt **Client-ID** und **Client-Secret** kopieren – das Secret zeigt Google
-nur in diesem Moment vollständig an (danach kannst du ein neues erzeugen).
+Click **Create**. Now copy the **client ID** and **client secret** – Google shows the full secret
+only at this moment (you can create a new one later).
 
-### Gut zu wissen
+### Good to know
 
-- **Login läuft nach 7 Tagen ab:** Solange die App den Status **Testing** hat, gibt Google nur
-  Anmeldungen aus, die nach 7 Tagen verfallen. Dann einfach in MultiChat neu anmelden.
-  Wer das nicht will, kann unter **Audience** auf **Publish app / In Produktion** umstellen.
-  Weil `youtube.force-ssl` eine sensible Berechtigung ist, zeigt Google beim Login dann den Hinweis
-  „Google hat diese App nicht überprüft“ – für die eigene Nutzung über **Erweitert → Weiter zu …** bestätigen.
-  Eine Prüfung durch Google ist für den Privatgebrauch nicht nötig.
-- **Kontingent:** Senden und Moderieren über die YouTube-API verbraucht Kontingent
-  (Standard: 10 000 Einheiten pro Tag und Projekt). Für normale Moderation reicht das; das Lesen
-  des Chats und das Video laufen ohne die API und kosten nichts.
+- **Login expires after 7 days:** while the app's publishing status is **Testing**, Google only
+  issues logins that expire after 7 days. Just log in again in MultiChat then.
+  If you don't want that, switch to **Publish app / In production** under **Audience**.
+  Because `youtube.force-ssl` is a sensitive scope, Google then shows "Google hasn't verified this
+  app" at login – for your own use, confirm via **Advanced → Go to …**.
+  A verification by Google isn't needed for personal use.
+- **Quota:** sending and moderating via the YouTube API consumes quota
+  (default: 10,000 units per day and project). That's enough for normal moderation; reading the
+  chat and the video don't use the API and cost nothing.
 
-📖 Doku: [YouTube Data API – OAuth 2.0 für Webserver-Apps](https://developers.google.com/youtube/v3/guides/auth/server-side-web-apps) ·
-[Zustimmungsbildschirm konfigurieren](https://developers.google.com/workspace/admin/reports/v1/guides/authorizing) ·
-[Testing vs. Produktion, Testnutzer](https://developers.google.com/identity/protocols/oauth2/production-readiness/overview)
+📖 Docs: [YouTube Data API – OAuth 2.0 for web server apps](https://developers.google.com/youtube/v3/guides/auth/server-side-web-apps) ·
+[Configure the consent screen](https://developers.google.com/workspace/admin/reports/v1/guides/authorizing) ·
+[Testing vs. production, test users](https://developers.google.com/identity/protocols/oauth2/production-readiness/overview)
 
 ---
 
-## Fehlersuche beim Login
+## Login troubleshooting
 
-| Meldung / Verhalten | Ursache |
+| Message / behaviour | Cause |
 |---|---|
-| Browser zeigt „redirect_uri mismatch“ / „invalid redirect“ | Redirect-URL in der Entwickler-App weicht ab – exakt `http://localhost:17563/callback` eintragen |
-| „Port 17563 belegt“ | ein anderer Login läuft noch oder ein anderes Programm nutzt den Port – kurz warten bzw. MultiChat neu starten |
-| Google: „Zugriff blockiert“ / „access_denied“ | Google-Konto fehlt unter **Audience → Test users** |
-| Twitch: Login schlägt beim Abschluss fehl (z. B. „invalid client“) | Client Type ist *Public* statt *Confidential* – Public-Apps haben kein Secret; neue App mit *Confidential* anlegen |
-| Senden klappt, Moderieren nicht | du bist auf dem Kanal kein Moderator |
-| Kick: Login oder eine Aktion wird abgelehnt | ein benötigter Scope ist in der Kick-App nicht angehakt |
-| „Sitzung abgelaufen – bitte neu anmelden“ | Token abgelaufen (bei Google im Testing-Status nach 7 Tagen) – neu anmelden |
+| Browser shows "redirect_uri mismatch" / "invalid redirect" | the redirect URL in the developer app differs – enter exactly `http://localhost:17563/callback` |
+| „Port 17563 belegt“ (port 17563 in use) | another login is still running or another program uses the port – wait a moment or restart MultiChat |
+| Google: "Access blocked" / "access_denied" | the Google account is missing under **Audience → Test users** |
+| Twitch: login fails at the end (e.g. "invalid client") | Client Type is *Public* instead of *Confidential* – public apps have no secret; create a new app with *Confidential* |
+| Sending works, moderating doesn't | you're not a moderator on the channel |
+| Kick: login or an action is rejected | a required scope isn't ticked in the Kick app |
+| „Sitzung abgelaufen – bitte neu anmelden“ (session expired – please log in again) | token expired (with Google in Testing status after 7 days) – log in again |
 
-Genaueres steht immer im Log: **Hilfe → Log kopieren**.
+The log always has more details: **„Hilfe → Log kopieren“** (Help → Copy log).

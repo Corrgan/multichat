@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 Corrgan
-# Baut MultiChat-<arch>.AppImage aus diesem Ordner.
+# Builds MultiChat-<arch>.AppImage from this directory.
 #
 #   ./build-appimage.sh
 #
-# Voraussetzungen: python3 (mit venv-Modul), curl, ~1 GB freier Platz.
-# Die Video-Kacheln brauchen libmpv auf dem Rechner, auf dem die App läuft:
+# Requirements: python3 (with the venv module), curl, ~1 GB of free space.
+# The video tiles need libmpv on the machine the app runs on:
 #   Ubuntu/Debian: sudo apt install libmpv2   Fedora: sudo dnf install mpv-libs
 #   Arch: sudo pacman -S mpv
-# Alles mitbündeln (ohne Systemvoraussetzung, ~270 MB):  MPV_BUNDLE=1 ./build-appimage.sh
-# Tipp: Auf einer möglichst alten Distro bauen – die AppImage läuft dann
-# auch auf allen neueren (sie braucht mindestens die glibc des Build-Systems).
+# Bundle everything (no system requirement, ~270 MB):  MPV_BUNDLE=1 ./build-appimage.sh
+# Tip: build on the oldest distribution you want to support – the AppImage then runs
+# on all newer ones too (it needs at least the glibc of the build system).
 set -euo pipefail
 cd "$(dirname "$(readlink -f "$0")")"
 
@@ -21,9 +21,9 @@ APPDIR="$BUILD/MultiChat.AppDir"
 OUT="MultiChat-$ARCH.AppImage"
 TOOL="$BUILD/appimagetool-$ARCH.AppImage"
 
-echo "==> Python-Umgebung"
+echo "==> Python environment"
 mkdir -p "$BUILD"
-# PYTHON=python3.12 ./build-appimage.sh nimmt einen bestimmten Interpreter (z. B. in der CI)
+# PYTHON=python3.12 ./build-appimage.sh uses a specific interpreter (e.g. in CI)
 [ -d "$BUILD/venv" ] || "${PYTHON:-python3}" -m venv "$BUILD/venv"
 # shellcheck disable=SC1091
 . "$BUILD/venv/bin/activate"
@@ -31,8 +31,8 @@ pip install -q --upgrade pip
 pip install -q -r requirements.txt pyinstaller
 
 echo "==> PyInstaller"
-# python-mpv wird NICHT analysiert (sonst packt PyInstaller die libmpv des
-# Build-Rechners samt ~200 Abhängigkeiten ein), sondern als Quelldatei beigelegt.
+# python-mpv is NOT analysed (otherwise PyInstaller would bundle the build machine's
+# libmpv with ~200 dependencies) but added as a plain source file.
 MPV_PY="$(python3 -c 'import mpv; print(mpv.__file__)')"
 pyinstaller --noconfirm --clean --windowed --name multichat \
   --distpath "$BUILD/dist" --workpath "$BUILD/work" --specpath "$BUILD" \
@@ -52,11 +52,11 @@ cp multichat.png "$APPDIR/"
 cp multichat.png "$APPDIR/usr/share/icons/hicolor/256x256/apps/"
 ln -sf multichat.png "$APPDIR/.DirIcon"
 
-echo "==> Lizenztexte"
+echo "==> License texts"
 DOC="$APPDIR/usr/share/doc/multichat"
 mkdir -p "$DOC/licenses"
 cp LICENSE THIRD_PARTY_NOTICES.md README.md docs/LOGIN.md "$DOC/"
-# Lizenzdateien aller gebündelten Python-Pakete (MIT/BSD/Apache verlangen, dass sie mitkommen)
+# License files of all bundled Python packages (MIT/BSD/Apache require shipping them)
 python3 - "$DOC/licenses" <<'PYEOF'
 import re, shutil, sys
 from importlib.metadata import distributions
@@ -77,18 +77,17 @@ for d in distributions():
                 dst.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy(src, dst)
                 n += 1
-print(f"    {n} Lizenzdateien übernommen")
+print(f"    {n} license files copied")
 PYEOF
-# Standard: Die AppImage nutzt die libmpv des Systems (klein, passt zu den
-# Grafiktreibern). Mit MPV_BUNDLE=1 wird libmpv samt FFmpeg mitgebündelt
-# (läuft dann auch ohne installiertes mpv, aber ~270 MB).
+# Default: the AppImage uses the system's libmpv (small, matches the graphics drivers).
+# With MPV_BUNDLE=1, libmpv and FFmpeg are bundled (runs without mpv installed, but ~270 MB).
 LIBMPV=""
 if [ "${MPV_BUNDLE:-0}" = "1" ]; then
-  echo "==> libmpv bündeln"
+  echo "==> Bundling libmpv"
   LIBMPV="$(ldconfig -p | awk '/libmpv\.so\.2 /{print $NF; exit}')"
-  [ -n "$LIBMPV" ] || { echo "FEHLER: libmpv nicht gefunden (sudo apt install libmpv-dev)"; exit 1; }
+  [ -n "$LIBMPV" ] || { echo "ERROR: libmpv not found (sudo apt install libmpv-dev)"; exit 1; }
 else
-  echo "==> libmpv: wird vom System genutzt (MPV_BUNDLE=1 zum Mitbündeln)"
+  echo "==> libmpv: using the system library (MPV_BUNDLE=1 to bundle it)"
 fi
 if [ -n "$LIBMPV" ]; then
   LDTOOL="$BUILD/linuxdeploy-$ARCH.AppImage"
@@ -97,15 +96,15 @@ if [ -n "$LIBMPV" ]; then
       "https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-$ARCH.AppImage"
     chmod +x "$LDTOOL"
   fi
-  # In ein eigenes AppDir, damit linuxdeploy die PyInstaller-Dateien nicht anfasst
+  # Use a separate AppDir so linuxdeploy doesn't touch the PyInstaller files
   MPVDIR="$BUILD/mpv.AppDir"
   rm -rf "$MPVDIR"
   APPIMAGE_EXTRACT_AND_RUN=1 "$LDTOOL" --appdir "$MPVDIR" --library "$LIBMPV" >/dev/null
   mkdir -p "$APPDIR/usr/lib"
   cp -a "$MPVDIR/usr/lib/." "$APPDIR/usr/lib/"
-  # Grafik-/Videotreiber-Schnittstellen müssen vom System kommen
+  # Graphics/video driver interfaces must come from the system
   rm -f "$APPDIR"/usr/lib/libva*.so* "$APPDIR"/usr/lib/libvdpau*.so* "$APPDIR"/usr/lib/libOpenCL*.so*
-  echo "    $(ls "$APPDIR/usr/lib" | wc -l) Bibliotheken gebündelt"
+  echo "    $(ls "$APPDIR/usr/lib" | wc -l) libraries bundled"
 fi
 
 cat > "$APPDIR/AppRun" <<'EOF'
@@ -121,8 +120,8 @@ if [ ! -x "$TOOL" ]; then
     "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-$ARCH.AppImage"
   chmod +x "$TOOL"
 fi
-# APPIMAGE_EXTRACT_AND_RUN: funktioniert auch ohne FUSE
+# APPIMAGE_EXTRACT_AND_RUN: works without FUSE as well
 ARCH="$ARCH" APPIMAGE_EXTRACT_AND_RUN=1 "$TOOL" --no-appstream "$APPDIR" "$OUT"
 
 echo
-echo "Fertig: $(pwd)/$OUT"
+echo "Done: $(pwd)/$OUT"

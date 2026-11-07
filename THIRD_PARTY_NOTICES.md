@@ -1,19 +1,18 @@
-# Drittkomponenten und Hinweise
+# Third-party components and notices
 
-MultiChat selbst (alle Dateien in diesem Repository) steht unter der
-**GNU General Public License v3.0 oder später** (GPL-3.0-or-later), siehe [`LICENSE`](LICENSE).
+MultiChat itself (all files in this repository) is licensed under the
+**GNU General Public License v3.0 or later** (GPL-3.0-or-later), see [`LICENSE`](LICENSE).
 
-MultiChat nutzt eine Reihe freier Bibliotheken und Werkzeuge. Ihnen gilt der Dank,
-und ihre Lizenzen gelten jeweils für die betreffenden Teile. Weil PyQt6 unter
-GPL-3.0-only steht, wird eine gebaute AppImage, die PyQt6 enthält, insgesamt unter
-den Bedingungen der GPL-3.0 weitergegeben.
+MultiChat uses a number of free libraries and tools. Thanks to all of them – their
+licenses apply to the respective parts. Because PyQt6 is licensed under GPL-3.0-only,
+a built AppImage containing PyQt6 is distributed as a whole under the terms of the GPL-3.0.
 
-Die AppImage enthält die Lizenztexte aller gebündelten Python-Pakete unter
+The AppImage contains the license texts of all bundled Python packages under
 `usr/share/doc/multichat/licenses/`.
 
-## Python-Bibliotheken (in der AppImage enthalten)
+## Python libraries (included in the AppImage)
 
-| Paket | Lizenz | Projekt |
+| Package | License | Project |
 |---|---|---|
 | PyQt6 | GPL-3.0-only | https://www.riverbankcomputing.com/software/pyqt/ |
 | PyQt6-Qt6 (Qt 6) | LGPL-3.0-only | https://www.qt.io/ |
@@ -49,12 +48,12 @@ Die AppImage enthält die Lizenztexte aller gebündelten Python-Pakete unter
 | anyio | MIT | https://github.com/agronholm/anyio |
 | typing_extensions | PSF-2.0 | https://github.com/python/typing_extensions |
 | brotli | MIT | https://github.com/google/brotli |
-| pycryptodomex | BSD-2-Clause, teilweise Public Domain | https://www.pycryptodome.org |
+| pycryptodomex | BSD-2-Clause, partly public domain | https://www.pycryptodome.org |
 | mutagen | GPL-2.0-or-later | https://github.com/quodlibet/mutagen |
 | isodate | BSD-3-Clause | https://github.com/gweis/isodate |
 | lxml | BSD-3-Clause | https://lxml.de/ |
 | pycountry | LGPL-2.1-only | https://github.com/pycountry/pycountry |
-| pycryptodome | BSD-2-Clause, teilweise Public Domain | https://www.pycryptodome.org |
+| pycryptodome | BSD-2-Clause, partly public domain | https://www.pycryptodome.org |
 | PySocks | BSD-3-Clause | https://github.com/Anorov/PySocks |
 | trio | MIT OR Apache-2.0 | https://github.com/python-trio/trio |
 | trio-websocket | MIT | https://github.com/python-trio/trio-websocket |
@@ -64,55 +63,54 @@ Die AppImage enthält die Lizenztexte aller gebündelten Python-Pakete unter
 | wsproto | MIT | https://github.com/python-hyper/wsproto |
 | websocket-client | Apache-2.0 | https://github.com/websocket-client/websocket-client |
 
-## Weitere Bestandteile der AppImage
+## Other components of the AppImage
 
-| Komponente | Lizenz |
+| Component | License |
 |---|---|
-| Python-Laufzeit (CPython) | PSF-2.0 |
-| Qt 6 (über PyQt6-Qt6) | LGPL-3.0-only |
-| curl-impersonate / libcurl und BoringSSL (in curl_cffi) | MIT bzw. curl-Lizenz, BoringSSL: ISC/OpenSSL |
-| PyInstaller-Bootloader | GPL-2.0-or-later mit Bootloader-Ausnahme |
-| AppImage-Runtime | MIT |
-| weitere Systembibliotheken des Build-Rechners | jeweilige Lizenzen der Bibliotheken |
+| Python runtime (CPython) | PSF-2.0 |
+| Qt 6 (via PyQt6-Qt6) | LGPL-3.0-only |
+| curl-impersonate / libcurl and BoringSSL (in curl_cffi) | MIT or curl license, BoringSSL: ISC/OpenSSL |
+| PyInstaller bootloader | GPL-2.0-or-later with bootloader exception |
+| AppImage runtime | MIT |
+| other system libraries of the build machine | their respective licenses |
 
-Wird die AppImage mit `MPV_BUNDLE=1` gebaut, enthält sie zusätzlich **libmpv**
-(GPL-2.0-or-later bzw. LGPL-2.1-or-later, je nach Build) und **FFmpeg**
-(LGPL-2.1-or-later bzw. GPL-2.0-or-later, je nach Build) samt Abhängigkeiten.
+If the AppImage is built with `MPV_BUNDLE=1`, it additionally contains **libmpv**
+(GPL-2.0-or-later or LGPL-2.1-or-later, depending on the build) and **FFmpeg**
+(LGPL-2.1-or-later or GPL-2.0-or-later, depending on the build) including their dependencies.
 
-## Zur Laufzeit genutzt, nicht mitgeliefert
+## Used at runtime, not included
 
-| Komponente | Lizenz | Zweck |
+| Component | License | Purpose |
 |---|---|---|
-| [mpv / libmpv](https://mpv.io/) | GPL-2.0-or-later bzw. LGPL-2.1-or-later | Videowiedergabe |
-| [FFmpeg](https://ffmpeg.org/) | LGPL-2.1-or-later bzw. GPL-2.0-or-later | Video-Dekodierung (über libmpv) |
-| [Node.js](https://nodejs.org/) oder [Deno](https://deno.com/) | MIT | JavaScript-Laufzeit für yt-dlp (YouTube) |
+| [mpv / libmpv](https://mpv.io/) | GPL-2.0-or-later or LGPL-2.1-or-later | video playback |
+| [FFmpeg](https://ffmpeg.org/) | LGPL-2.1-or-later or GPL-2.0-or-later | video decoding (via libmpv) |
+| [Node.js](https://nodejs.org/) or [Deno](https://deno.com/) | MIT | JavaScript runtime for yt-dlp (YouTube) |
 
-## Werkzeuge beim Bauen
+## Build tools
 
-| Werkzeug | Lizenz |
+| Tool | License |
 |---|---|
-| [PyInstaller](https://pyinstaller.org) | GPL-2.0-or-later mit Bootloader-Ausnahme |
+| [PyInstaller](https://pyinstaller.org) | GPL-2.0-or-later with bootloader exception |
 | [appimagetool](https://github.com/AppImage/appimagetool) | MIT |
-| [linuxdeploy](https://github.com/linuxdeploy/linuxdeploy) (nur mit `MPV_BUNDLE=1`) | MIT |
+| [linuxdeploy](https://github.com/linuxdeploy/linuxdeploy) (only with `MPV_BUNDLE=1`) | MIT |
 
-## Dienste und Marken
+## Services and trademarks
 
-MultiChat ist ein unabhängiges Projekt und steht in keiner Verbindung zu den
-folgenden Anbietern; es wird von ihnen weder unterstützt noch geprüft.
-Twitch, Kick, YouTube, Google, 7TV, BetterTTV, FrankerFaceZ, OBS Studio und Pusher
-sind Namen bzw. Marken ihrer jeweiligen Inhaber und werden nur verwendet, um die
-unterstützten Dienste zu benennen.
+MultiChat is an independent project and is not affiliated with, endorsed by or reviewed by
+the following providers. Twitch, Kick, YouTube, Google, 7TV, BetterTTV, FrankerFaceZ,
+OBS Studio and Pusher are names or trademarks of their respective owners and are used only
+to identify the supported services.
 
-- **Schnittstellen:** MultiChat verbindet sich mit den Diensten von Twitch, Kick,
-  YouTube/Google, 7TV, BetterTTV und FrankerFaceZ. Für deren Nutzung gelten die
-  Nutzungsbedingungen der jeweiligen Anbieter. Einige Schnittstellen (Kick-Website,
-  YouTube-Livechat und -Video) sind inoffiziell und können sich jederzeit ändern.
-- **Inhalte:** Chat-Nachrichten, Emotes, Videos und andere Inhalte werden zur
-  Laufzeit von den Diensten geladen und nicht mit MultiChat verteilt. Die Rechte daran
-  liegen bei den jeweiligen Urhebern.
-- **Plattform-Symbole:** Die kleinen Symbole vor den Chat-Nachrichten sind die Favicons
-  der jeweiligen Website (bzw. über Googles Favicon-Dienst), die MultiChat wie ein Browser
-  zur Laufzeit lädt, um die Herkunft einer Nachricht zu kennzeichnen. Sie sind nicht Teil
-  dieses Repositorys oder der AppImage und bleiben Marken ihrer Inhaber.
-- **Login:** Für Login und Moderation werden eigene Entwickler-Apps des Nutzers bei
-  den Plattformen verwendet. MultiChat liefert keine Zugangsdaten mit.
+- **Interfaces:** MultiChat connects to the services of Twitch, Kick, YouTube/Google, 7TV,
+  BetterTTV and FrankerFaceZ. Their use is subject to the respective providers' terms of
+  service. Some interfaces (Kick website, YouTube live chat and video) are unofficial and
+  may change at any time.
+- **Content:** chat messages, emotes, videos and other content are loaded from the services
+  at runtime and are not distributed with MultiChat. The rights remain with their respective
+  creators.
+- **Platform icons:** the small icons in front of chat messages are the favicons of the
+  respective websites (or from Google's favicon service), which MultiChat loads at runtime
+  like a browser to indicate where a message comes from. They are not part of this
+  repository or the AppImage and remain trademarks of their owners.
+- **Login:** login and moderation use the user's own developer apps on the platforms.
+  MultiChat does not ship any credentials.

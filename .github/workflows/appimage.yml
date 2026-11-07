@@ -1,15 +1,15 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# Baut die AppImage auf GitHub.
+# Builds the AppImage on GitHub.
 #
-# - Manuell (Actions → AppImage → „Run workflow“): AppImage als Artefakt zum Herunterladen.
-# - Tag pushen (z. B. `git tag v0.10 && git push origin v0.10`): zusätzlich ein GitHub-Release
-#   mit AppImage und Prüfsumme – aber nur für Tags der Form vX.Y, bei denen Y einstellig ist oder
-#   auf 0 endet (v0.10, v0.20, v1.6, v2.0). Andere Tags (v0.11, v0.15, v0.10.1 …) bauen nichts.
-#   Der Tag muss außerdem zu APP_VERSION in logsetup.py passen.
+# - Manual (Actions → AppImage → "Run workflow"): AppImage as a downloadable artifact.
+# - Pushing a tag (e.g. `git tag v0.10 && git push origin v0.10`): additionally a GitHub release
+#   with the AppImage and checksum – but only for tags of the form vX.Y where Y is a single digit
+#   or ends in 0 (v0.10, v0.20, v1.6, v2.0). Other tags (v0.11, v0.15, v0.10.1 …) build nothing.
+#   The tag must also match APP_VERSION in logsetup.py.
 #
-# Gebaut wird in einem Ubuntu-22.04-Container (glibc 2.35). Die AppImage läuft damit auf allen
-# Systemen mit glibc ≥ 2.35, z. B. Ubuntu 22.04+, Debian 12+, Fedora 36+, aktuelles Arch.
+# Builds run in an Ubuntu 22.04 container (glibc 2.35), so the AppImage runs on all systems
+# with glibc ≥ 2.35, e.g. Ubuntu 22.04+, Debian 12+, Fedora 36+, current Arch.
 name: AppImage
 
 on:
@@ -18,7 +18,7 @@ on:
     tags: ["v*"]
 
 permissions:
-  contents: write  # für das Release
+  contents: write  # for the release
 
 concurrency:
   group: appimage-${{ github.ref }}
@@ -26,7 +26,7 @@ concurrency:
 
 jobs:
   gate:
-    name: Tag-Regel prüfen
+    name: Check tag rule
     runs-on: ubuntu-24.04
     outputs:
       build: ${{ steps.rule.outputs.build }}
@@ -39,10 +39,10 @@ jobs:
           if [ "$EVENT" = "workflow_dispatch" ]; then
             echo "build=true" >> "$GITHUB_OUTPUT"
           elif [[ "$TAG" =~ ^v[0-9]+\.([0-9]|[0-9]+0)$ ]]; then
-            echo "Tag $TAG erfüllt die Release-Regel"
+            echo "Tag $TAG matches the release rule"
             echo "build=true" >> "$GITHUB_OUTPUT"
           else
-            echo "::notice::Tag $TAG ist kein Release-Tag (nur vX.Y mit Y einstellig oder auf 0 endend) – kein Build"
+            echo "::notice::Tag $TAG is not a release tag (only vX.Y with Y a single digit or ending in 0) – no build"
             echo "build=false" >> "$GITHUB_OUTPUT"
           fi
 
@@ -55,14 +55,14 @@ jobs:
     env:
       DEBIAN_FRONTEND: noninteractive
     steps:
-      - name: System-Pakete und Python 3.12
+      - name: System packages and Python 3.12
         run: |
           apt-get update
           apt-get install -y --no-install-recommends \
             software-properties-common gpg-agent curl ca-certificates git file binutils
           add-apt-repository -y ppa:deadsnakes/ppa
           apt-get update
-          # Python + die Laufzeit-Bibliotheken von Qt (X11/Wayland), damit PyInstaller sie mitnimmt
+          # Python + Qt's runtime libraries (X11/Wayland) so PyInstaller bundles them
           apt-get install -y --no-install-recommends \
             python3.12 python3.12-venv python3.12-dev \
             libgl1 libegl1 libglib2.0-0 libfontconfig1 libfreetype6 libdbus-1-3 \
@@ -74,22 +74,22 @@ jobs:
 
       - uses: actions/checkout@v7
 
-      - name: Tag gegen APP_VERSION prüfen
+      - name: Check tag against APP_VERSION
         if: startsWith(github.ref, 'refs/tags/v')
         run: |
           V=$(python3.12 -c 'import re; print(re.search(r"APP_VERSION = \"(.+?)\"", open("logsetup.py").read()).group(1))')
           if [ "v$V" != "$GITHUB_REF_NAME" ]; then
-            echo "::error::Tag $GITHUB_REF_NAME passt nicht zu APP_VERSION $V in logsetup.py"
+            echo "::error::Tag $GITHUB_REF_NAME does not match APP_VERSION $V in logsetup.py"
             exit 1
           fi
 
-      - name: AppImage bauen
+      - name: Build AppImage
         run: PYTHON=python3.12 ./build-appimage.sh
 
-      - name: Selbsttest der AppImage
+      - name: Self-test of the AppImage
         run: APPIMAGE_EXTRACT_AND_RUN=1 ./MultiChat-x86_64.AppImage --selftest
 
-      - name: Prüfsumme
+      - name: Checksum
         run: sha256sum MultiChat-x86_64.AppImage | tee MultiChat-x86_64.AppImage.sha256
 
       - uses: actions/upload-artifact@v7

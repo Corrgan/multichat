@@ -1,25 +1,39 @@
 # MultiChat
 
-Twitch-, Kick- und YouTube-Livechat kombiniert in einem Fenster – mit Video-Kacheln zum Mitschauen, Emotes, Filter, Login zum Schreiben und Moderieren und einem OBS-Overlay.
+Twitch, Kick and YouTube live chat combined in one window for Linux – with video tiles to watch along, emotes, filters, login for sending and moderating, and an OBS overlay.
 
-## Installation
+> The user interface is currently in German. Menu entries are quoted below as they appear in the app, with an English translation in parentheses.
 
-Für die Video-Kacheln brauchst du **libmpv** und für YouTube-Videos eine **JavaScript-Laufzeit** (Deno oder Node.js):
+## Download
+
+Ready-made AppImages are available under [Releases](https://github.com/Corrgan/multichat/releases) – built automatically by GitHub Actions, with a SHA256 checksum. They run on systems with glibc ≥ 2.35 (e.g. Ubuntu 22.04+, Debian 12+, Fedora 36+, current Arch).
+
+```bash
+chmod +x MultiChat-x86_64.AppImage
+sha256sum -c MultiChat-x86_64.AppImage.sha256   # optional: verify the download
+./MultiChat-x86_64.AppImage
+```
+
+`./MultiChat-x86_64.AppImage --selftest` checks that all components (Streamlink, yt-dlp, libmpv …) can be loaded.
+
+## Requirements
+
+The video tiles need **libmpv**, YouTube video additionally needs a **JavaScript runtime** (Node.js or Deno):
 
 ```bash
 # Ubuntu/Debian
 sudo apt install libmpv2 nodejs
-# Fedora (siehe auch unten: RPM Fusion für Twitch/Kick)
+# Fedora (see below: RPM Fusion for Twitch/Kick)
 sudo dnf install mpv-libs nodejs fuse-libs xcb-util-cursor
 # Arch
 sudo pacman -S mpv nodejs
 ```
 
-Chat, Moderation und Overlay funktionieren auch ohne beides.
+Chat, moderation and the overlay also work without them.
 
-### Fedora: vollständiges FFmpeg (für Twitch und Kick)
+### Fedora: full FFmpeg (for Twitch and Kick)
 
-Fedora liefert nur `ffmpeg-free` ohne vollwertigen H.264-Decoder. Twitch und Kick senden H.264, die Kacheln blieben sonst schwarz. Mit RPM Fusion tauschst du es aus:
+Fedora only ships `ffmpeg-free`, which lacks a full H.264 decoder. Twitch and Kick send H.264, so the tiles would stay black. Swap it via RPM Fusion:
 
 ```bash
 sudo dnf install \
@@ -28,7 +42,9 @@ sudo dnf install \
 sudo dnf swap ffmpeg-free ffmpeg --allowerasing
 ```
 
-Optional für Hardware-Dekodierung: AMD `sudo dnf swap mesa-va-drivers mesa-va-drivers-freeworld`, Intel `sudo dnf install intel-media-driver`.
+Optional, for hardware decoding: AMD `sudo dnf swap mesa-va-drivers mesa-va-drivers-freeworld`, Intel `sudo dnf install intel-media-driver`.
+
+## Running from source
 
 ```bash
 git clone https://github.com/Corrgan/multichat.git
@@ -39,25 +55,7 @@ pip install -r requirements.txt
 python main.py
 ```
 
-## AppImage herunterladen
-
-Fertige AppImages gibt es unter [Releases](https://github.com/Corrgan/multichat/releases) – automatisch von GitHub Actions gebaut, mit SHA256-Prüfsumme. Sie laufen auf Systemen mit glibc ≥ 2.35 (z. B. Ubuntu 22.04+, Debian 12+, Fedora 36+, aktuelles Arch).
-
-```bash
-chmod +x MultiChat-x86_64.AppImage
-sha256sum -c MultiChat-x86_64.AppImage.sha256   # optional: Download prüfen
-./MultiChat-x86_64.AppImage
-```
-
-### Automatischer Build (GitHub Actions)
-
-Der Workflow [`.github/workflows/appimage.yml`](.github/workflows/appimage.yml) baut die AppImage in einem Ubuntu-22.04-Container und testet sie mit `--selftest`:
-
-- **Manuell:** Actions → *AppImage* → *Run workflow* → die AppImage liegt danach als Artefakt am Lauf (14 Tage).
-- **Release:** `APP_VERSION` in `logsetup.py` anheben, committen, dann `git tag v<Version> && git push origin v<Version>` – der Workflow erstellt das Release mit AppImage und Prüfsumme. Passt der Tag nicht zu `APP_VERSION`, bricht er mit einer Meldung ab.
-- **Welche Tags ein Release auslösen:** nur `vX.Y`, bei denen die zweite Zahl einstellig ist oder auf 0 endet – z. B. `v0.10`, `v0.20`, `v1.6`, `v2.0`. Zwischenstände wie `v0.11`, `v0.15` oder `v0.10.1` lösen keinen Build aus.
-
-## AppImage selbst bauen
+## Building the AppImage yourself
 
 ```bash
 cd multichat
@@ -65,113 +63,118 @@ cd multichat
 ./MultiChat-x86_64.AppImage
 ```
 
-Das Skript legt eine eigene Python-Umgebung in `build-appimage/` an, bündelt die App mit PyInstaller und packt sie mit `appimagetool` (wird automatisch geladen). Ergebnis: eine einzelne Datei mit ca. 105 MB. Mit `PYTHON=python3.12 ./build-appimage.sh` wählst du einen bestimmten Python-Interpreter.
+The script creates its own Python environment in `build-appimage/`, bundles the app with PyInstaller and packs it with `appimagetool` (downloaded automatically). The result is a single file of about 105 MB. `PYTHON=python3.12 ./build-appimage.sh` selects a specific Python interpreter.
 
-- **libmpv** kommt standardmäßig vom System (siehe Installation). Das ist klein und passt sicher zu deinen Grafiktreibern. Mit `MPV_BUNDLE=1 ./build-appimage.sh` wird libmpv samt FFmpeg mitgebündelt (~270 MB, läuft dann ohne installiertes mpv).
+- **libmpv** is taken from the system by default (see Requirements) – small, and guaranteed to match your graphics drivers. `MPV_BUNDLE=1 ./build-appimage.sh` bundles libmpv and FFmpeg (~270 MB, then runs without mpv installed).
+- The AppImage runs on systems with **at least the glibc version of the build machine**, so build on the oldest distribution you want to support.
+- If FUSE is missing (`dlopen(): error loading libfuse.so.2`): `sudo apt install libfuse2` or `libfuse2t64`, or start it with `--appimage-extract-and-run`.
+- To add it to your application menu, use e.g. [Gear Lever](https://flathub.org/apps/it.mijorus.gearlever) or AppImageLauncher.
 
-- Die AppImage läuft auf Systemen mit **mindestens der glibc-Version des Build-Rechners**. Also auf der ältesten Distro bauen, die du unterstützen willst.
-- Falls FUSE fehlt (`dlopen(): error loading libfuse.so.2`): `sudo apt install libfuse2` bzw. `libfuse2t64`, oder mit `--appimage-extract-and-run` starten.
-- Ins Startmenü bekommst du sie z. B. mit [Gear Lever](https://flathub.org/apps/it.mijorus.gearlever) oder AppImageLauncher.
+### Automatic builds (GitHub Actions)
 
-## Benutzung
+The workflow [`.github/workflows/appimage.yml`](.github/workflows/appimage.yml) builds the AppImage in an Ubuntu 22.04 container and tests it with `--selftest`:
 
-- **Twitch:** Kanalname, z. B. `kanalname`
-- **Kick:** Kanalname (Slug), z. B. `kanalname`
-- **YouTube:** Kanal, z. B. `@kanalname`, `https://www.youtube.com/@kanalname` oder eine `UC…`-Kanal-ID. Die App prüft jede Minute, ob der Kanal live ist, verbindet sich automatisch mit dem laufenden Stream und wartet nach Stream-Ende auf den nächsten. Eine Video-URL/-ID geht weiterhin, wenn du einen bestimmten Stream willst.
-- **Verbinden / Trennen:** „Verbinden“ startet Chats und Video-Kacheln, „Trennen“ stoppt alles wieder.
-- **Anzeigen:** Häkchen blenden Plattformen in der Ansicht ein/aus.
-- Vor jeder Nachricht steht das Symbol der Plattform (das Favicon der Website, wie im Browser-Tab). Ist es nicht ladbar, erscheint stattdessen ein farbiges Kürzel (TW/KI/YT).
+- **Manual:** Actions → *AppImage* → *Run workflow* → the AppImage is attached to the run as an artifact (14 days).
+- **Release:** bump `APP_VERSION` in `logsetup.py`, commit, then `git tag v<version> && git push origin v<version>` – the workflow creates the release with the AppImage and checksum. If the tag doesn't match `APP_VERSION`, it stops with an error.
+- **Which tags create a release:** only `vX.Y` where the second number is a single digit or ends in 0 – e.g. `v0.10`, `v0.20`, `v1.6`, `v2.0`. Intermediate versions such as `v0.11`, `v0.15` or `v0.10.1` don't trigger a build.
 
-### Video-Kacheln
+## Usage
 
-Links der Chat, rechts eine Video-Kachel pro eingetragenem Kanal. Sie starten mit „Verbinden“.
+- **Twitch:** channel name, e.g. `channelname`
+- **Kick:** channel name (slug), e.g. `channelname`
+- **YouTube:** channel, e.g. `@channelname`, `https://www.youtube.com/@channelname` or a `UC…` channel ID. The app checks every minute whether the channel is live, connects to the running stream automatically and waits for the next one after the stream ends. A video URL/ID still works if you want a specific stream.
+- **„Verbinden“ / „Trennen“** (connect / disconnect) starts or stops all chats and video tiles.
+- **„Anzeigen“** (show): checkboxes hide or show platforms in the chat view.
+- Each message starts with the platform's icon (the website's favicon, as in a browser tab). If it can't be loaded, a coloured abbreviation (TW/KI/YT) is shown instead.
+- **Click on a name** to open the menu: mention, copy text, delete message, timeout (1 min / 10 min / 1 h), ban.
+- **Input line at the bottom:** send to one platform or to all you're logged in to.
+- Settings: `~/.config/multichat/config.json`, logins: `~/.config/multichat/tokens.json` (both readable only by you).
 
-- **Ton:** Immer nur eine Kachel ist laut (blauer Rahmen). Klick ins Video oder aufs Lautsprecher-Symbol schaltet den Ton dorthin, ein zweiter Klick macht alles stumm.
-- **Qualität** pro Kachel: 360p, 480p (Standard), 720p oder Quelle. Drei Streams in 480p brauchen zusammen etwa 5–8 Mbit/s.
-- **Offline:** Die Kachel zeigt „offline“ und prüft jede Minute erneut. Nach Stream-Ende sucht sie automatisch weiter; bei YouTube findet sie so auch den nächsten Livestream des Kanals.
-- **Neu laden** (Pfeil-Symbol), falls ein Stream hängt; **Stopp/Start** (■/▶) hält nur diese eine Kachel an.
-- **Ansicht → Video-Kacheln** blendet die Spalte aus und stoppt die Streams (spart Bandbreite). Den Trenner zwischen Chat und Videos kannst du verschieben.
-- Die Videos laufen ein paar Sekunden hinter dem Live-Signal, wie im Browser-Player.
-- **Twitch** läuft über [Streamlink](https://streamlink.github.io/) mit Werbefilter: Werbeblöcke werden übersprungen (die Kachel zeigt dann „Werbepause wird übersprungen“ und das Bild steht kurz), statt mitten im Stream das Bild zu zerstören.
-- **YouTube** wird über `yt-dlp` geladen, **Kick** direkt über die Kick-API. Wenn eine Plattform etwas ändert, hilft oft `pip install -U yt-dlp streamlink` (bzw. AppImage neu bauen).
-- `MultiChat-x86_64.AppImage --selftest` prüft, ob alle Bausteine (Streamlink, yt-dlp, libmpv …) ladbar sind.
-- **Klick auf einen Namen** öffnet das Menü: erwähnen, Text kopieren, Nachricht löschen, Timeout (1 Min./10 Min./1 Std.), Bannen.
-- **Sendezeile unten:** an eine Plattform oder an „Alle“ angemeldeten schreiben.
-- Einstellungen: `~/.config/multichat/config.json`, Logins: `~/.config/multichat/tokens.json` (beide nur für dich lesbar).
+Reading works without logging in. To send and moderate you need to be logged in **and** have moderator rights on the channel (or it's your own channel).
 
-Lesen funktioniert ohne Login. Zum Schreiben und Moderieren musst du angemeldet sein **und** auf dem Kanal Mod-Rechte haben (oder es ist dein eigener Kanal).
+### Video tiles
 
-## Login einrichten (einmalig)
+Chat on the left, one video tile per configured channel on the right. They start with „Verbinden“ (connect).
 
-Zum Schreiben und Moderieren brauchst du pro Plattform eine eigene, kostenlose Entwickler-App (Client-ID + Secret).
-Bei allen dreien lautet die Redirect-URL exakt `http://localhost:17563/callback`.
+- **Audio:** only one tile plays sound at a time (blue border). Click into the video or on the speaker icon to move the sound there; a second click mutes everything.
+- **Quality** per tile: 360p, 480p (default), 720p or „Quelle“ (source). Three streams at 480p need about 5–8 Mbit/s in total.
+- **Offline:** the tile shows „offline“ and checks again every minute. After a stream ends it keeps looking; for YouTube this also finds the channel's next live stream.
+- **Reload** (arrow icon) if a stream hangs; **stop/start** (■/▶) pauses just that tile.
+- **„Ansicht → Video-Kacheln“** (View → Video tiles) hides the column and stops the streams (saves bandwidth). The splitter between chat and videos can be dragged.
+- Videos run a few seconds behind the live signal, just like the browser player.
+- **Twitch** plays through [Streamlink](https://streamlink.github.io/) with ad filtering: ad breaks are skipped (the tile then shows „Werbepause wird übersprungen“ – *skipping ad break* – and the picture pauses briefly) instead of corrupting the picture mid-stream.
+- **YouTube** is loaded via `yt-dlp`, **Kick** directly via the Kick API. If a platform changes something, `pip install -U yt-dlp streamlink` (or rebuilding the AppImage) often helps.
 
-**➜ Schritt-für-Schritt-Anleitung mit allen Feldern und Optionen: [docs/LOGIN.md](docs/LOGIN.md)**
+## Login setup (one-time)
 
-Kurz:
+To send and moderate you need your own free developer app per platform (client ID + secret).
+For all three the redirect URL is exactly `http://localhost:17563/callback`.
 
-| Plattform | Wo | Wichtigste Einstellungen |
+**➜ Step-by-step guide with every field and option: [docs/LOGIN.md](docs/LOGIN.md)**
+
+In short:
+
+| Platform | Where | Key settings |
 |---|---|---|
-| Twitch | [dev.twitch.tv/console/apps](https://dev.twitch.tv/console/apps) | Category *Chat Bot*, Client Type **Confidential**, 2FA nötig |
-| Kick | [kick.com/settings/developer](https://kick.com/settings/developer) | Scopes `user:read`, `channel:read`, `chat:write`, `moderation:ban`, `moderation:chat_message:manage`, Webhooks aus, 2FA nötig |
-| YouTube | [console.cloud.google.com](https://console.cloud.google.com/) | YouTube Data API v3 aktivieren, Zielgruppe *Extern* + dich als Testnutzer, OAuth-Client Typ **Webanwendung** |
+| Twitch | [dev.twitch.tv/console/apps](https://dev.twitch.tv/console/apps) | Category *Chat Bot*, Client Type **Confidential**, 2FA required |
+| Kick | [kick.com/settings/developer](https://kick.com/settings/developer) | Scopes `user:read`, `channel:read`, `chat:write`, `moderation:ban`, `moderation:chat_message:manage`, webhooks off, 2FA required |
+| YouTube | [console.cloud.google.com](https://console.cloud.google.com/) | Enable YouTube Data API v3, audience *External* + yourself as test user, OAuth client type **Web application** |
 
-Danach in MultiChat **Konten → Entwickler-Apps einrichten …** → Client-ID und Secret eintragen → **Konten → Bei … anmelden**.
+Then in MultiChat: **„Konten → Entwickler-Apps einrichten …“** (Accounts → Set up developer apps) → enter client ID and secret → **„Konten → Bei … anmelden“** (Accounts → Log in to …).
 
-## OBS-Overlay
+## OBS overlay
 
-1. **Overlay → OBS-Overlay aktiv** anhaken
-2. **Overlay → Overlay-URL kopieren**
-3. In OBS: Quelle hinzufügen → **Browser** → URL einfügen, Breite/Höhe z. B. 500 × 800
+1. Tick **„Overlay → OBS-Overlay aktiv“** (OBS overlay active)
+2. **„Overlay → Overlay-URL kopieren“** (copy overlay URL)
+3. In OBS: add source → **Browser** → paste the URL, width/height e.g. 500 × 800
 
-Die URL lässt sich anpassen:
+The URL can be customised:
 
-| Parameter | Bedeutung | Beispiel |
+| Parameter | Meaning | Example |
 |---|---|---|
-| `fade` | Nachrichten nach X Sekunden ausblenden (0 = nie) | `fade=30` |
-| `size` | Schriftgröße in px | `size=24` |
-| `max` | maximale Anzahl Nachrichten | `max=20` |
-| `platforms` | nur bestimmte Plattformen | `platforms=twitch,kick` |
-| `badges` | Plattform-Kürzel aus | `badges=0` |
+| `fade` | hide messages after X seconds (0 = never) | `fade=30` |
+| `size` | font size in px | `size=24` |
+| `max` | maximum number of messages | `max=20` |
+| `platforms` | only these platforms | `platforms=twitch,kick` |
+| `badges` | hide platform icons | `badges=0` |
 
-Beispiel: `http://127.0.0.1:17564/?fade=30&size=24&platforms=twitch,youtube`
+Example: `http://127.0.0.1:17564/?fade=30&size=24&platforms=twitch,youtube`
 
-Gelöschte Nachrichten und gebannte Nutzer verschwinden auch aus dem Overlay.
+Deleted messages and banned users disappear from the overlay as well.
 
-## Fehlersuche / Log
+## Troubleshooting / log
 
-- **Hilfe → Log kopieren** legt die letzten 300 Zeilen in die Zwischenablage, zum Einfügen in einen Chat oder ein Issue.
-- **Hilfe → Logdatei öffnen** / **Log-Ordner öffnen**. Die Datei liegt unter `~/.local/state/multichat/multichat.log` (rotiert, max. 3 × 1 MB).
-- **Hilfe → Ausführliches Log (Debug)** schreibt zusätzlich jede HTTP-Antwort, Kick-WebSocket-Ereignisse, Stream-Suche und mpv-Meldungen mit. Danach das Problem nachstellen und das Log kopieren.
-- Rechtsklick auf einen Statustext (neben den Kanalfeldern oder in einer Video-Kachel) → **Status kopieren** kopiert den vollständigen Text.
-- Tokens, Secrets und Login-Codes werden im Log automatisch geschwärzt.
-- Stürzt die App ab, zeigt `coredumpctl info multichat` (Fedora, systemd) einen Backtrace, der bei der Fehlersuche hilft.
-- Probleme mit der Hardware-Dekodierung der Videos: mit `MULTICHAT_HWDEC=no` starten, z. B. `MULTICHAT_HWDEC=no ./MultiChat-x86_64.AppImage`.
+- **„Hilfe → Log kopieren“** (Help → Copy log) puts the last 300 lines on the clipboard, ready to paste into a chat or an issue.
+- **„Hilfe → Logdatei öffnen“ / „Log-Ordner öffnen“** (open log file / folder). The file is `~/.local/state/multichat/multichat.log` (rotated, max. 3 × 1 MB).
+- **„Hilfe → Ausführliches Log (Debug)“** (verbose log) additionally records every HTTP response, Kick WebSocket events, stream lookups and mpv messages. Reproduce the problem afterwards, then copy the log.
+- Right-click a status text (next to the channel fields or in a video tile) → **„Status kopieren“** (copy status) copies the full text.
+- Tokens, secrets and login codes are redacted in the log automatically.
+- If the app crashes, `coredumpctl info multichat` (Fedora, systemd) shows a backtrace that helps with debugging.
+- Hardware decoding problems with the videos: start with `MULTICHAT_HWDEC=no`, e.g. `MULTICHAT_HWDEC=no ./MultiChat-x86_64.AppImage`.
 
-**YouTube-Video bleibt schwarz / „DNS-Blocker“:** Pi-hole, AdGuard Home & Co. sperren oft `manifest.googlevideo.com`. Darüber liefert YouTube aber die Livestream-Playlists aus (keine Werbung). Die Kachel meldet das dann ausdrücklich. Lösung: im Blocker freigeben, z. B. Pi-hole `pihole allow manifest.googlevideo.com`, AdGuard Home `@@||manifest.googlevideo.com^`, danach `resolvectl flush-caches`. Prüfen mit `getent ahosts manifest.googlevideo.com` – dort muss eine echte IP stehen, nicht `0.0.0.0`.
+**YouTube video stays black / "DNS blocker":** Pi-hole, AdGuard Home & co. often block `manifest.googlevideo.com`, but YouTube serves its live-stream playlists from there (no ads). The tile reports this explicitly. Fix: allow it in the blocker, e.g. Pi-hole `pihole allow manifest.googlevideo.com`, AdGuard Home `@@||manifest.googlevideo.com^`, then `resolvectl flush-caches`. Check with `getent ahosts manifest.googlevideo.com` – it must show a real IP, not `0.0.0.0`.
 
-## Hinweise
+## Notes
 
-- **Twitch** liest über den anonymen IRC-Zugang, Senden/Moderieren läuft über die offizielle Helix-API.
-- **Kick** hat im Oktober 2026 den Pusher-Schlüssel für den Chat gewechselt. Die App fragt die aktuellen Zugangsdaten deshalb beim Verbinden bei Kick ab (`web.kick.com/api/v1/realtime/connection`) und probiert bei Ablehnung automatisch den nächsten Schlüssel.
-- **YouTube-Video:** Die App sucht über die Kanalseite den laufenden Livestream; abgespielt wird er von mpv über yt-dlp (mpvs `ytdl_hook`, der auch getrennte Bild-/Tonspuren und DASH-Livestreams kann). yt-dlp ist in der App enthalten – `MultiChat-x86_64.AppImage --yt-dlp …` verhält sich wie das yt-dlp-Programm. Für YouTube braucht yt-dlp Node.js oder Deno.
-- **Kick** liest über die inoffiziellen Website-Endpunkte (Chatroom-ID von `kick.com/api/v2`, hinter Cloudflare, daher `curl_cffi`). Senden/Moderieren nutzt die offizielle Kick-API. Wenn Kick die Website ändert, kann das Lesen brechen.
-- **YouTube** liest über `pytchat` (inoffiziell, ggf. `pip install -U pytchat`), Senden/Moderieren über die offizielle YouTube Data API.
-- Emotes: Twitch-, Kick- und YouTube-eigene Emotes werden als Bilder angezeigt, dazu **7TV, BetterTTV und FrankerFaceZ** (Menü *Ansicht → 7TV-/BTTV-/FFZ-Emotes*):
-  - globale Sets gelten für alle drei Plattformen
-  - Kanal-Emotes: Twitch-Kanäle bekommen 7TV + BTTV + FFZ, Kick-Kanäle 7TV (falls der Streamer dort einen 7TV-Account verknüpft hat)
-  - bei gleichem Namen gilt: Kanal vor global, 7TV vor BTTV vor FFZ
-  - Kanal-Emotes werden beim Verbinden nachgeladen, die ersten Sekunden Chat erscheinen daher evtl. noch als Text
-  - im App-Fenster sind animierte Emotes Standbilder, im OBS-Overlay bewegen sie sich
-  - fehlt Qt das WebP-Plugin (manche Distro-Pakete), nimmt die App PNG/GIF; sonst `sudo apt install qt6-image-formats-plugins` bzw. das pip-Paket nutzen
-- Unter Wayland kann „Immer im Vordergrund“ je nach Compositor ignoriert werden. Die Video-Kacheln laufen unter X11 und Wayland.
-- Startet die App unter X11 nicht („xcb platform plugin“): `sudo apt install libxcb-cursor0`.
+- **Twitch** chat is read via anonymous IRC; sending and moderating use the official Helix API.
+- **Kick** rotated the Pusher key for its chat in October 2026. The app therefore asks Kick for the current credentials when connecting (`web.kick.com/api/v1/realtime/connection`) and automatically tries the next key if one is rejected.
+- **Kick** chat is read via the unofficial website endpoints (chatroom ID from `kick.com/api/v2`, behind Cloudflare, hence `curl_cffi`). Sending and moderating use the official Kick API. If Kick changes its website, reading may break.
+- **YouTube** chat is read via `pytchat` (unofficial; run `pip install -U pytchat` if needed), sending and moderating use the official YouTube Data API.
+- **YouTube video:** the app finds the running live stream via the channel page; mpv plays it via yt-dlp (mpv's `ytdl_hook`, which also handles separate video/audio tracks and DASH live streams). yt-dlp is included in the app – `MultiChat-x86_64.AppImage --yt-dlp …` behaves like the yt-dlp program. For YouTube, yt-dlp needs Node.js or Deno.
+- Emotes: Twitch, Kick and YouTube emotes are shown as images, plus **7TV, BetterTTV and FrankerFaceZ** (menu „Ansicht → 7TV-/BTTV-/FFZ-Emotes“):
+  - global sets apply to all three platforms
+  - channel emotes: Twitch channels get 7TV + BTTV + FFZ, Kick channels 7TV (if the streamer has linked a 7TV account)
+  - for identical names: channel before global, 7TV before BTTV before FFZ
+  - channel emotes are loaded when connecting, so the first seconds of chat may still show text
+  - animated emotes are still images in the app window and animated in the OBS overlay
+  - if Qt lacks the WebP plugin (some distribution packages), the app uses PNG/GIF; otherwise install `qt6-image-formats-plugins` or use the pip package
+- On Wayland, „Immer im Vordergrund“ (always on top) may be ignored depending on the compositor. The video tiles work on X11 and Wayland.
+- If the app doesn't start on X11 ("xcb platform plugin"): `sudo apt install libxcb-cursor0`.
 
-## Lizenz
+## License
 
-MultiChat ist freie Software unter der **GNU General Public License v3.0 oder später** (GPL-3.0-or-later), siehe [`LICENSE`](LICENSE).
+MultiChat is free software under the **GNU General Public License v3.0 or later** (GPL-3.0-or-later), see [`LICENSE`](LICENSE).
 
-Verwendete Bibliotheken, Werkzeuge und Dienste mit ihren Lizenzen stehen in [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
+The libraries, tools and services used, with their licenses, are listed in [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
 
-MultiChat ist ein unabhängiges Projekt und steht in keiner Verbindung zu Twitch, Kick, YouTube/Google, 7TV, BetterTTV oder FrankerFaceZ. Die Namen sind Marken ihrer jeweiligen Inhaber.
-
+MultiChat is an independent project and is not affiliated with Twitch, Kick, YouTube/Google, 7TV, BetterTTV or FrankerFaceZ. The names are trademarks of their respective owners.
