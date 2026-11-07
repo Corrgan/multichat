@@ -85,6 +85,7 @@ DEV_CONSOLES = {
     "kick": "https://kick.com/settings/developer",
     "youtube": "https://console.cloud.google.com/apis/credentials",
 }
+LOGIN_DOCS = "https://github.com/Corrgan/multichat/blob/main/docs/LOGIN.md"
 TIMEOUTS = [("Timeout 1 Min.", 60), ("Timeout 10 Min.", 600), ("Timeout 1 Std.", 3600)]
 MAX_MESSAGES = 1000
 EMOTE_H = 22
@@ -164,9 +165,11 @@ class AppsDialog(QDialog):
         intro = QLabel(
             "Zum Anmelden brauchst du pro Plattform eine eigene, kostenlose Entwickler-App. "
             f"Trage dort als Redirect-URL genau <b>{REDIRECT_URI}</b> ein und kopiere "
-            "Client-ID und Secret hierher. Details stehen in der README."
+            "Client-ID und Secret hierher. "
+            f"<a href='{LOGIN_DOCS}'>Schritt-für-Schritt-Anleitung mit allen Optionen</a>"
         )
         intro.setWordWrap(True)
+        intro.setOpenExternalLinks(True)
         lay.addWidget(intro)
         self.fields: dict[str, tuple[QLineEdit, QLineEdit]] = {}
         for p in PLATFORMS:

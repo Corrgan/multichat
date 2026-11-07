@@ -82,32 +82,20 @@ Lesen funktioniert ohne Login. Zum Schreiben und Moderieren musst du angemeldet 
 
 ## Login einrichten (einmalig)
 
-Jede Plattform verlangt eine eigene, kostenlose Entwickler-App. Bei allen drei trägst du als Redirect-/Callback-URL genau ein:
+Zum Schreiben und Moderieren brauchst du pro Plattform eine eigene, kostenlose Entwickler-App (Client-ID + Secret).
+Bei allen dreien lautet die Redirect-URL exakt `http://localhost:17563/callback`.
 
-```
-http://localhost:17563/callback
-```
+**➜ Schritt-für-Schritt-Anleitung mit allen Feldern und Optionen: [docs/LOGIN.md](docs/LOGIN.md)**
 
-Dann in MultiChat unter **Konten → Entwickler-Apps einrichten …** Client-ID und Secret eintragen und **Konten → Bei … anmelden** klicken. Der Browser öffnet sich, du bestätigst, fertig.
+Kurz:
 
-### Twitch
-1. https://dev.twitch.tv/console/apps → „Register Your Application“
-2. OAuth Redirect URL: `http://localhost:17563/callback`, Kategorie: „Chat Bot“, Client-Typ: **Confidential**
-3. Client-ID kopieren, „New Secret“ erzeugen
+| Plattform | Wo | Wichtigste Einstellungen |
+|---|---|---|
+| Twitch | [dev.twitch.tv/console/apps](https://dev.twitch.tv/console/apps) | Category *Chat Bot*, Client Type **Confidential**, 2FA nötig |
+| Kick | [kick.com/settings/developer](https://kick.com/settings/developer) | Scopes `user:read`, `channel:read`, `chat:write`, `moderation:ban`, `moderation:chat_message:manage`, Webhooks aus, 2FA nötig |
+| YouTube | [console.cloud.google.com](https://console.cloud.google.com/) | YouTube Data API v3 aktivieren, Zielgruppe *Extern* + dich als Testnutzer, OAuth-Client Typ **Webanwendung** |
 
-### Kick
-1. https://kick.com/settings/developer → App erstellen (2FA muss aktiv sein)
-2. Redirect URL: `http://localhost:17563/callback`
-3. Scopes anhaken: *user:read, channel:read, chat:write, moderation:ban, moderation:chat_message:manage*
-4. Client-ID und Secret kopieren
-
-### YouTube (Google)
-1. https://console.cloud.google.com → Projekt anlegen → „YouTube Data API v3“ aktivieren
-2. „OAuth-Zustimmungsbildschirm“ einrichten (Typ *Extern*, dich selbst als Testnutzer eintragen)
-3. Anmeldedaten → „OAuth-Client-ID“ → Typ **Webanwendung**, autorisierte Weiterleitungs-URI: `http://localhost:17563/callback`
-4. Client-ID und Secret kopieren
-
-Hinweis: Solange die Google-App im Testmodus ist, läuft der Login nach 7 Tagen ab, dann einfach neu anmelden. Senden und Moderieren über die YouTube-API kostet Kontingent (Standard 10 000 Einheiten/Tag, eine Nachricht ≈ 200), für normale Moderation reicht das.
+Danach in MultiChat **Konten → Entwickler-Apps einrichten …** → Client-ID und Secret eintragen → **Konten → Bei … anmelden**.
 
 ## OBS-Overlay
 

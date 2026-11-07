@@ -54,7 +54,7 @@ ln -sf multichat.png "$APPDIR/.DirIcon"
 echo "==> Lizenztexte"
 DOC="$APPDIR/usr/share/doc/multichat"
 mkdir -p "$DOC/licenses"
-cp LICENSE THIRD_PARTY_NOTICES.md README.md "$DOC/"
+cp LICENSE THIRD_PARTY_NOTICES.md README.md docs/LOGIN.md "$DOC/"
 # Lizenzdateien aller gebündelten Python-Pakete (MIT/BSD/Apache verlangen, dass sie mitkommen)
 python3 - "$DOC/licenses" <<'PYEOF'
 import re, shutil, sys
