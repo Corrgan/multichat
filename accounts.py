@@ -1,10 +1,10 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 Corrgan
-"""Login (OAuth im Browser) sowie Senden und Moderieren pro Plattform.
+"""Login (OAuth in the browser) plus sending and moderating per platform.
 
-Jede Plattform braucht eine eigene Entwickler-App (Client-ID + Secret), die der
-Nutzer selbst anlegt. Als Redirect-URL wird REDIRECT_URI eingetragen; die App
-startet dafür kurz einen lokalen Webserver, der den Login-Code entgegennimmt.
+Each platform needs its own developer app (client ID + secret), created by the user.
+REDIRECT_URI is entered as its redirect URL; for the login the app briefly starts a
+local web server that receives the login code.
 """
 from __future__ import annotations
 
@@ -26,6 +26,7 @@ import aiohttp
 from aiohttp import web
 
 from clients import ChatMessage, find_live_video, youtube_target
+from i18n import _
 
 log = logging.getLogger("multichat.accounts")
 
@@ -36,8 +37,14 @@ LOGIN_TIMEOUT = 300
 SUCCESS_HTML = """<!doctype html><meta charset="utf-8"><title>MultiChat</title>
 <body style="font-family:sans-serif;background:#18181b;color:#efeff1;display:grid;
 place-items:center;height:100vh;margin:0"><div style="text-align:center">
-<h2>Angemeldet ✓</h2><p>Du kannst dieses Fenster schließen und zu MultiChat zurückkehren.</p>
+<h2>{title}</h2><p>{text}</p>
 </div></body>"""
+
+
+def success_html() -> str:
+    return SUCCESS_HTML.format(
+        title=_("Logged in ✓"), text=_("You can close this window and return to MultiChat.")
+    )
 
 
 class ApiError(Exception):
@@ -56,7 +63,7 @@ def _short_error(text: str) -> str:
 
 
 class TokenStore:
-    """Tokens in ~/.config/multichat/tokens.json (nur für dich lesbar, 0600)."""
+    """Tokens in ~/.config/multichat/tokens.json (readable only by you, 0600)."""
 
     def __init__(self, path: Path) -> None:
         self.path = path
@@ -112,7 +119,7 @@ class Account:
         self._session = session
         self._cache: dict = {}
 
-    # ---- Zustand ------------------------------------------------------- #
+    # ---- State --------------------------------------------------------- #
     @property
     def session(self) -> aiohttp.ClientSession:
         return self._session()
@@ -144,7 +151,7 @@ class Account:
     async def login(self) -> dict:
         cid, secret = self.creds(self.platform)
         if not cid or not secret:
-            raise ApiError("Client-ID/Secret fehlen (Konten → Entwickler-Apps einrichten)")
+            raise ApiError(_("Client ID/secret missing (Accounts → Set up developer apps)"))
         state = secrets.token_urlsafe(16)
         params = {
             "client_id": cid,
@@ -166,13 +173,13 @@ class Account:
         async def callback(request: web.Request) -> web.Response:
             q = request.query
             if q.get("state") != state:
-                return web.Response(text="Ungültiger Login-Status – bitte erneut versuchen.", status=400)
+                return web.Response(text=_("Invalid login state – please try again."), status=400)
             if not code_fut.done():
                 if "code" in q:
                     code_fut.set_result(q["code"])
                 else:
-                    code_fut.set_exception(ApiError(q.get("error_description") or q.get("error") or "Login abgebrochen"))
-            return web.Response(text=SUCCESS_HTML, content_type="text/html")
+                    code_fut.set_exception(ApiError(q.get("error_description") or q.get("error") or _("Login cancelled")))
+            return web.Response(text=success_html(), content_type="text/html")
 
         app = web.Application()
         app.router.add_get("/callback", callback)
@@ -182,13 +189,13 @@ class Account:
             try:
                 await web.TCPSite(runner, "localhost", REDIRECT_PORT).start()
             except OSError as e:
-                raise ApiError(f"Port {REDIRECT_PORT} belegt – läuft schon ein Login? ({e})") from e
+                raise ApiError(_("Port {port} in use – is a login already running? ({error})").format(port=REDIRECT_PORT, error=e)) from e
             url = f"{self.auth_url}?{urlencode(params)}"
             await asyncio.to_thread(webbrowser.open, url)
             try:
                 code = await asyncio.wait_for(code_fut, LOGIN_TIMEOUT)
             except asyncio.TimeoutError as e:
-                raise ApiError("Login-Zeit abgelaufen") from e
+                raise ApiError(_("Login timed out")) from e
         finally:
             await runner.cleanup()
 
@@ -216,8 +223,8 @@ class Account:
             text = await r.text()
             status = r.status
         if status >= 400:
-            log.warning("%s Token-Anfrage (%s) → HTTP %s: %s", self.name, data.get("grant_type"), status, text[:300])
-            raise ApiError(f"{self.name}-Login fehlgeschlagen ({status}): {_short_error(text)}")
+            log.warning("%s token request (%s) → HTTP %s: %s", self.name, data.get("grant_type"), status, text[:300])
+            raise ApiError(_("{platform} login failed ({status}): {error}").format(platform=self.name, status=status, error=_short_error(text)))
         body = json.loads(text)
         out = {
             "access_token": body["access_token"],
@@ -230,7 +237,7 @@ class Account:
     async def _refresh(self) -> None:
         rt = self.tokens.get("refresh_token")
         if not rt:
-            raise ApiError(f"{self.name}-Sitzung abgelaufen – bitte neu anmelden")
+            raise ApiError(_("{platform} session expired – please log in again").format(platform=self.name))
         cid, secret = self.creds(self.platform)
         tok = await self._token_request(
             {"grant_type": "refresh_token", "refresh_token": rt, "client_id": cid, "client_secret": secret}
@@ -239,7 +246,7 @@ class Account:
 
     async def request(self, method: str, url: str, *, _retry: bool = True, **kw):
         if not self.logged_in:
-            raise ApiError(f"Nicht bei {self.name} angemeldet")
+            raise ApiError(_("Not logged in to {platform}").format(platform=self.name))
         if self.tokens.get("expires_at", 0) < time.time() + 60:
             await self._refresh()
         extra = kw.pop("headers", {})
@@ -256,7 +263,7 @@ class Account:
         log.debug("%s %s %s → HTTP %s", self.name, method, url.split("?")[0], status)
         return json.loads(text) if text.strip() else None
 
-    # ---- von Unterklassen implementiert --------------------------------- #
+    # ---- implemented by subclasses -------------------------------------- #
     async def whoami(self) -> dict:
         raise NotImplementedError
 
@@ -295,7 +302,7 @@ class TwitchAccount(Account):
         if login not in self._cache:
             data = (await self.request("GET", f"{self.API}/users", params={"login": login}))["data"]
             if not data:
-                raise ApiError(f"Twitch-Kanal „{login}“ nicht gefunden")
+                raise ApiError(_("Twitch channel “{channel}” not found").format(channel=login))
             self._cache[login] = data[0]["id"]
         return self._cache[login]
 
@@ -306,7 +313,7 @@ class TwitchAccount(Account):
         )
         info = (res or {}).get("data", [{}])[0]
         if info.get("is_sent") is False:
-            raise ApiError(f"Twitch hat die Nachricht verworfen: {(info.get('drop_reason') or {}).get('message', '')}")
+            raise ApiError(_("Twitch dropped the message: {reason}").format(reason=(info.get("drop_reason") or {}).get("message", "")))
 
     def _mod_params(self, bid: str) -> dict:
         return {"broadcaster_id": bid, "moderator_id": self.user_id}
@@ -349,7 +356,7 @@ class KickAccount(Account):
         if slug not in self._cache:
             data = (await self.request("GET", f"{self.API}/channels", params={"slug": slug}))["data"]
             if not data:
-                raise ApiError(f"Kick-Kanal „{slug}“ nicht gefunden")
+                raise ApiError(_("Kick channel “{channel}” not found").format(channel=slug))
             self._cache[slug] = int(data[0]["broadcaster_user_id"])
         return self._cache[slug]
 
@@ -362,7 +369,7 @@ class KickAccount(Account):
 
     async def timeout(self, msg: ChatMessage, seconds: int) -> None:
         bid = await self.broadcaster_id(msg.channel)
-        minutes = max(1, min(10080, round(seconds / 60)))  # Kick rechnet in Minuten
+        minutes = max(1, min(10080, round(seconds / 60)))  # Kick counts in minutes
         await self.request(
             "POST",
             f"{self.API}/moderation/bans",
@@ -391,11 +398,11 @@ class YouTubeAccount(Account):
             "items"
         ) or []
         if not items:
-            return {"user_id": "", "user_name": "(kein Kanal)"}
+            return {"user_id": "", "user_name": "(no channel)"}
         return {"user_id": items[0]["id"], "user_name": items[0]["snippet"]["title"]}
 
     async def current_video(self, value: str) -> str:
-        """Video-ID direkt, oder bei einer Kanal-Eingabe den laufenden Livestream (60 s gecacht)."""
+        """The video ID directly, or for a channel input the running live stream (cached 60 s)."""
         kind, target = youtube_target(value)
         if kind == "video":
             return target
@@ -404,7 +411,7 @@ class YouTubeAccount(Account):
             return hit[0]
         found = await find_live_video(target)
         if not found:
-            raise ApiError("Der YouTube-Kanal ist gerade nicht live")
+            raise ApiError(_("The YouTube channel is not live right now"))
         self._cache[("live", target)] = (found[0], time.time() + 60)
         return found[0]
 
@@ -416,7 +423,7 @@ class YouTubeAccount(Account):
             ).get("items") or []
             chat_id = items and (items[0].get("liveStreamingDetails") or {}).get("activeLiveChatId")
             if not chat_id:
-                raise ApiError("Kein aktiver Live-Chat für dieses Video")
+                raise ApiError(_("No active live chat for this video"))
             self._cache[vid] = chat_id
         return self._cache[vid]
 

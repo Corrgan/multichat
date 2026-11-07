@@ -1,16 +1,16 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 Corrgan
-"""OBS-Overlay: lokaler Webserver, den OBS als Browserquelle einbindet.
+"""OBS overlay: local web server that OBS adds as a browser source.
 
-http://127.0.0.1:<port>/            → transparente Chat-Seite
-http://127.0.0.1:<port>/ws          → WebSocket, über den neue Nachrichten kommen
+http://127.0.0.1:<port>/            → transparent chat page
+http://127.0.0.1:<port>/ws          → WebSocket that delivers new messages
 
-URL-Parameter der Seite:
-  fade=30           Nachrichten nach 30 s ausblenden (0 = nie)
-  max=40            maximale Anzahl sichtbarer Nachrichten
-  size=22           Schriftgröße in px
-  platforms=twitch,kick   nur diese Plattformen zeigen
-  badges=0          Plattform-Kürzel ausblenden
+URL parameters of the page:
+  fade=30           fade out messages after 30 s (0 = never)
+  max=40            maximum number of visible messages
+  size=22           font size in px
+  platforms=twitch,kick   show only these platforms
+  badges=0          hide the platform badges
 """
 from __future__ import annotations
 
@@ -21,8 +21,8 @@ from aiohttp import WSMsgType, web
 
 from clients import ChatMessage, Deletion
 
-# Plattform-Symbole: die Favicons der Seiten, zur Laufzeit geladen (wie im Browser-Tab).
-# Erst die Seite selbst, dann Googles Favicon-Dienst; schlägt beides fehl → Text-Kürzel.
+# Platform badges: the sites' favicons, loaded at runtime (as in a browser tab).
+# First the site itself, then Google's favicon service; if both fail → text abbreviation.
 FAVICONS = {
     "twitch": ["https://www.twitch.tv/favicon.ico", "https://www.google.com/s2/favicons?domain=twitch.tv&sz=32"],
     "kick": ["https://kick.com/favicon.ico", "https://www.google.com/s2/favicons?domain=kick.com&sz=32"],
@@ -162,7 +162,7 @@ class OverlayServer:
         return ws
 
     def publish(self, payload: dict) -> None:
-        """Thread-sicher: darf aus dem Qt-Thread aufgerufen werden."""
+        """Thread-safe: may be called from the Qt thread."""
         if self.runner:
             self.loop.call_soon_threadsafe(self._broadcast, json.dumps(payload))
 

@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 Corrgan
-"""MultiChat – Twitch, Kick und YouTube Chat in einem Fenster.
+"""MultiChat – Twitch, Kick and YouTube chat in one window.
 
-Lesen geht ohne Login. Zum Schreiben und Moderieren meldest du dich unter
-„Konten“ bei der jeweiligen Plattform an. Unter „Overlay“ startest du eine
-Browserquelle für OBS.
+Reading works without logging in. To send and moderate, log in to the respective
+platform under "Accounts". "Overlay" starts a browser source for OBS.
 """
 from __future__ import annotations
 
@@ -14,6 +13,7 @@ import html
 import json
 import logging
 import os
+import platform as py_platform
 import sys
 import threading
 import time
@@ -21,8 +21,8 @@ from collections import OrderedDict
 from pathlib import Path
 
 import aiohttp
-from PyQt6.QtCore import QObject, Qt, QUrl, pyqtSignal
-from PyQt6.QtGui import QCursor, QDesktopServices, QImage, QImageReader, QTextDocument
+from PyQt6.QtCore import QT_VERSION_STR, QObject, QProcess, Qt, QUrl, pyqtSignal
+from PyQt6.QtGui import QActionGroup, QCursor, QDesktopServices, QIcon, QImage, QImageReader, QPixmap, QTextDocument
 from PyQt6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
 from PyQt6.QtWidgets import (
     QApplication,
@@ -47,18 +47,21 @@ from PyQt6.QtWidgets import (
 )
 
 if getattr(sys, "frozen", False):
-    # Gebündelte App (AppImage/PyInstaller): Kindprozesse wie der Browser für den
-    # Login sollen die Bibliotheken des Systems nutzen, nicht die gebündelten.
+    # Bundled app (AppImage/PyInstaller): child processes such as the browser used for
+    # the login should use the system libraries, not the bundled ones.
     _orig = os.environ.pop("LD_LIBRARY_PATH_ORIG", None)
     if _orig is not None:
         os.environ["LD_LIBRARY_PATH"] = _orig
     else:
         os.environ.pop("LD_LIBRARY_PATH", None)
 
+import i18n
 from accounts import REDIRECT_URI, KickAccount, TokenStore, TwitchAccount, YouTubeAccount
 from clients import ChatMessage, Deletion, run_kick, run_twitch, run_youtube
 from emotes import EmoteStore
+from i18n import _
 from logsetup import (
+    APP_VERSION,
     LOG_DIR,
     LOG_FILE,
     asyncio_exception_handler,
@@ -73,6 +76,7 @@ from video import CopyLabel, VideoPanel
 
 log = logging.getLogger("multichat")
 
+APP_ID = "multichat"  # Wayland app ID – must match multichat.desktop
 CONF_DIR = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config") / "multichat"
 CONFIG = CONF_DIR / "config.json"
 TOKENS = CONF_DIR / "tokens.json"
@@ -86,8 +90,9 @@ DEV_CONSOLES = {
     "youtube": "https://console.cloud.google.com/apis/credentials",
 }
 BROWSER_UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36"
-LOGIN_DOCS = "https://github.com/Corrgan/multichat/blob/main/docs/LOGIN.md"
-TIMEOUTS = [("Timeout 1 Min.", 60), ("Timeout 10 Min.", 600), ("Timeout 1 Std.", 3600)]
+REPO_URL = "https://github.com/Corrgan/multichat"
+LOGIN_DOCS = f"{REPO_URL}/blob/main/docs/LOGIN.md"
+TIMEOUTS = [(60, "Timeout 1 min"), (600, "Timeout 10 min"), (3600, "Timeout 1 h")]
 MAX_MESSAGES = 1000
 EMOTE_H = 22
 OVERLAY_PORT = 17564
@@ -101,17 +106,21 @@ def write_private(path: Path, data: dict) -> None:
         json.dump(data, f, indent=2)
 
 
+def app_icon_path() -> Path:
+    return i18n.resource_dir() / "multichat.png"
+
+
 class Bridge(QObject):
-    """Bringt Ereignisse aus dem asyncio-Thread sicher in den Qt-Thread."""
+    """Safely moves events from the asyncio thread into the Qt thread."""
 
     message = pyqtSignal(object)
     deletion = pyqtSignal(object)
-    status = pyqtSignal(str, str, int)  # Plattform, Text, Verbindungs-Generation
+    status = pyqtSignal(str, str, int)  # platform, text, connection generation
     result = pyqtSignal(object, object)
 
 
 class ChatView(QTextBrowser):
-    """Chat-Ansicht, die Emote-Bilder asynchron nachlädt."""
+    """Chat view that loads emote images asynchronously."""
 
     rerender_needed = pyqtSignal()
 
@@ -156,18 +165,19 @@ class ChatView(QTextBrowser):
 
 
 class AppsDialog(QDialog):
-    """Client-ID und Secret der eigenen Entwickler-Apps eintragen."""
+    """Enter client ID and secret of the user's own developer apps."""
 
     def __init__(self, parent: QWidget, apps: dict) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Entwickler-Apps")
+        self.setWindowTitle(_("Developer apps"))
         self.setMinimumWidth(520)
         lay = QVBoxLayout(self)
         intro = QLabel(
-            "Zum Anmelden brauchst du pro Plattform eine eigene, kostenlose Entwickler-App. "
-            f"Trage dort als Redirect-URL genau <b>{REDIRECT_URI}</b> ein und kopiere "
-            "Client-ID und Secret hierher. "
-            f"<a href='{LOGIN_DOCS}'>Schritt-für-Schritt-Anleitung mit allen Optionen</a>"
+            _(
+                "To log in you need your own free developer app per platform. Enter exactly "
+                "<b>{redirect}</b> as its redirect URL and copy the client ID and secret here."
+            ).format(redirect=REDIRECT_URI)
+            + f" <a href='{LOGIN_DOCS}'>{_('Step-by-step guide with all options')}</a>"
         )
         intro.setWordWrap(True)
         intro.setOpenExternalLinks(True)
@@ -181,9 +191,9 @@ class AppsDialog(QDialog):
             cid = QLineEdit(apps.get(p, {}).get("client_id", ""))
             sec = QLineEdit(apps.get(p, {}).get("client_secret", ""))
             sec.setEchoMode(QLineEdit.EchoMode.Password)
-            form.addRow("Konsole:", link)
-            form.addRow("Client-ID:", cid)
-            form.addRow("Client-Secret:", sec)
+            form.addRow(_("Console:"), link)
+            form.addRow(_("Client ID:"), cid)
+            form.addRow(_("Client secret:"), sec)
             self.fields[p] = (cid, sec)
             lay.addWidget(box)
         bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
@@ -195,12 +205,55 @@ class AppsDialog(QDialog):
         return {p: {"client_id": c.text().strip(), "client_secret": s.text().strip()} for p, (c, s) in self.fields.items()}
 
 
+class AboutDialog(QDialog):
+    """Help → About MultiChat."""
+
+    def __init__(self, parent: QWidget) -> None:
+        super().__init__(parent)
+        self.setWindowTitle(_("About MultiChat"))
+        self.setMinimumWidth(460)
+        lay = QVBoxLayout(self)
+        head = QHBoxLayout()
+        icon = QLabel()
+        pix = QPixmap(str(app_icon_path()))
+        if not pix.isNull():
+            icon.setPixmap(pix.scaled(72, 72, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
+        head.addWidget(icon)
+        title = QLabel(
+            f"<h2 style='margin:0'>MultiChat</h2>"
+            f"<div>{_('Version {version}').format(version=APP_VERSION)}</div>"
+            f"<div style='color:#888'>{_('Twitch, Kick and YouTube chat in one window')}</div>"
+        )
+        head.addWidget(title, 1)
+        lay.addLayout(head)
+        license_link = f"<a href='{REPO_URL}/blob/main/LICENSE'>GNU GPL v3.0 or later</a>"
+        notices_link = f"<a href='{REPO_URL}/blob/main/THIRD_PARTY_NOTICES.md'>THIRD_PARTY_NOTICES</a>"
+        repo_text = REPO_URL.removeprefix("https://")
+        body = QLabel(
+            f"<p><a href='{REPO_URL}'>{repo_text}</a></p>"
+            "<p>" + _("Free software under the {license}.").format(license=license_link) + "<br>"
+            + _("Uses third-party libraries under their own licenses – see {notices}.").format(notices=notices_link)
+            + "</p>"
+            "<p>" + _("Not affiliated with Twitch, Kick, YouTube/Google, 7TV, BetterTTV or FrankerFaceZ.") + "</p>"
+            f"<p style='color:#888'>Qt {QT_VERSION_STR} · Python {py_platform.python_version()} · "
+            f"{QApplication.platformName()}</p>"
+        )
+        body.setWordWrap(True)
+        body.setOpenExternalLinks(True)
+        body.setTextInteractionFlags(Qt.TextInteractionFlag.TextBrowserInteraction)
+        lay.addWidget(body)
+        bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        bb.rejected.connect(self.reject)
+        bb.accepted.connect(self.accept)
+        lay.addWidget(bb)
+
+
 class MainWindow(QMainWindow):
-    def __init__(self) -> None:
+    def __init__(self, config: dict | None = None) -> None:
         super().__init__()
         self.setWindowTitle("MultiChat")
         self.resize(520, 780)
-        self.config = self.load_config()
+        self.config = config or load_config()
 
         self.bridge = Bridge()
         self.bridge.message.connect(self.add_message)
@@ -220,7 +273,7 @@ class MainWindow(QMainWindow):
         qt_formats = {bytes(f).decode().lower() for f in QImageReader.supportedImageFormats()}
         self.emotes = EmoteStore(lambda: self.session, [f for f in ("webp", "png", "gif") if f in qt_formats])
         self.readers: list = []
-        self.conn_gen = 0  # erhöht sich bei jedem Verbinden/Trennen
+        self.conn_gen = 0  # increases with every connect/disconnect
         self.messages: OrderedDict[int, ChatMessage] = OrderedDict()
 
         self._build_ui()
@@ -228,31 +281,9 @@ class MainWindow(QMainWindow):
         self.apply_config()
         self.refresh_accounts()
 
-    # ---- Konfiguration --------------------------------------------------- #
+    # ---- Configuration --------------------------------------------------- #
     def load_config(self) -> dict:
-        cfg = {
-            "channels": {p: "" for p in PLATFORMS},
-            "show": {p: True for p in PLATFORMS},
-            "on_top": False,
-            "extra_emotes": True,
-            "debug_log": False,
-            "video": {"enabled": True, "quality": {}, "audio": None, "sizes": [440, 860]},
-            "overlay": {"enabled": False, "port": OVERLAY_PORT},
-            "apps": {},
-        }
-        try:
-            data = json.loads(CONFIG.read_text())
-        except Exception:  # noqa: BLE001
-            return cfg
-        for p in PLATFORMS:  # Format der ersten Version übernehmen
-            if isinstance(data.get(p), str):
-                cfg["channels"][p] = data[p]
-        for key in ("channels", "show", "overlay", "apps", "video"):
-            cfg[key].update(data.get(key) or {})
-        cfg["on_top"] = bool(data.get("on_top", False))
-        cfg["extra_emotes"] = bool(data.get("extra_emotes", True))
-        cfg["debug_log"] = bool(data.get("debug_log", False))
-        return cfg
+        return load_config()
 
     def save_config(self) -> None:
         self.config["channels"] = {p: e.text().strip() for p, e in self.inputs.items()}
@@ -272,7 +303,7 @@ class MainWindow(QMainWindow):
             self.inputs[p].setText(self.config["channels"].get(p, ""))
             self.filters[p].setChecked(self.config["show"].get(p, True))
         self.top_action.setChecked(self.config["on_top"])
-        self.emote_action.setChecked(self.config["extra_emotes"])  # lädt bei „an“ die globalen Sets
+        self.emote_action.setChecked(self.config["extra_emotes"])  # "on" loads the global sets
         self.emotes.enabled = self.config["extra_emotes"]
         self.debug_action.setChecked(self.config["debug_log"])
         video_on = bool(self.config["video"].get("enabled", True))
@@ -291,12 +322,12 @@ class MainWindow(QMainWindow):
     async def _make_session(self) -> aiohttp.ClientSession:
         return aiohttp.ClientSession(trust_env=True, timeout=aiohttp.ClientTimeout(total=20))
 
-    # ---- Aufbau ---------------------------------------------------------- #
+    # ---- Layout ---------------------------------------------------------- #
     def _build_ui(self) -> None:
         self.inputs = {
-            "twitch": QLineEdit(placeholderText="Kanalname"),
-            "kick": QLineEdit(placeholderText="Kanalname"),
-            "youtube": QLineEdit(placeholderText="@Kanal – oder Video-URL"),
+            "twitch": QLineEdit(placeholderText=_("Channel name")),
+            "kick": QLineEdit(placeholderText=_("Channel name")),
+            "youtube": QLineEdit(placeholderText=_("@channel – or video URL")),
         }
         self.status_labels = {p: CopyLabel("–", max_chars=28) for p in PLATFORMS}
         grid = QGridLayout()
@@ -310,10 +341,10 @@ class MainWindow(QMainWindow):
             self.inputs[p].returnPressed.connect(self.connect_all)
         grid.setColumnStretch(1, 1)
 
-        self.connect_btn = QPushButton("Verbinden")
+        self.connect_btn = QPushButton(_("Connect"))
         self.connect_btn.clicked.connect(self.connect_all)
-        self.disconnect_btn = QPushButton("Trennen")
-        self.disconnect_btn.setToolTip("Alle Chats und Videos stoppen")
+        self.disconnect_btn = QPushButton(_("Disconnect"))
+        self.disconnect_btn.setToolTip(_("Stop all chats and videos"))
         self.disconnect_btn.clicked.connect(self.disconnect_all)
         self.disconnect_btn.setEnabled(False)
         conn_row = QHBoxLayout()
@@ -321,7 +352,7 @@ class MainWindow(QMainWindow):
         conn_row.addWidget(self.disconnect_btn, 1)
 
         filters = QHBoxLayout()
-        filters.addWidget(QLabel("Anzeigen:"))
+        filters.addWidget(QLabel(_("Show:")))
         self.filters = {}
         for p in PLATFORMS:
             cb = QCheckBox(NAMES[p])
@@ -340,7 +371,7 @@ class MainWindow(QMainWindow):
         self.target = QComboBox()
         self.input = QLineEdit()
         self.input.returnPressed.connect(self.send)
-        self.send_btn = QPushButton("Senden")
+        self.send_btn = QPushButton(_("Send"))
         self.send_btn.clicked.connect(self.send)
         send.addWidget(self.target)
         send.addWidget(self.input, 1)
@@ -357,7 +388,7 @@ class MainWindow(QMainWindow):
         chat.setLayout(root)
         chat.setMinimumWidth(340)
 
-        # rechts: Video-Kacheln
+        # right: video tiles
         self.video = VideoPanel(
             [(p, NAMES[p], BADGES[p][0]) for p in PLATFORMS], self.run, self.config["video"]
         )
@@ -371,39 +402,56 @@ class MainWindow(QMainWindow):
         self.splitter.setChildrenCollapsible(False)
         self.splitter.setContentsMargins(9, 9, 9, 0)
         self.setCentralWidget(self.splitter)
-        self.statusBar().showMessage("Tipp: Klick auf einen Namen öffnet das Moderationsmenü.", 8000)
+        self.statusBar().showMessage(_("Tip: click a name to open the moderation menu."), 8000)
 
     def _build_menus(self) -> None:
         mb = self.menuBar()
-        view = mb.addMenu("Ansicht")
-        view.addAction("Chat leeren").triggered.connect(self.clear_chat)
-        self.top_action = view.addAction("Immer im Vordergrund")
+        view = mb.addMenu(_("View"))
+        view.addAction(_("Clear chat")).triggered.connect(self.clear_chat)
+        self.top_action = view.addAction(_("Always on top"))
         self.top_action.setCheckable(True)
         self.top_action.toggled.connect(self.toggle_on_top)
-        self.emote_action = view.addAction("7TV-/BTTV-/FFZ-Emotes")
+        self.emote_action = view.addAction(_("7TV / BTTV / FFZ emotes"))
         self.emote_action.setCheckable(True)
         self.emote_action.toggled.connect(self.toggle_emotes)
-        self.video_action = view.addAction("Video-Kacheln")
+        self.video_action = view.addAction(_("Video tiles"))
         self.video_action.setCheckable(True)
         self.video_action.toggled.connect(self.toggle_video)
 
-        self.accounts_menu = mb.addMenu("Konten")
+        view.addSeparator()
+        lang_menu = view.addMenu(_("Language"))
+        group = QActionGroup(self)
+        group.setExclusive(True)
+        chosen = self.config.get("language", "auto")
+        for code, label in [("auto", _("Automatic (system)")), *i18n.LANGUAGES]:
+            a = lang_menu.addAction(label)
+            a.setCheckable(True)
+            a.setChecked(code == chosen)
+            a.triggered.connect(lambda _checked=False, c=code: self.change_language(c))
+            group.addAction(a)
+            if code == "auto":
+                lang_menu.addSeparator()
+
+        self.accounts_menu = mb.addMenu(_("Accounts"))
         self.accounts_menu.aboutToShow.connect(self._fill_accounts_menu)
         self._fill_accounts_menu()
 
-        ov = mb.addMenu("Overlay")
-        self.overlay_action = ov.addAction("OBS-Overlay aktiv")
+        ov = mb.addMenu(_("Overlay"))
+        self.overlay_action = ov.addAction(_("OBS overlay active"))
         self.overlay_action.setCheckable(True)
         self.overlay_action.toggled.connect(self.toggle_overlay)
-        ov.addAction("Overlay-URL kopieren").triggered.connect(self.copy_overlay_url)
+        ov.addAction(_("Copy overlay URL")).triggered.connect(self.copy_overlay_url)
 
-        hlp = mb.addMenu("Hilfe")
-        hlp.addAction("Log kopieren (letzte 300 Zeilen)").triggered.connect(self.copy_log)
-        hlp.addAction("Logdatei öffnen").triggered.connect(lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(str(LOG_FILE))))
-        hlp.addAction("Log-Ordner öffnen").triggered.connect(lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(str(LOG_DIR))))
-        self.debug_action = hlp.addAction("Ausführliches Log (Debug)")
+        hlp = mb.addMenu(_("Help"))
+        hlp.addAction(_("Copy log (last 300 lines)")).triggered.connect(self.copy_log)
+        hlp.addAction(_("Open log file")).triggered.connect(lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(str(LOG_FILE))))
+        hlp.addAction(_("Open log folder")).triggered.connect(lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(str(LOG_DIR))))
+        self.debug_action = hlp.addAction(_("Verbose log (debug)"))
         self.debug_action.setCheckable(True)
         self.debug_action.toggled.connect(self.toggle_debug)
+        hlp.addSeparator()
+        hlp.addAction(_("Login setup guide")).triggered.connect(lambda: QDesktopServices.openUrl(QUrl(LOGIN_DOCS)))
+        hlp.addAction(_("About MultiChat")).triggered.connect(lambda: AboutDialog(self).exec())
 
     def _fill_accounts_menu(self) -> None:
         m = self.accounts_menu
@@ -411,17 +459,17 @@ class MainWindow(QMainWindow):
         for p in PLATFORMS:
             acc = self.accounts[p]
             if acc.logged_in:
-                a = m.addAction(f"{NAMES[p]}: {acc.user_name} – abmelden")
-                a.triggered.connect(lambda _=False, p=p: self.logout(p))
+                a = m.addAction(_("{platform}: {user} – log out").format(platform=NAMES[p], user=acc.user_name))
+                a.triggered.connect(lambda _checked=False, p=p: self.logout(p))
             else:
-                a = m.addAction(f"Bei {NAMES[p]} anmelden …")
-                a.triggered.connect(lambda _=False, p=p: self.login(p))
+                a = m.addAction(_("Log in to {platform} …").format(platform=NAMES[p]))
+                a.triggered.connect(lambda _checked=False, p=p: self.login(p))
         m.addSeparator()
-        m.addAction("Entwickler-Apps einrichten …").triggered.connect(self.edit_apps)
+        m.addAction(_("Set up developer apps …")).triggered.connect(self.edit_apps)
 
-    # ---- Hilfen ---------------------------------------------------------- #
+    # ---- Helpers --------------------------------------------------------- #
     def run(self, coro, then=None, label: str | None = None, on_error=None):
-        """Coroutine im asyncio-Thread starten; Ergebnis kommt im Qt-Thread an."""
+        """Run a coroutine in the asyncio thread; the result arrives in the Qt thread."""
         fut = asyncio.run_coroutine_threadsafe(coro, self.loop)
         fut.add_done_callback(lambda f: self.bridge.result.emit((then, label, on_error), f))
         return fut
@@ -432,8 +480,8 @@ class MainWindow(QMainWindow):
             return
         exc = fut.exception()
         if exc:
-            log.error("%s fehlgeschlagen: %s", label or "Aktion", exc, exc_info=exc)
-            self.statusBar().showMessage(f"Fehler: {exc}", 12000)
+            log.error("%s failed: %s", label or "Action", exc, exc_info=exc)
+            self.statusBar().showMessage(_("Error: {error}").format(error=exc), 12000)
             if on_error:
                 on_error()
             return
@@ -444,19 +492,35 @@ class MainWindow(QMainWindow):
 
     def copy_log(self) -> None:
         QApplication.clipboard().setText(tail(300))
-        self.statusBar().showMessage(f"Log kopiert (Tokens/Secrets geschwärzt) – Datei: {LOG_FILE}", 10000)
+        self.statusBar().showMessage(
+            _("Log copied (tokens/secrets redacted) – file: {path}").format(path=LOG_FILE), 10000
+        )
 
     def toggle_debug(self, on: bool) -> None:
         set_debug(on)
         self.config["debug_log"] = on
-        log.info("Ausführliches Log %s", "an" if on else "aus")
+        log.info("Verbose log %s", "on" if on else "off")
+
+    def change_language(self, code: str) -> None:
+        if code == self.config.get("language", "auto"):
+            return
+        self.config["language"] = code
+        self.save_config()
+        log.info("Language changed to %s", code)
+        answer = QMessageBox.question(
+            self,
+            _("Language"),
+            _("The new language takes effect after a restart. Restart MultiChat now?"),
+        )
+        if answer == QMessageBox.StandardButton.Yes:
+            restart_app(self)
 
     def toggle_emotes(self, on: bool) -> None:
         self.emotes.enabled = on
         if on and not self.emotes.global_loaded:
             def loaded(counts: dict) -> None:
-                info = ", ".join(f"{k.upper()} {v}" for k, v in counts.items()) or "keine erreichbar"
-                self.statusBar().showMessage(f"Globale Emotes geladen: {info}", 6000)
+                info = ", ".join(f"{k.upper()} {v}" for k, v in counts.items()) or _("none reachable")
+                self.statusBar().showMessage(_("Global emotes loaded: {info}").format(info=info), 6000)
 
             self.run(self.emotes.load_global(), then=loaded)
 
@@ -467,11 +531,11 @@ class MainWindow(QMainWindow):
             self.video.setVisible(True)
             if self.width() < 900:
                 self.resize(1300, max(self.height(), 820))
-            if self.readers:  # schon verbunden → Streams gleich starten
+            if self.readers:  # already connected → start the streams right away
                 self.video.set_sources(self._channels())
         else:
             self.config["video"]["sizes"] = self.splitter.sizes()
-            self.video.stop_all()  # spart Bandbreite
+            self.video.stop_all()  # saves bandwidth
             self.video.setVisible(False)
 
     def _channels(self) -> dict[str, str]:
@@ -483,9 +547,9 @@ class MainWindow(QMainWindow):
         if visible:
             self.show()
 
-    # ---- Verbinden ------------------------------------------------------- #
+    # ---- Connecting ------------------------------------------------------ #
     def _stop_readers(self) -> None:
-        self.conn_gen += 1  # Statusmeldungen der alten Verbindungen ab jetzt ignorieren
+        self.conn_gen += 1  # ignore status messages from the old connections from now on
         for t in self.readers:
             t.cancel()
         self.readers.clear()
@@ -498,9 +562,10 @@ class MainWindow(QMainWindow):
         def emit(ev) -> None:
             (self.bridge.message if isinstance(ev, ChatMessage) else self.bridge.deletion).emit(ev)
 
-        def status(platform: str, text: str) -> None:
-            log.info("[%s] %s", platform, text)
-            self.bridge.status.emit(platform, text, gen)
+        def status(platform: str, template: str, **kw) -> None:
+            # readers pass an English template – logged in English, shown translated
+            log.info("[%s] %s", platform, template.format(**kw))
+            self.bridge.status.emit(platform, _(template).format(**kw), gen)
 
         runners = {"twitch": run_twitch, "kick": run_kick, "youtube": run_youtube}
         for p, edit in self.inputs.items():
@@ -510,7 +575,7 @@ class MainWindow(QMainWindow):
                 continue
             coro = runners[p](value, emit, status, self.emotes)
             self.readers.append(asyncio.run_coroutine_threadsafe(coro, self.loop))
-        self.connect_btn.setText("Neu verbinden")
+        self.connect_btn.setText(_("Reconnect"))
         self.disconnect_btn.setEnabled(bool(self.readers))
         if self.video_action.isChecked():
             self.video.set_sources(self._channels())
@@ -519,20 +584,20 @@ class MainWindow(QMainWindow):
         self._stop_readers()
         self.video.stop_all()
         for p in PLATFORMS:
-            self.set_status(p, "getrennt" if self.inputs[p].text().strip() else "–")
-        self.connect_btn.setText("Verbinden")
+            self.set_status(p, _("disconnected") if self.inputs[p].text().strip() else "–")
+        self.connect_btn.setText(_("Connect"))
         self.disconnect_btn.setEnabled(False)
-        log.info("Alle Verbindungen getrennt")
-        self.statusBar().showMessage("Getrennt – Chats und Videos gestoppt", 5000)
+        log.info("All connections closed")
+        self.statusBar().showMessage(_("Disconnected – chats and videos stopped"), 5000)
 
     def _reader_status(self, platform: str, text: str, gen: int) -> None:
-        if gen == self.conn_gen:  # Meldungen aus einer schon getrennten Verbindung verwerfen
+        if gen == self.conn_gen:  # drop messages from a connection that was already closed
             self.set_status(platform, text)
 
     def set_status(self, platform: str, text: str) -> None:
         self.status_labels[platform].set_full(text)
 
-    # ---- Anzeige --------------------------------------------------------- #
+    # ---- Rendering ------------------------------------------------------- #
     def _part_html(self, part) -> str:
         kind, value, alt = part
         if kind == "emote" and value not in self.view.failed:
@@ -545,7 +610,7 @@ class MainWindow(QMainWindow):
         ts = time.strftime("%H:%M", time.localtime(m.timestamp))
         body = "".join(self._part_html(p) for p in m.parts)
         if m.deleted:
-            body = f"<s style='color:#666'>{body}</s> <i style='color:#666'>(gelöscht)</i>"
+            body = f"<s style='color:#666'>{body}</s> <i style='color:#666'>({html.escape(_('deleted'))})</i>"
         icon = next((u for u in FAVICONS.get(m.platform, []) if u not in self.view.failed), None)
         badge = (
             f"<img src='{html.escape(icon, quote=True)}' width='16' height='16' align='middle'>"
@@ -618,22 +683,22 @@ class MainWindow(QMainWindow):
         acc = self.accounts[msg.platform]
         menu = QMenu(self)
         menu.addSection(f"{msg.user} · {NAMES[msg.platform]}")
-        menu.addAction("Erwähnen (@)").triggered.connect(lambda: self.mention(msg))
-        menu.addAction("Text kopieren").triggered.connect(lambda: QApplication.clipboard().setText(msg.text))
+        menu.addAction(_("Mention (@)")).triggered.connect(lambda: self.mention(msg))
+        menu.addAction(_("Copy text")).triggered.connect(lambda: QApplication.clipboard().setText(msg.text))
         menu.addSeparator()
         if not acc.logged_in:
-            menu.addAction(f"Zum Moderieren bei {NAMES[msg.platform]} anmelden …").triggered.connect(
+            menu.addAction(_("Log in to {platform} to moderate …").format(platform=NAMES[msg.platform])).triggered.connect(
                 lambda: self.login(msg.platform)
             )
         else:
-            a = menu.addAction("Nachricht löschen")
+            a = menu.addAction(_("Delete message"))
             a.setEnabled(bool(msg.msg_id) and not msg.deleted)
             a.triggered.connect(lambda: self.moderate(msg, "delete"))
-            for label, secs in TIMEOUTS:
-                a = menu.addAction(label)
+            for secs, label in TIMEOUTS:
+                a = menu.addAction(_(label))
                 a.setEnabled(bool(msg.user_id))
-                a.triggered.connect(lambda _=False, s=secs: self.moderate(msg, "timeout", s))
-            a = menu.addAction("Bannen …")
+                a.triggered.connect(lambda _checked=False, s=secs: self.moderate(msg, "timeout", s))
+            a = menu.addAction(_("Ban …"))
             a.setEnabled(bool(msg.user_id))
             a.triggered.connect(lambda: self.moderate(msg, "ban"))
         menu.exec(QCursor.pos())
@@ -643,19 +708,23 @@ class MainWindow(QMainWindow):
         if action == "delete":
             coro = acc.delete(msg)
             ev = Deletion(msg.platform, msg_id=msg.msg_id)
-            label = "Nachricht gelöscht"
+            label = _("Message deleted")
         elif action == "timeout":
             coro = acc.timeout(msg, seconds)
             ev = Deletion(msg.platform, user_id=msg.user_id)
-            label = f"Timeout für {msg.user} ({seconds // 60} Min.)"
+            label = _("Timeout for {user} ({minutes} min)").format(user=msg.user, minutes=seconds // 60)
         else:
-            answer = QMessageBox.question(self, "Bannen", f"{msg.user} auf {NAMES[msg.platform]} dauerhaft bannen?")
+            answer = QMessageBox.question(
+                self,
+                _("Ban"),
+                _("Permanently ban {user} on {platform}?").format(user=msg.user, platform=NAMES[msg.platform]),
+            )
             if answer != QMessageBox.StandardButton.Yes:
                 return
             coro = acc.ban(msg)
             ev = Deletion(msg.platform, user_id=msg.user_id)
-            label = f"{msg.user} gebannt"
-        self.run(coro, then=lambda _: self.apply_deletion(ev), label=label)
+            label = _("{user} banned").format(user=msg.user)
+        self.run(coro, then=lambda _result: self.apply_deletion(ev), label=label)
 
     def mention(self, msg: ChatMessage) -> None:
         if self.target.isEnabled():
@@ -665,7 +734,7 @@ class MainWindow(QMainWindow):
         self.input.setText(f"@{msg.user} {self.input.text()}")
         self.input.setFocus()
 
-    # ---- Senden ---------------------------------------------------------- #
+    # ---- Sending --------------------------------------------------------- #
     def send(self) -> None:
         text = self.input.text().strip()
         if not text:
@@ -676,20 +745,20 @@ class MainWindow(QMainWindow):
         for p in plats:
             channel = self.inputs[p].text().strip()
             if not channel:
-                self.statusBar().showMessage(f"Kein {NAMES[p]}-Kanal eingetragen", 6000)
+                self.statusBar().showMessage(_("No {platform} channel entered").format(platform=NAMES[p]), 6000)
                 continue
-            self.run(self.accounts[p].send(channel, text), label=f"An {NAMES[p]} gesendet")
+            self.run(self.accounts[p].send(channel, text), label=_("Sent to {platform}").format(platform=NAMES[p]))
             sent = True
         if sent:
             self.input.clear()
 
-    # ---- Konten ---------------------------------------------------------- #
+    # ---- Accounts -------------------------------------------------------- #
     def refresh_accounts(self) -> None:
         current = self.target.currentData()
         self.target.clear()
         logged = [p for p in PLATFORMS if self.accounts[p].logged_in]
         if len(logged) > 1:
-            self.target.addItem("Alle", None)
+            self.target.addItem(_("All"), None)
         for p in logged:
             self.target.addItem(NAMES[p], p)
         idx = self.target.findData(current)
@@ -699,7 +768,7 @@ class MainWindow(QMainWindow):
         for w in (self.target, self.input, self.send_btn):
             w.setEnabled(enabled)
         self.input.setPlaceholderText(
-            "Nachricht senden …" if enabled else "Zum Schreiben und Moderieren unter „Konten“ anmelden"
+            _("Send a message …") if enabled else _("Log in under “Accounts” to send and moderate")
         )
 
     def login(self, platform: str) -> None:
@@ -707,23 +776,27 @@ class MainWindow(QMainWindow):
         if not cid or not secret:
             QMessageBox.information(
                 self,
-                "Entwickler-App fehlt",
-                f"Für den {NAMES[platform]}-Login brauchst du zuerst Client-ID und Secret einer eigenen Entwickler-App.",
+                _("Developer app missing"),
+                _("To log in to {platform} you first need the client ID and secret of your own developer app.").format(
+                    platform=NAMES[platform]
+                ),
             )
             self.edit_apps()
             if not all(self.app_creds(platform)):
                 return
-        self.statusBar().showMessage(f"Browser geöffnet – bitte bei {NAMES[platform]} anmelden …", 30000)
+        self.statusBar().showMessage(
+            _("Browser opened – please log in to {platform} …").format(platform=NAMES[platform]), 30000
+        )
         self.run(
             self.accounts[platform].login(),
             then=lambda who: self.refresh_accounts(),
-            label=f"Bei {NAMES[platform]} angemeldet",
+            label=_("Logged in to {platform}").format(platform=NAMES[platform]),
         )
 
     def logout(self, platform: str) -> None:
         self.accounts[platform].logout()
         self.refresh_accounts()
-        self.statusBar().showMessage(f"Von {NAMES[platform]} abgemeldet", 5000)
+        self.statusBar().showMessage(_("Logged out of {platform}").format(platform=NAMES[platform]), 5000)
 
     def edit_apps(self) -> None:
         dlg = AppsDialog(self, self.config["apps"])
@@ -741,8 +814,9 @@ class MainWindow(QMainWindow):
             port = int(self.config["overlay"].get("port", OVERLAY_PORT))
             self.run(
                 self.overlay.start(port),
-                then=lambda _: self.statusBar().showMessage(
-                    f"Overlay läuft: {self.overlay_url()} – in OBS als Browserquelle hinzufügen", 15000
+                then=lambda _result: self.statusBar().showMessage(
+                    _("Overlay running: {url} – add it in OBS as a browser source").format(url=self.overlay_url()),
+                    15000,
                 ),
                 on_error=lambda: self.overlay_action.setChecked(False),
             )
@@ -751,10 +825,10 @@ class MainWindow(QMainWindow):
 
     def copy_overlay_url(self) -> None:
         QApplication.clipboard().setText(self.overlay_url())
-        hint = "" if self.overlay.running else " (Overlay ist noch aus – unter „Overlay“ aktivieren)"
-        self.statusBar().showMessage(f"Kopiert: {self.overlay_url()}{hint}", 8000)
+        hint = "" if self.overlay.running else " " + _("(overlay is still off – enable it under “Overlay”)")
+        self.statusBar().showMessage(_("Copied: {url}").format(url=self.overlay_url()) + hint, 8000)
 
-    # ---- Beenden --------------------------------------------------------- #
+    # ---- Shutdown -------------------------------------------------------- #
     def closeEvent(self, event) -> None:  # noqa: N802
         self.save_config()
         for t in self.readers:
@@ -773,8 +847,50 @@ class MainWindow(QMainWindow):
         super().closeEvent(event)
 
 
+def load_config() -> dict:
+    cfg = {
+        "channels": {p: "" for p in PLATFORMS},
+        "show": {p: True for p in PLATFORMS},
+        "on_top": False,
+        "extra_emotes": True,
+        "debug_log": False,
+        "language": "auto",
+        "video": {"enabled": True, "quality": {}, "audio": None, "sizes": [440, 860]},
+        "overlay": {"enabled": False, "port": OVERLAY_PORT},
+        "apps": {},
+    }
+    try:
+        data = json.loads(CONFIG.read_text())
+    except Exception:  # noqa: BLE001
+        return cfg
+    for p in PLATFORMS:  # migrate the format of the first version
+        if isinstance(data.get(p), str):
+            cfg["channels"][p] = data[p]
+    for key in ("channels", "show", "overlay", "apps", "video"):
+        cfg[key].update(data.get(key) or {})
+    cfg["on_top"] = bool(data.get("on_top", False))
+    cfg["extra_emotes"] = bool(data.get("extra_emotes", True))
+    cfg["debug_log"] = bool(data.get("debug_log", False))
+    cfg["language"] = str(data.get("language") or "auto")
+    return cfg
+
+
+def restart_app(win: QMainWindow) -> None:
+    """Start a new instance (AppImage, frozen binary or source) and close this one."""
+    if os.environ.get("APPIMAGE"):
+        prog, args = os.environ["APPIMAGE"], []
+    elif getattr(sys, "frozen", False):
+        prog, args = sys.executable, []
+    else:
+        prog, args = sys.executable, [str(Path(sys.argv[0]).resolve())]
+    log.info("Restarting: %s %s", prog, " ".join(args))
+    win.close()
+    QProcess.startDetached(prog, args)
+    QApplication.quit()
+
+
 def run_ytdlp(args: list[str]) -> None:
-    """`multichat --yt-dlp …` verhält sich wie das yt-dlp-Programm (für mpvs ytdl_hook)."""
+    """`multichat --yt-dlp …` behaves like the yt-dlp program (for mpv's ytdl_hook)."""
     import yt_dlp  # type: ignore
 
     if not any(a.startswith("--js-runtimes") for a in args):
@@ -784,20 +900,27 @@ def run_ytdlp(args: list[str]) -> None:
 
 
 def selftest() -> None:
-    """`multichat --selftest`: prüft, ob alle Bausteine ladbar sind (z. B. in der AppImage)."""
+    """`multichat --selftest`: checks that all components can be loaded (e.g. in the AppImage)."""
     import importlib
 
     ok = True
     for mod in ("streamlink", "streamlink.plugins.twitch", "yt_dlp", "pytchat", "curl_cffi", "aiohttp", "websockets"):
         try:
             m = importlib.import_module(mod)
-            print(f"OK    {mod} {getattr(m, '__version__', '')}")
+            print(f"OK      {mod} {getattr(m, '__version__', '')}")
         except Exception as e:  # noqa: BLE001
             ok = False
-            print(f"FEHLT {mod}: {e}")
+            print(f"MISSING {mod}: {e}")
     from video import MPV_ERROR, load_mpv
 
-    print("OK    libmpv" if load_mpv() else f"FEHLT libmpv: {MPV_ERROR}")
+    print("OK      libmpv" if load_mpv() else f"MISSING libmpv: {MPV_ERROR}")
+    missing = [
+        code for code, _name in i18n.LANGUAGES
+        if code != "en" and not (i18n.resource_dir() / "locales" / f"{code}.json").is_file()
+    ]
+    ok = ok and not missing
+    print(f"MISSING locales: {', '.join(missing)}" if missing else f"OK      locales ({len(i18n.LANGUAGES)} languages)")
+    print("OK      icon" if app_icon_path().is_file() else "MISSING multichat.png")
     sys.exit(0 if ok else 1)
 
 
@@ -806,16 +929,20 @@ def main() -> None:
         run_ytdlp(sys.argv[2:])
     if len(sys.argv) > 1 and sys.argv[1] == "--selftest":
         selftest()
-    try:
-        debug = bool(json.loads(CONFIG.read_text()).get("debug_log"))
-    except Exception:  # noqa: BLE001
-        debug = False
-    setup_logging(debug)
+    config = load_config()
+    setup_logging(config["debug_log"])
+    QApplication.setDesktopFileName(APP_ID)  # Wayland app ID → KDE/GNOME find multichat.desktop
     app = QApplication(sys.argv)
     app.setApplicationName("MultiChat")
+    app.setApplicationVersion(APP_VERSION)
+    if app_icon_path().is_file():
+        app.setWindowIcon(QIcon(str(app_icon_path())))  # window icon, also without a .desktop file
+    lang = i18n.set_language(config["language"])
+    i18n.install_qt_translator(app)
     install_qt_handler()
     log_system_info()
-    win = MainWindow()
+    log.info("Language: %s (setting: %s)", lang, config["language"])
+    win = MainWindow(config)
     win.show()
     sys.exit(app.exec())
 

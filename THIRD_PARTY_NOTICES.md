@@ -17,7 +17,7 @@ The AppImage contains the license texts of all bundled Python packages under
 | PyQt6 | GPL-3.0-only | https://www.riverbankcomputing.com/software/pyqt/ |
 | PyQt6-Qt6 (Qt 6) | LGPL-3.0-only | https://www.qt.io/ |
 | PyQt6-sip | BSD-2-Clause | https://github.com/Python-SIP/sip |
-| python-mpv (`mpv`) | GPL-2.0-or-later oder LGPL-2.1-or-later | https://github.com/jaseg/python-mpv |
+| python-mpv (`mpv`) | GPL-2.0-or-later or LGPL-2.1-or-later | https://github.com/jaseg/python-mpv |
 | streamlink | BSD-2-Clause | https://github.com/streamlink/streamlink |
 | yt-dlp | Unlicense | https://github.com/yt-dlp/yt-dlp |
 | yt-dlp-ejs | Unlicense AND MIT AND ISC | https://github.com/yt-dlp/ejs |

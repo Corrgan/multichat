@@ -1,9 +1,10 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 Corrgan
-"""Chat-Leser für Twitch, Kick und YouTube (nur lesen, ohne Login).
+"""Chat readers for Twitch, Kick and YouTube (read-only, no login).
 
-Jeder Leser läuft als asyncio-Task und ruft `emit(event)` auf – entweder mit
-einer `ChatMessage` oder einer `Deletion` (Nachricht gelöscht / User gebannt).
+Each reader runs as an asyncio task and calls `emit(event)` with either a
+`ChatMessage` or a `Deletion` (message deleted / user banned). Status updates go to
+`status(platform, template, **values)` with an English template; the UI translates it.
 """
 from __future__ import annotations
 
@@ -24,7 +25,7 @@ log = logging.getLogger("multichat.chat")
 
 _uid = itertools.count(1)
 
-# Ein Nachrichtenteil: ("text", text, "") oder ("emote", bild_url, emote_name)
+# A message part: ("text", text, "") or ("emote", image_url, emote_name)
 Part = tuple
 
 
@@ -36,10 +37,10 @@ class ChatMessage:
     text: str
     parts: list = field(default_factory=list)
     color: str | None = None
-    msg_id: str | None = None  # ID der Plattform (fürs Löschen)
-    user_id: str | None = None  # ID der Plattform (für Timeout/Ban)
+    msg_id: str | None = None  # platform ID (for deleting)
+    user_id: str | None = None  # platform ID (for timeout/ban)
     timestamp: float = field(default_factory=time.time)
-    uid: int = field(default_factory=lambda: next(_uid))  # lokale ID
+    uid: int = field(default_factory=lambda: next(_uid))  # local ID
     deleted: bool = False
 
     def __post_init__(self) -> None:
@@ -57,11 +58,11 @@ class Deletion:
 
 Event = Union[ChatMessage, Deletion]
 Emit = Callable[[Event], None]
-Status = Callable[[str, str], None]  # (platform, status-text)
+Status = Callable[..., None]  # status(platform, template, **values)
 
 
 # --------------------------------------------------------------------------- #
-# Twitch: anonymes IRC über WebSocket
+# Twitch: anonymous IRC over WebSocket
 # --------------------------------------------------------------------------- #
 TWITCH_EMOTE_URL = "https://static-cdn.jtvnw.net/emoticons/v2/{}/default/dark/2.0"
 
@@ -75,7 +76,7 @@ def _parse_tags(raw: str) -> dict[str, str]:
 
 
 def parse_irc(line: str) -> tuple[dict[str, str], str, str, list[str]]:
-    """Zerlegt eine IRC-Zeile in (tags, prefix, command, params)."""
+    """Splits an IRC line into (tags, prefix, command, params)."""
     tags: dict[str, str] = {}
     if line.startswith("@"):
         raw, _, line = line[1:].partition(" ")
@@ -96,7 +97,7 @@ def parse_irc(line: str) -> tuple[dict[str, str], str, str, list[str]]:
 
 
 def twitch_parts(text: str, emotes: str | None) -> list[Part]:
-    """Wandelt den `emotes`-Tag (z. B. "25:0-4,6-10/1902:12-16") in Teile um."""
+    """Converts the `emotes` tag (e.g. "25:0-4,6-10/1902:12-16") into parts."""
     if not emotes:
         return [("text", text, "")]
     spans = []
@@ -122,7 +123,7 @@ def twitch_parts(text: str, emotes: str | None) -> list[Part]:
 
 
 def _extra(emotes, platform: str, channel: str, parts: list[Part]) -> list[Part]:
-    """7TV/BTTV/FFZ-Emotes einsetzen, falls ein EmoteStore übergeben wurde."""
+    """Insert 7TV/BTTV/FFZ emotes if an EmoteStore was given."""
     return emotes.apply(platform, channel, parts) if emotes else parts
 
 
@@ -130,13 +131,13 @@ async def run_twitch(channel: str, emit: Emit, status: Status, emotes=None) -> N
     channel = channel.lower().lstrip("#")
     while True:
         try:
-            status("twitch", "verbinde …")
+            status("twitch", "connecting …")
             async with websockets.connect("wss://irc-ws.chat.twitch.tv:443") as ws:
                 await ws.send("CAP REQ :twitch.tv/tags twitch.tv/commands")
                 await ws.send("PASS SCHMOOPIIE")
                 await ws.send(f"NICK justinfan{random.randint(10000, 99999)}")
                 await ws.send(f"JOIN #{channel}")
-                status("twitch", f"verbunden (#{channel})")
+                status("twitch", "connected (#{channel})", channel=channel)
                 async for raw in ws:
                     for line in str(raw).split("\r\n"):
                         if not line:
@@ -168,23 +169,23 @@ async def run_twitch(channel: str, emit: Emit, status: Status, emotes=None) -> N
                             target = tags.get("target-user-id")
                             emit(Deletion("twitch", user_id=target) if target else Deletion("twitch", clear_all=True))
                         elif cmd == "RECONNECT":
-                            raise ConnectionError("Twitch verlangt Neuverbindung")
+                            raise ConnectionError("Twitch requested a reconnect")
         except asyncio.CancelledError:
             raise
         except Exception as e:  # noqa: BLE001
-            log.warning("Twitch-Chat #%s: %s", channel, e, exc_info=True)
-            status("twitch", f"Fehler: {e} – neuer Versuch in 5 s")
+            log.warning("Twitch chat #%s: %s", channel, e, exc_info=True)
+            status("twitch", "error: {error} – retrying in {seconds} s", error=e, seconds=5)
             await asyncio.sleep(5)
 
 
 # --------------------------------------------------------------------------- #
-# Kick: Pusher-WebSocket. Die Chatroom-ID kommt aus der Kick-Website-API.
+# Kick: Pusher WebSocket. The chatroom ID comes from the Kick website API.
 # --------------------------------------------------------------------------- #
-# Kick hat im Oktober 2026 den Pusher-Schlüssel gewechselt. Die aktuellen
-# Zugangsdaten fragt die App bei Kick ab; das hier sind nur Rückfallwerte.
+# Kick rotated its Pusher key in October 2026. The app asks Kick for the current
+# credentials; these are only fallback values.
 KICK_REALTIME_URL = "https://web.kick.com/api/v1/realtime/connection"
 KICK_PUSHER_FALLBACKS = [("34bf7a0ff419a2a775b9", "us2"), ("32cbd69e4b950bf97679", "us2")]
-_kick_pusher_bad: set[str] = set()  # Schlüssel, die Kick mit 4001 abgelehnt hat
+_kick_pusher_bad: set[str] = set()  # keys Kick rejected with 4001
 
 
 def kick_pusher_url(key: str, cluster: str) -> str:
@@ -192,7 +193,7 @@ def kick_pusher_url(key: str, cluster: str) -> str:
 
 
 def _find_pusher_creds(obj) -> tuple[str, str] | None:
-    """Sucht app_key/cluster irgendwo in der Antwort (Format kann sich ändern)."""
+    """Looks for app_key/cluster anywhere in the response (the format may change)."""
     if isinstance(obj, dict):
         if obj.get("app_key"):
             return str(obj["app_key"]), str(obj.get("cluster") or "us2")
@@ -209,7 +210,7 @@ def _find_pusher_creds(obj) -> tuple[str, str] | None:
 
 
 def _fetch_kick_pusher_creds() -> tuple[str, str]:
-    """Fragt Kick nach den Pusher-Zugangsdaten (nur Anbieter „pusher“ angeboten)."""
+    """Asks Kick for the Pusher credentials (offering only the "pusher" provider)."""
     import uuid
 
     body = {
@@ -231,18 +232,18 @@ def _fetch_kick_pusher_creds() -> tuple[str, str]:
         if r.status_code == 200:
             found = _find_pusher_creds(r.json())
             if found and found[0] not in _kick_pusher_bad:
-                log.info("Kick-Pusher von Kick erhalten: Schlüssel %s, Cluster %s", *found)
+                log.info("Kick Pusher credentials received: key %s, cluster %s", *found)
                 return found
-            log.warning("Kick realtime: keine (neuen) Pusher-Daten in der Antwort: %s", r.text[:300])
+            log.warning("Kick realtime: no (new) Pusher credentials in the response: %s", r.text[:300])
         else:
             log.warning("Kick realtime HTTP %s: %s", r.status_code, re.sub(r"\s+", " ", r.text[:300]))
     except Exception as e:  # noqa: BLE001
-        log.warning("Kick realtime-Abfrage fehlgeschlagen: %s", e)
+        log.warning("Kick realtime request failed: %s", e)
     for key, cluster in KICK_PUSHER_FALLBACKS:
         if key not in _kick_pusher_bad:
-            log.info("Kick-Pusher: nutze Rückfallwert %s / %s", key, cluster)
+            log.info("Kick Pusher: using fallback %s / %s", key, cluster)
             return key, cluster
-    _kick_pusher_bad.clear()  # alles durchprobiert → von vorn
+    _kick_pusher_bad.clear()  # tried everything → start over
     return KICK_PUSHER_FALLBACKS[0]
 
 
@@ -268,14 +269,14 @@ def kick_parts(content: str) -> list[Part]:
 
 
 def _fetch_kick_channel(slug: str) -> tuple[int, str]:
-    """Gibt (Chatroom-ID, User-ID des Streamers) zurück."""
+    """Returns (chatroom ID, streamer user ID)."""
     data = _fetch_kick_json(slug)
     return int(data["chatroom"]["id"]), str(data.get("user_id") or "")
 
 
 def _fetch_kick_json(slug: str) -> dict:
-    """Kanal-Infos der Kick-Website-API (enthält auch `livestream` und `playback_url`).
-    Kick sitzt hinter Cloudflare, daher curl_cffi (Browser-Fingerprint)."""
+    """Channel info from the Kick website API (also contains `livestream` and `playback_url`).
+    Kick sits behind Cloudflare, hence curl_cffi (browser fingerprint)."""
     url = f"https://kick.com/api/v2/channels/{slug}"
     try:
         from curl_cffi import requests as cf  # type: ignore
@@ -285,21 +286,21 @@ def _fetch_kick_json(slug: str) -> dict:
     except ImportError:
         import requests
 
-        lib = "requests (curl_cffi fehlt!)"
+        lib = "requests (curl_cffi missing!)"
         r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=15)
     ctype = r.headers.get("content-type", "")
     log.debug("Kick %s → HTTP %s, %s, %d Bytes, via %s", url, r.status_code, ctype, len(r.content), lib)
     if r.status_code == 404:
-        raise ValueError(f"Kick-Kanal „{slug}“ nicht gefunden")
+        raise ValueError(f"Kick channel “{slug}” not found")
     if r.status_code != 200 or "json" not in ctype:
         body = re.sub(r"\s+", " ", r.text[:300])
         cloudflare = "cloudflare" in r.text[:5000].lower() or "just a moment" in r.text[:5000].lower()
         log.warning(
-            "Kick-API-Fehler: HTTP %s, Content-Type %r, via %s, Cloudflare=%s, Antwort: %s",
+            "Kick API error: HTTP %s, content type %r, via %s, Cloudflare=%s, response: %s",
             r.status_code, ctype, lib, cloudflare, body,
         )
-        hint = " (Cloudflare blockt)" if cloudflare else ""
-        raise RuntimeError(f"Kick-API HTTP {r.status_code}{hint}")
+        hint = " (blocked by Cloudflare)" if cloudflare else ""
+        raise RuntimeError(f"Kick API HTTP {r.status_code}{hint}")
     return r.json()
 
 
@@ -308,12 +309,12 @@ async def run_kick(channel: str, emit: Emit, status: Status, emotes=None) -> Non
     while True:
         key = ""
         try:
-            status("kick", "hole Chatroom-ID …")
+            status("kick", "getting chatroom ID …")
             room_id, streamer_id = await asyncio.to_thread(_fetch_kick_channel, slug)
-            log.info("Kick %s: Chatroom %s, Streamer-ID %s", slug, room_id, streamer_id)
+            log.info("Kick %s: chatroom %s, streamer ID %s", slug, room_id, streamer_id)
             if emotes:
                 emotes.schedule_channel("kick", slug, streamer_id)
-            status("kick", "verbinde …")
+            status("kick", "connecting …")
             key, cluster = await asyncio.to_thread(_fetch_kick_pusher_creds)
             async with websockets.connect(kick_pusher_url(key, cluster)) as ws:
                 await ws.send(
@@ -324,7 +325,7 @@ async def run_kick(channel: str, emit: Emit, status: Status, emotes=None) -> Non
                         }
                     )
                 )
-                status("kick", "abonniere Chat …")
+                status("kick", "subscribing to chat …")
                 async for raw in ws:
                     evt = json.loads(raw)
                     name = evt.get("event", "")
@@ -334,15 +335,15 @@ async def run_kick(channel: str, emit: Emit, status: Status, emotes=None) -> Non
                     if name.startswith("pusher"):
                         if name == "pusher:error":
                             err = evt.get("data") or {}
-                            log.warning("Kick-Pusher-Fehler: %s", err)
+                            log.warning("Kick Pusher error: %s", err)
                             if isinstance(err, dict) and err.get("code") == 4001:
                                 _kick_pusher_bad.add(key)
-                                raise KickKeyRejected(f"Kick lehnt Pusher-Schlüssel {key} ab – probiere nächsten")
+                                raise KickKeyRejected(f"Kick rejected Pusher key {key} – trying the next one")
                         elif name == "pusher_internal:subscription_succeeded":
-                            log.info("Kick %s: Chat abonniert (Schlüssel %s)", slug, key)
-                            status("kick", f"verbunden ({slug})")
+                            log.info("Kick %s: chat subscribed (key %s)", slug, key)
+                            status("kick", "connected ({channel})", channel=slug)
                         else:
-                            log.debug("Kick-Pusher: %s %s", name, str(evt.get("data"))[:200])
+                            log.debug("Kick Pusher: %s %s", name, str(evt.get("data"))[:200])
                         continue
                     data = json.loads(evt.get("data") or "{}")
                     if name.endswith("ChatMessageEvent"):
@@ -374,35 +375,35 @@ async def run_kick(channel: str, emit: Emit, status: Status, emotes=None) -> Non
             raise
         except KickKeyRejected as e:
             log.warning("%s", e)
-            status("kick", "Schlüssel abgelehnt – probiere nächsten …")
+            status("kick", "key rejected – trying the next one …")
             await asyncio.sleep(1)
         except websockets.exceptions.ConnectionClosedError as e:
-            if e.rcvd and e.rcvd.code == 4001:  # Server schließt sofort mit 4001
+            if e.rcvd and e.rcvd.code == 4001:  # server closes right away with 4001
                 _kick_pusher_bad.add(key)
-                log.warning("Kick: Schlüssel %s abgelehnt (4001)", key)
-                status("kick", "Schlüssel abgelehnt – probiere nächsten …")
+                log.warning("Kick: key %s rejected (4001)", key)
+                status("kick", "key rejected – trying the next one …")
                 await asyncio.sleep(1)
                 continue
-            log.warning("Kick-Chat %s: %s", slug, e, exc_info=True)
-            status("kick", f"Fehler: {e} – neuer Versuch in 10 s")
+            log.warning("Kick chat %s: %s", slug, e, exc_info=True)
+            status("kick", "error: {error} – retrying in {seconds} s", error=e, seconds=10)
             await asyncio.sleep(10)
         except Exception as e:  # noqa: BLE001
-            log.warning("Kick-Chat %s: %s", slug, e, exc_info=True)
-            status("kick", f"Fehler: {e} – neuer Versuch in 10 s")
+            log.warning("Kick chat %s: %s", slug, e, exc_info=True)
+            status("kick", "error: {error} – retrying in {seconds} s", error=e, seconds=10)
             await asyncio.sleep(10)
 
 
 # --------------------------------------------------------------------------- #
-# YouTube: pytchat (Live-Chat ohne API-Key).
-# Eingabe: Kanal (@handle, Kanal-URL, UC…-ID) → aktueller Livestream wird
-# automatisch gefunden. Alternativ direkt eine Video-URL/-ID.
+# YouTube: pytchat (live chat without an API key).
+# Input: channel (@handle, channel URL, UC… ID) → the current live stream is found
+# automatically. Alternatively a video URL/ID.
 # --------------------------------------------------------------------------- #
-YT_POLL = 60  # Sekunden zwischen „ist der Kanal live?“-Prüfungen
+YT_POLL = 60  # seconds between "is the channel live?" checks
 YT_HEADERS = {
     "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36",
     "Accept-Language": "de-DE,de;q=0.9,en;q=0.8",
 }
-# Überspringt die EU-Cookie-Abfrage (consent.youtube.com)
+# skips the EU cookie consent page (consent.youtube.com)
 YT_COOKIES = {"SOCS": "CAI", "CONSENT": "YES+cb"}
 _YT_VIDEO_RE = re.compile(r"(?:v=|youtu\.be/|/live/|/shorts/)([\w-]{11})(?![\w-])")
 _YT_CHANNEL_RE = re.compile(r"youtube\.com/((?:@|channel/|c/|user/)[^/?#\s]+)")
@@ -412,7 +413,7 @@ _YT_LIVE_RE = re.compile(r'"isLiveNow"\s*:\s*true')
 
 
 def youtube_target(value: str) -> tuple[str, str]:
-    """→ ("video", video_id) oder ("channel", kanal_url)."""
+    """→ ("video", video_id) or ("channel", channel_url)."""
     v = value.strip()
     m = _YT_VIDEO_RE.search(v)
     if m:
@@ -435,10 +436,10 @@ def youtube_video_id(value: str) -> str:
 
 
 def parse_live_page(page: str) -> tuple[str, str] | None:
-    """Wertet die /live-Seite eines Kanals aus → (video_id, titel) oder None."""
+    """Parses the /live page of a channel → (video_id, title) or None."""
     m = _YT_CANON_RE.search(page)
     if not m or not _YT_LIVE_RE.search(page):
-        return None  # nicht live (oder nur ein geplanter Stream)
+        return None  # not live (or only a scheduled stream)
     t = _YT_TITLE_RE.search(page)
     return m.group(1), html.unescape(t.group(1)) if t else ""
 
@@ -451,10 +452,10 @@ async def find_live_video(channel_url: str) -> tuple[str, str] | None:
     ) as s:
         async with s.get(channel_url.rstrip("/") + "/live") as r:
             if r.status == 404:
-                raise ValueError("YouTube-Kanal nicht gefunden")
+                raise ValueError("YouTube channel not found")
             r.raise_for_status()
             if "consent." in (r.url.host or ""):
-                raise RuntimeError("YouTube-Cookie-Abfrage blockiert die Suche")
+                raise RuntimeError("YouTube cookie consent page blocks the lookup")
             page = await r.text()
     return parse_live_page(page)
 
@@ -483,17 +484,20 @@ async def run_youtube(value: str, emit: Emit, status: Status, emotes=None) -> No
             if kind == "video":
                 vid, title = target, ""
             else:
-                status("youtube", "suche Livestream …")
+                status("youtube", "looking for live stream …")
                 found = await find_live_video(target)
                 if not found:
                     nxt = time.strftime("%H:%M", time.localtime(time.time() + YT_POLL))
-                    status("youtube", f"nicht live – prüfe wieder {nxt}")
+                    status("youtube", "not live – checking again at {time}", time=nxt)
                     await asyncio.sleep(YT_POLL)
                     continue
                 vid, title = found
-            status("youtube", "verbinde …")
+            status("youtube", "connecting …")
             chat = await asyncio.to_thread(pytchat.create, video_id=vid, interruptable=False)
-            status("youtube", f"live: {title}" if title else f"verbunden ({vid})")
+            if title:
+                status("youtube", "live: {title}", title=title)
+            else:
+                status("youtube", "connected ({channel})", channel=vid)
             while chat.is_alive():
                 items = await asyncio.to_thread(lambda: list(chat.get().sync_items()))
                 for c in items:
@@ -510,13 +514,13 @@ async def run_youtube(value: str, emit: Emit, status: Status, emotes=None) -> No
                     )
                 await asyncio.sleep(1)
             if kind == "video":
-                status("youtube", "Stream beendet oder Chat nicht erreichbar – neuer Versuch in 15 s")
+                status("youtube", "stream ended or chat unreachable – retrying in {seconds} s", seconds=15)
             else:
-                status("youtube", "Stream beendet – warte auf den nächsten")
+                status("youtube", "stream ended – waiting for the next one")
             await asyncio.sleep(15)
         except asyncio.CancelledError:
             raise
         except Exception as e:  # noqa: BLE001
-            log.warning("YouTube-Chat %s: %s", value, e, exc_info=True)
-            status("youtube", f"Fehler: {e} – neuer Versuch in 15 s")
+            log.warning("YouTube chat %s: %s", value, e, exc_info=True)
+            status("youtube", "error: {error} – retrying in {seconds} s", error=e, seconds=15)
             await asyncio.sleep(15)

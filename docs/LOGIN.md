@@ -7,8 +7,8 @@ you create once yourself. It gives you two values:
 - **Client ID** – public, identifies your app
 - **Client secret** – treat it like a password, never share it
 
-Enter both in MultiChat under **„Konten → Entwickler-Apps einrichten …“** (Accounts → Set up
-developer apps), then click **„Konten → Bei … anmelden“** (Accounts → Log in to …). Your
+Enter both in MultiChat under **Accounts → Set up developer apps …**, then click
+**Accounts → Log in to …**. Your
 browser opens, you confirm, done.
 
 > **Important – the same redirect URL for all three platforms, exactly like this:**
@@ -155,11 +155,11 @@ only at this moment (you can create a new one later).
 | Message / behaviour | Cause |
 |---|---|
 | Browser shows "redirect_uri mismatch" / "invalid redirect" | the redirect URL in the developer app differs – enter exactly `http://localhost:17563/callback` |
-| „Port 17563 belegt“ (port 17563 in use) | another login is still running or another program uses the port – wait a moment or restart MultiChat |
+| "Port 17563 in use" | another login is still running or another program uses the port – wait a moment or restart MultiChat |
 | Google: "Access blocked" / "access_denied" | the Google account is missing under **Audience → Test users** |
 | Twitch: login fails at the end (e.g. "invalid client") | Client Type is *Public* instead of *Confidential* – public apps have no secret; create a new app with *Confidential* |
 | Sending works, moderating doesn't | you're not a moderator on the channel |
 | Kick: login or an action is rejected | a required scope isn't ticked in the Kick app |
-| „Sitzung abgelaufen – bitte neu anmelden“ (session expired – please log in again) | token expired (with Google in Testing status after 7 days) – log in again |
+| "session expired – please log in again" | token expired (with Google in Testing status after 7 days) – log in again |
 
-The log always has more details: **„Hilfe → Log kopieren“** (Help → Copy log).
+The log always has more details: **Help → Copy log**.

@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 Corrgan
-"""Logdatei fürs Debugging.
+"""Log file for debugging.
 
-Ort: ~/.local/state/multichat/multichat.log (rotiert, max. 3 × 1 MB).
-Tokens, Secrets und Login-Codes werden vor dem Schreiben geschwärzt.
+Location: ~/.local/state/multichat/multichat.log (rotated, max. 3 × 1 MB).
+Tokens, secrets and login codes are redacted before writing.
 """
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ import threading
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
-APP_VERSION = "0.10"
+APP_VERSION = "0.11"
 
 LOG_DIR = Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local" / "state") / "multichat"
 LOG_FILE = LOG_DIR / "multichat.log"
@@ -34,7 +34,7 @@ _SECRET_PATTERNS = [
         ),
         r"\1***",
     ),
-    (re.compile(r"([?&]code=)[^&\s\"']+"), r"\1***"),  # OAuth-Code in Redirect-URLs
+    (re.compile(r"([?&]code=)[^&\s\"']+"), r"\1***"),  # OAuth code in redirect URLs
 ]
 
 
@@ -46,7 +46,7 @@ def redact(text: str) -> str:
 
 class RedactingFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:
-        record.levelname = logging.getLevelName(record.levelno).upper()  # Streamlink benennt Stufen klein um
+        record.levelname = logging.getLevelName(record.levelno).upper()  # Streamlink renames the levels to lowercase
         return redact(super().format(record))
 
 
@@ -63,15 +63,15 @@ def setup_logging(debug: bool = False) -> Path:
     root.addHandler(fh)
     root.addHandler(sh)
     set_debug(debug)
-    # Bibliotheken nicht zu gesprächig
+    # keep libraries from being too chatty
     for noisy in ("websockets", "aiohttp.access", "urllib3", "asyncio", "httpx", "httpcore"):
         logging.getLogger(noisy).setLevel(logging.WARNING)
 
     def excepthook(etype, value, tb):
-        log.critical("Unbehandelter Fehler", exc_info=(etype, value, tb))
+        log.critical("Unhandled error", exc_info=(etype, value, tb))
 
     def thread_excepthook(args):
-        log.critical("Unbehandelter Fehler im Thread %s", args.thread.name if args.thread else "?",
+        log.critical("Unhandled error in thread %s", args.thread.name if args.thread else "?",
                      exc_info=(args.exc_type, args.exc_value, args.exc_traceback))
 
     sys.excepthook = excepthook
@@ -116,7 +116,7 @@ def log_system_info() -> None:
             v = getattr(m, "__version__", None) or getattr(getattr(m, "version", None), "__version__", None)
             return str(v or "ok")
         except Exception as e:  # noqa: BLE001
-            return f"fehlt ({type(e).__name__})"
+            return f"missing ({type(e).__name__})"
 
     distro = "?"
     try:
@@ -129,13 +129,13 @@ def log_system_info() -> None:
     from PyQt6.QtGui import QGuiApplication
 
     log.info("=" * 60)
-    log.info("MultiChat %s gestartet%s", APP_VERSION, " (AppImage)" if os.environ.get("APPIMAGE") else "")
+    log.info("MultiChat %s started%s", APP_VERSION, " (AppImage)" if os.environ.get("APPIMAGE") else "")
     log.info("System: %s | Kernel %s | Python %s", distro, platform.release(), platform.python_version())
-    log.info("Qt %s | Plattform: %s | Sitzung: %s", QT_VERSION_STR, QGuiApplication.platformName(),
+    log.info("Qt %s | platform: %s | session: %s", QT_VERSION_STR, QGuiApplication.platformName(),
              os.environ.get("XDG_SESSION_TYPE", "?"))
-    log.info("Module: websockets %s, aiohttp %s, curl_cffi %s, pytchat %s, yt-dlp %s",
+    log.info("Modules: websockets %s, aiohttp %s, curl_cffi %s, pytchat %s, yt-dlp %s",
              ver("websockets"), ver("aiohttp"), ver("curl_cffi"), ver("pytchat"), ver("yt_dlp"))
-    log.info("JavaScript-Laufzeiten (für YouTube-Video): %s", _js_runtimes())
+    log.info("JavaScript runtimes (for YouTube video): %s", _js_runtimes())
     log.info("Log: %s", LOG_FILE)
 
 
@@ -154,7 +154,7 @@ def _js_runtimes() -> str:
         except Exception:  # noqa: BLE001
             v = "?"
         found.append(f"{name} {v} ({path})")
-    return ", ".join(found) or "keine gefunden"
+    return ", ".join(found) or "none found"
 
 
 def tail(lines: int = 200) -> str:
@@ -162,4 +162,4 @@ def tail(lines: int = 200) -> str:
         with open(LOG_FILE, encoding="utf-8", errors="replace") as f:
             return "".join(f.readlines()[-lines:])
     except OSError as e:
-        return f"(Log nicht lesbar: {e})"
+        return f"(log not readable: {e})"

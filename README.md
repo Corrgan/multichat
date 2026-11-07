@@ -2,8 +2,6 @@
 
 Twitch, Kick and YouTube live chat combined in one window for Linux – with video tiles to watch along, emotes, filters, login for sending and moderating, and an OBS overlay.
 
-> The user interface is currently in German. Menu entries are quoted below as they appear in the app, with an English translation in parentheses.
-
 ## Download
 
 Ready-made AppImages are available under [Releases](https://github.com/Corrgan/multichat/releases) – built automatically by GitHub Actions, with a SHA256 checksum. They run on systems with glibc ≥ 2.35 (e.g. Ubuntu 22.04+, Debian 12+, Fedora 36+, current Arch).
@@ -83,8 +81,8 @@ The workflow [`.github/workflows/appimage.yml`](.github/workflows/appimage.yml) 
 - **Twitch:** channel name, e.g. `channelname`
 - **Kick:** channel name (slug), e.g. `channelname`
 - **YouTube:** channel, e.g. `@channelname`, `https://www.youtube.com/@channelname` or a `UC…` channel ID. The app checks every minute whether the channel is live, connects to the running stream automatically and waits for the next one after the stream ends. A video URL/ID still works if you want a specific stream.
-- **„Verbinden“ / „Trennen“** (connect / disconnect) starts or stops all chats and video tiles.
-- **„Anzeigen“** (show): checkboxes hide or show platforms in the chat view.
+- **Connect / Disconnect** starts or stops all chats and video tiles.
+- **Show:** checkboxes hide or show platforms in the chat view.
 - Each message starts with the platform's icon (the website's favicon, as in a browser tab). If it can't be loaded, a coloured abbreviation (TW/KI/YT) is shown instead.
 - **Click on a name** to open the menu: mention, copy text, delete message, timeout (1 min / 10 min / 1 h), ban.
 - **Input line at the bottom:** send to one platform or to all you're logged in to.
@@ -92,17 +90,25 @@ The workflow [`.github/workflows/appimage.yml`](.github/workflows/appimage.yml) 
 
 Reading works without logging in. To send and moderate you need to be logged in **and** have moderator rights on the channel (or it's your own channel).
 
+### Language
+
+The interface is available in English, German, French, Spanish, Japanese and Chinese (simplified). By default it follows the system language; **View → Language** switches it (takes effect after a restart). Log messages stay in English.
+
+The French, Spanish, Japanese and Chinese translations were not done by native speakers – corrections are very welcome: edit the file in [`locales/`](locales) and open a pull request.
+
+**Help → About MultiChat** shows the version, the project link and the licenses.
+
 ### Video tiles
 
-Chat on the left, one video tile per configured channel on the right. They start with „Verbinden“ (connect).
+Chat on the left, one video tile per configured channel on the right. They start with **Connect**.
 
 - **Audio:** only one tile plays sound at a time (blue border). Click into the video or on the speaker icon to move the sound there; a second click mutes everything.
-- **Quality** per tile: 360p, 480p (default), 720p or „Quelle“ (source). Three streams at 480p need about 5–8 Mbit/s in total.
-- **Offline:** the tile shows „offline“ and checks again every minute. After a stream ends it keeps looking; for YouTube this also finds the channel's next live stream.
+- **Quality** per tile: 360p, 480p (default), 720p or Source. Three streams at 480p need about 5–8 Mbit/s in total.
+- **Offline:** the tile shows "offline" and checks again every minute. After a stream ends it keeps looking; for YouTube this also finds the channel's next live stream.
 - **Reload** (arrow icon) if a stream hangs; **stop/start** (■/▶) pauses just that tile.
-- **„Ansicht → Video-Kacheln“** (View → Video tiles) hides the column and stops the streams (saves bandwidth). The splitter between chat and videos can be dragged.
+- **View → Video tiles** hides the column and stops the streams (saves bandwidth). The splitter between chat and videos can be dragged.
 - Videos run a few seconds behind the live signal, just like the browser player.
-- **Twitch** plays through [Streamlink](https://streamlink.github.io/) with ad filtering: ad breaks are skipped (the tile then shows „Werbepause wird übersprungen“ – *skipping ad break* – and the picture pauses briefly) instead of corrupting the picture mid-stream.
+- **Twitch** plays through [Streamlink](https://streamlink.github.io/) with ad filtering: ad breaks are skipped (the tile then shows *skipping ad break* and the picture pauses briefly) instead of corrupting the picture mid-stream.
 - **YouTube** is loaded via `yt-dlp`, **Kick** directly via the Kick API. If a platform changes something, `pip install -U yt-dlp streamlink` (or rebuilding the AppImage) often helps.
 
 ## Login setup (one-time)
@@ -120,12 +126,12 @@ In short:
 | Kick | [kick.com/settings/developer](https://kick.com/settings/developer) | Scopes `user:read`, `channel:read`, `chat:write`, `moderation:ban`, `moderation:chat_message:manage`, webhooks off, 2FA required |
 | YouTube | [console.cloud.google.com](https://console.cloud.google.com/) | Enable YouTube Data API v3, audience *External* + yourself as test user, OAuth client type **Web application** |
 
-Then in MultiChat: **„Konten → Entwickler-Apps einrichten …“** (Accounts → Set up developer apps) → enter client ID and secret → **„Konten → Bei … anmelden“** (Accounts → Log in to …).
+Then in MultiChat: **Accounts → Set up developer apps …** → enter client ID and secret → **Accounts → Log in to …**.
 
 ## OBS overlay
 
-1. Tick **„Overlay → OBS-Overlay aktiv“** (OBS overlay active)
-2. **„Overlay → Overlay-URL kopieren“** (copy overlay URL)
+1. Tick **Overlay → OBS overlay active**
+2. **Overlay → Copy overlay URL**
 3. In OBS: add source → **Browser** → paste the URL, width/height e.g. 500 × 800
 
 The URL can be customised:
@@ -144,10 +150,10 @@ Deleted messages and banned users disappear from the overlay as well.
 
 ## Troubleshooting / log
 
-- **„Hilfe → Log kopieren“** (Help → Copy log) puts the last 300 lines on the clipboard, ready to paste into a chat or an issue.
-- **„Hilfe → Logdatei öffnen“ / „Log-Ordner öffnen“** (open log file / folder). The file is `~/.local/state/multichat/multichat.log` (rotated, max. 3 × 1 MB).
-- **„Hilfe → Ausführliches Log (Debug)“** (verbose log) additionally records every HTTP response, Kick WebSocket events, stream lookups and mpv messages. Reproduce the problem afterwards, then copy the log.
-- Right-click a status text (next to the channel fields or in a video tile) → **„Status kopieren“** (copy status) copies the full text.
+- **Help → Copy log** puts the last 300 lines on the clipboard, ready to paste into a chat or an issue.
+- **Help → Open log file / Open log folder**. The file is `~/.local/state/multichat/multichat.log` (rotated, max. 3 × 1 MB).
+- **Help → Verbose log (debug)** additionally records every HTTP response, Kick WebSocket events, stream lookups and mpv messages. Reproduce the problem afterwards, then copy the log.
+- Right-click a status text (next to the channel fields or in a video tile) → **Copy status** copies the full text.
 - Tokens, secrets and login codes are redacted in the log automatically.
 - If the app crashes, `coredumpctl info multichat` (Fedora, systemd) shows a backtrace that helps with debugging.
 - Hardware decoding problems with the videos: start with `MULTICHAT_HWDEC=no`, e.g. `MULTICHAT_HWDEC=no ./MultiChat-x86_64.AppImage`.
@@ -161,14 +167,14 @@ Deleted messages and banned users disappear from the overlay as well.
 - **Kick** chat is read via the unofficial website endpoints (chatroom ID from `kick.com/api/v2`, behind Cloudflare, hence `curl_cffi`). Sending and moderating use the official Kick API. If Kick changes its website, reading may break.
 - **YouTube** chat is read via `pytchat` (unofficial; run `pip install -U pytchat` if needed), sending and moderating use the official YouTube Data API.
 - **YouTube video:** the app finds the running live stream via the channel page; mpv plays it via yt-dlp (mpv's `ytdl_hook`, which also handles separate video/audio tracks and DASH live streams). yt-dlp is included in the app – `MultiChat-x86_64.AppImage --yt-dlp …` behaves like the yt-dlp program. For YouTube, yt-dlp needs Node.js or Deno.
-- Emotes: Twitch, Kick and YouTube emotes are shown as images, plus **7TV, BetterTTV and FrankerFaceZ** (menu „Ansicht → 7TV-/BTTV-/FFZ-Emotes“):
+- Emotes: Twitch, Kick and YouTube emotes are shown as images, plus **7TV, BetterTTV and FrankerFaceZ** (menu **View → 7TV / BTTV / FFZ emotes**):
   - global sets apply to all three platforms
   - channel emotes: Twitch channels get 7TV + BTTV + FFZ, Kick channels 7TV (if the streamer has linked a 7TV account)
   - for identical names: channel before global, 7TV before BTTV before FFZ
   - channel emotes are loaded when connecting, so the first seconds of chat may still show text
   - animated emotes are still images in the app window and animated in the OBS overlay
   - if Qt lacks the WebP plugin (some distribution packages), the app uses PNG/GIF; otherwise install `qt6-image-formats-plugins` or use the pip package
-- On Wayland, „Immer im Vordergrund“ (always on top) may be ignored depending on the compositor. The video tiles work on X11 and Wayland.
+- On Wayland, **Always on top** may be ignored depending on the compositor. The video tiles work on X11 and Wayland.
 - If the app doesn't start on X11 ("xcb platform plugin"): `sudo apt install libxcb-cursor0`.
 
 ## License

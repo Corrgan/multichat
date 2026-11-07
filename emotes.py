@@ -1,12 +1,12 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 Corrgan
-"""Drittanbieter-Emotes: 7TV, BetterTTV und FrankerFaceZ.
+"""Third-party emotes: 7TV, BetterTTV and FrankerFaceZ.
 
-Diese Emotes sind einfache Wörter im Text ("KEKW", "catJAM" …). Der Store lädt
-die globalen Sets einmal und die Kanal-Sets, sobald die Kanal-ID bekannt ist
-(Twitch: room-id, Kick: User-ID). `apply()` ersetzt passende Wörter durch Bilder.
+These emotes are plain words in the text ("KEKW", "catJAM" …). The store loads the
+global sets once and the channel sets as soon as the channel ID is known
+(Twitch: room-id, Kick: user ID). `apply()` replaces matching words with images.
 
-Reihenfolge bei gleichen Namen: Kanal vor global; innerhalb gilt 7TV > BTTV > FFZ.
+Precedence for equal names: channel before global; within each, 7TV > BTTV > FFZ.
 """
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ from clients import Part
 log = logging.getLogger("multichat.emotes")
 
 _WS = re.compile(r"(\s+)")
-EmoteMap = dict[str, str]  # Name -> Bild-URL
+EmoteMap = dict[str, str]  # name -> image URL
 
 
 def _https(url: str) -> str:
@@ -32,7 +32,7 @@ def _https(url: str) -> str:
 class EmoteStore:
     def __init__(self, session: Callable[[], aiohttp.ClientSession], formats: list[str] | None = None) -> None:
         self._session = session
-        # bevorzugte Dateiformate für 7TV (Qt ohne WebP-Plugin → png/gif)
+        # preferred file formats for 7TV (Qt without WebP plugin → png/gif)
         self.formats = formats or ["webp", "png", "gif"]
         self.enabled = True
         self.global_: EmoteMap = {}
@@ -41,7 +41,7 @@ class EmoteStore:
         self._loading: set[tuple[str, str]] = set()
         self._tasks: set[asyncio.Task] = set()
 
-    # ---- Laden ----------------------------------------------------------- #
+    # ---- Loading ---------------------------------------------------------- #
     async def _json(self, url: str):
         async with self._session().get(url, headers={"User-Agent": "MultiChat"}) as r:
             if r.status != 200:
@@ -51,7 +51,7 @@ class EmoteStore:
 
     @staticmethod
     async def _merge(*loaders) -> tuple[EmoteMap, dict[str, int]]:
-        """Lädt parallel; spätere Quellen überschreiben frühere. Fehler werden ignoriert."""
+        """Loads in parallel; later sources override earlier ones. Errors are ignored."""
         results = await asyncio.gather(*loaders, return_exceptions=True)
         merged: EmoteMap = {}
         counts = {}
@@ -65,7 +65,7 @@ class EmoteStore:
         self.global_, counts = await self._merge(
             self._ffz_global(), self._bttv_global(), self._7tv_set("https://7tv.io/v3/emote-sets/global")
         )
-        self.global_loaded = bool(counts)  # nichts erreichbar → beim nächsten Einschalten erneut versuchen
+        self.global_loaded = bool(counts)  # nothing reachable → try again the next time it is enabled
         return counts
 
     async def load_channel(self, platform: str, channel: str, ext_id: str) -> None:
@@ -85,7 +85,7 @@ class EmoteStore:
             self._loading.discard(key)
 
     def schedule_channel(self, platform: str, channel: str, ext_id: str | None) -> None:
-        """Aus einem laufenden Leser heraus aufrufen (gleicher Event-Loop)."""
+        """Call from within a running reader (same event loop)."""
         key = (platform, channel.lower())
         if not ext_id or key in self.channels or key in self._loading:
             return
@@ -156,7 +156,7 @@ class EmoteStore:
         data = await self._json(f"https://api.frankerfacez.com/v1/room/id/{twitch_id}") or {}
         return self._ffz_parse(data.get("sets"))
 
-    # ---- Ersetzen -------------------------------------------------------- #
+    # ---- Replacing -------------------------------------------------------- #
     def apply(self, platform: str, channel: str, parts: list[Part]) -> list[Part]:
         if not self.enabled or not (self.global_ or self.channels):
             return parts

@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 Corrgan
-"""Video-Kacheln: libmpv über die OpenGL-Render-API in Qt (läuft unter X11 und Wayland).
+"""Video tiles: libmpv via the OpenGL render API in Qt (works on X11 and Wayland).
 
-libmpv ist eine Systembibliothek (Ubuntu/Debian: libmpv2, Fedora: mpv-libs,
-Arch: mpv). In der AppImage ist sie mitgebündelt.
+libmpv is a system library (Ubuntu/Debian: libmpv2, Fedora: mpv-libs, Arch: mpv).
+It is only bundled in the AppImage when built with MPV_BUNDLE=1.
 """
 from __future__ import annotations
 
@@ -32,7 +32,8 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from streams import DEFAULT_QUALITY, QUALITIES, Offline, resolve
+from i18n import _
+from streams import DEFAULT_QUALITY, QUALITIES, Offline, normalize_quality, resolve
 
 log = logging.getLogger("multichat.video")
 
@@ -46,8 +47,8 @@ _WRAPPER: str | None = None
 
 
 def ytdl_wrapper() -> str:
-    """Kleines Skript, über das mpv „yt-dlp“ aufruft – es startet diese App mit --yt-dlp.
-    So nutzt mpv das mitgelieferte yt-dlp (auch in der AppImage)."""
+    """Small script mpv runs as "yt-dlp" – it starts this app with --yt-dlp,
+    so mpv uses the bundled yt-dlp (in the AppImage as well)."""
     global _WRAPPER
     if _WRAPPER:
         return _WRAPPER
@@ -65,13 +66,13 @@ def ytdl_wrapper() -> str:
     path.write_text(f"#!/bin/sh\n{cmd}\n")
     path.chmod(0o755)
     _WRAPPER = str(path)
-    log.debug("yt-dlp-Wrapper für mpv: %s → %s", path, cmd)
+    log.debug("yt-dlp wrapper for mpv: %s → %s", path, cmd)
     return _WRAPPER
 MPV_ERROR = ""
 
 
 def load_mpv():
-    """Lädt python-mpv; in der AppImage die mitgelieferte libmpv."""
+    """Loads python-mpv; in the AppImage the bundled libmpv if present."""
     global mpv, MPV_ERROR
     if mpv or MPV_ERROR:
         return mpv
@@ -88,12 +89,12 @@ def load_mpv():
         mpv = _mpv
     except (ImportError, OSError) as e:
         MPV_ERROR = str(e)
-        log.warning("libmpv nicht ladbar: %s", e)
+        log.warning("libmpv could not be loaded: %s", e)
     return mpv
 
 
 class CopyLabel(QLabel):
-    """Statuszeile: zeigt evtl. gekürzten Text, Rechtsklick kopiert den vollständigen."""
+    """Status line: shows a possibly shortened text; right-click copies the full one."""
 
     def __init__(self, text: str = "", max_chars: int = 0) -> None:
         super().__init__()
@@ -108,13 +109,13 @@ class CopyLabel(QLabel):
         self.full = text
         shown = text if not self.max_chars or len(text) <= self.max_chars else text[: self.max_chars - 1] + "…"
         self.setText(shown)
-        self.setToolTip(f"{text}\n\nRechtsklick → kopieren" if text and text != "–" else "")
+        self.setToolTip(f"{text}\n\n" + _("Right-click → copy") if text and text != "–" else "")
 
     def _menu(self, pos) -> None:
         from PyQt6.QtWidgets import QApplication, QMenu
 
         m = QMenu(self)
-        m.addAction("Status kopieren").triggered.connect(lambda: QApplication.clipboard().setText(self.full))
+        m.addAction(_("Copy status")).triggered.connect(lambda: QApplication.clipboard().setText(self.full))
         m.exec(self.mapToGlobal(pos))
 
 
@@ -133,14 +134,14 @@ class MpvWidget(QOpenGLWidget):
         self.last_error = ""
 
         def mpv_log(level, component, message):
-            if "duplicated MOOV" in message:  # harmlos bei Twitch-Segmenten
+            if "duplicated MOOV" in message:  # harmless with Twitch segments
                 return
             msg = message.rstrip()
             if component == "ytdl_hook" and level in ("error", "fatal") and msg:
-                if msg.startswith("ERROR:"):  # die eigentliche yt-dlp-Meldung
+                if msg.startswith("ERROR:"):  # the actual yt-dlp message
                     short = re.sub(r"^ERROR:\s*(\[[\w:]+\]\s*[\w-]+:\s*)?", "", msg)
                     self.last_error = re.sub(r"\s*\(caused by .*$", "", short)[:160]
-                elif not self.last_error:  # nur allgemeines „youtube-dl failed“
+                elif not self.last_error:  # only the generic "youtube-dl failed"
                     self.last_error = msg
             mlog.log(levels.get(level, logging.DEBUG), "[%s] %s", component, msg)
 
@@ -175,7 +176,7 @@ class MpvWidget(QOpenGLWidget):
         self._frame.connect(self.update, Qt.ConnectionType.QueuedConnection)
 
     def play(self, url: str, **opts) -> None:
-        """Erst laden, wenn der Render-Kontext steht – sonst spielt mpv nur Ton."""
+        """Load only once the render context exists – otherwise mpv plays audio only."""
         self.last_error = ""
         if self.ctx is None:
             self._pending = (url, opts)
@@ -195,7 +196,7 @@ class MpvWidget(QOpenGLWidget):
     def initializeGL(self) -> None:  # noqa: N802
         self._free_ctx()
         self.ctx = mpv.MpvRenderContext(self.player, "opengl", opengl_init_params={"get_proc_address": self._proc})
-        self.ctx.update_cb = self._frame.emit  # kommt aus dem mpv-Thread → Queued
+        self.ctx.update_cb = self._frame.emit  # called from the mpv thread → queued
         self.context().aboutToBeDestroyed.connect(self._free_ctx)
         if self._pending:
             url, opts = self._pending
@@ -235,11 +236,11 @@ class VideoTile(QFrame):
         self.platform = platform
         self.runner = runner
         self.value = ""
-        self.quality = quality if quality in dict(QUALITIES) else DEFAULT_QUALITY
+        self.quality = normalize_quality(quality)
         self.gen = 0
         self.state = "idle"
         self.muted = True
-        self._closer = None  # beendet den laufenden Streamlink-Datenstrom
+        self._closer = None  # stops the running Streamlink data stream
         self._ads = None
         self._title = ""
         self.setFrameShape(QFrame.Shape.StyledPanel)
@@ -253,23 +254,24 @@ class VideoTile(QFrame):
         self.status.setStyleSheet("color:#888")
         self.status.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         self.qbox = QComboBox()
-        self.qbox.addItems([q for q, _ in QUALITIES])
-        self.qbox.setCurrentText(self.quality)
-        self.qbox.setToolTip("Qualität")
-        self.qbox.currentTextChanged.connect(self._on_quality)
+        for key, _height, label in QUALITIES:
+            self.qbox.addItem(_(label), key)
+        self.qbox.setCurrentIndex(max(0, self.qbox.findData(self.quality)))
+        self.qbox.setToolTip(_("Quality"))
+        self.qbox.currentIndexChanged.connect(lambda _i: self._on_quality(self.qbox.currentData()))
         self.audio_btn = QToolButton()
         self.audio_btn.setIcon(self.icon_off)
-        self.audio_btn.setToolTip("Ton dieser Kachel an/aus (die anderen werden stumm)")
+        self.audio_btn.setToolTip(_("Sound of this tile on/off (the others are muted)"))
         self.audio_btn.clicked.connect(lambda: self.audio_requested.emit(self))
         reload_btn = QToolButton()
         reload_btn.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_BrowserReload))
-        reload_btn.setToolTip("Stream neu laden")
+        reload_btn.setToolTip(_("Reload stream"))
         reload_btn.clicked.connect(self.start)
         self.icon_stop = style.standardIcon(QStyle.StandardPixmap.SP_MediaStop)
         self.icon_play = style.standardIcon(QStyle.StandardPixmap.SP_MediaPlay)
         self.stop_btn = QToolButton()
         self.stop_btn.setIcon(self.icon_stop)
-        self.stop_btn.setToolTip("Diesen Stream stoppen / wieder starten")
+        self.stop_btn.setToolTip(_("Stop / restart this stream"))
         self.stop_btn.clicked.connect(self.toggle_stop)
 
         head = QHBoxLayout()
@@ -302,9 +304,9 @@ class VideoTile(QFrame):
         self.retry.timeout.connect(self.start)
         self.watch = QTimer(self, interval=5000)
         self.watch.timeout.connect(self._check)
-        self._show_message("Noch nicht verbunden")
+        self._show_message(_("Not connected yet"))
 
-    # ---- Steuerung ------------------------------------------------------- #
+    # ---- Control ---------------------------------------------------------- #
     def set_source(self, value: str) -> None:
         value = value.strip()
         self.setVisible(bool(value))
@@ -313,7 +315,7 @@ class VideoTile(QFrame):
             self.start() if value else self.stop()
 
     def _release(self) -> None:
-        """Laufenden Streamlink-Datenstrom beenden (und nie geladene Pipes schließen)."""
+        """Stop the running Streamlink data stream (and close pipes that were never loaded)."""
         if self._closer:
             try:
                 self._closer()
@@ -339,9 +341,9 @@ class VideoTile(QFrame):
         gen = self.gen
         self.state = "resolving"
         self.stop_btn.setIcon(self.icon_stop)
-        self.set_status("suche Stream …")
+        self.set_status(_("looking for stream …"))
         if self.stack.currentIndex() == 0:
-            self._show_message("Suche Stream …")
+            self._show_message(_("Looking for stream …"))
         self.runner(self._resolve(), then=lambda res: self._resolved(gen, res))
 
     def stop(self) -> None:
@@ -355,9 +357,9 @@ class VideoTile(QFrame):
         except Exception:  # noqa: BLE001
             pass
         self.stop_btn.setIcon(self.icon_play)
-        self.set_status("gestoppt")
-        self._show_message("Gestoppt – ▶ startet den Stream wieder")
-        log.info("Video %s: gestoppt", self.platform)
+        self.set_status(_("stopped"))
+        self._show_message(_("Stopped – ▶ starts the stream again"))
+        log.info("Video %s: stopped", self.platform)
 
     def toggle_stop(self) -> None:
         if self.state == "idle":
@@ -376,7 +378,7 @@ class VideoTile(QFrame):
 
     def _resolved(self, gen: int, res) -> None:
         kind, data = res
-        if gen != self.gen:  # inzwischen neu gestartet → Ergebnis verwerfen
+        if gen != self.gen:  # restarted in the meantime → discard the result
             if kind == "ok" and data.closer:
                 data.closer()
                 if data.pipe_fd is not None:
@@ -398,28 +400,28 @@ class VideoTile(QFrame):
             self._closer, self._ads, self._title = data.closer, data.ads, data.title
             self.video.play(data.url, **opts)
             self.state = "playing"
-            self.set_status(f"live: {data.title}" if data.title else "live")
+            self.set_status(_("live: {title}").format(title=data.title) if data.title else _("live"))
             self.watch.start()
             return
         delay = OFFLINE_RETRY if kind == "offline" else ERROR_RETRY
         nxt = time.strftime("%H:%M", time.localtime(time.time() + delay))
-        text = "offline" if kind == "offline" else f"Fehler: {data}"
+        text = _("offline") if kind == "offline" else _("Error: {error}").format(error=data)
         self.state = "offline"
         self.set_status(text)
-        self._show_message(f"{text}\n\nnächster Versuch {nxt}")
+        self._show_message(f"{text}\n\n" + _("next attempt at {time}").format(time=nxt))
         self.retry.start(delay * 1000)
 
     def _check(self) -> None:
         if self.state != "playing":
             return
-        if self._ads is not None:  # Twitch: übersprungene Werbung anzeigen statt stummem Standbild
-            ad_text = "live – Werbepause wird übersprungen, gleich geht's weiter …"
+        if self._ads is not None:  # Twitch: show skipped ads instead of a silent still image
+            ad_text = _("live – skipping ad break, back in a moment …")
             if self._ads.active:
                 if self.status.full != ad_text:
-                    log.info("Video %s: Werbepause wird übersprungen", self.platform)
+                    log.info("Video %s: skipping ad break", self.platform)
                 self.set_status(ad_text)
             elif self.status.full == ad_text:
-                self.set_status(f"live: {self._title}" if self._title else "live")
+                self.set_status(_("live: {title}").format(title=self._title) if self._title else _("live"))
         try:
             idle = self.video.player.idle_active
         except Exception:  # noqa: BLE001
@@ -427,18 +429,18 @@ class VideoTile(QFrame):
         if idle:
             self.watch.stop()
             err = self.video.last_error
-            if err:  # yt-dlp (über mpv) ist gescheitert
+            if err:  # yt-dlp (via mpv) failed
                 self.state = "offline"
                 nxt = time.strftime("%H:%M", time.localtime(time.time() + ERROR_RETRY))
-                log.warning("Video %s: yt-dlp/mpv-Fehler: %s", self.platform, err)
-                self.set_status(f"Fehler: {err}")
-                self._show_message(f"Fehler: {err}\n\nnächster Versuch {nxt}")
+                log.warning("Video %s: yt-dlp/mpv error: %s", self.platform, err)
+                self.set_status(_("Error: {error}").format(error=err))
+                self._show_message(_("Error: {error}").format(error=err) + "\n\n" + _("next attempt at {time}").format(time=nxt))
                 self.retry.start(ERROR_RETRY * 1000)
                 return
             self.state = "ended"
-            log.info("Video %s: Wiedergabe beendet", self.platform)
-            self.set_status("Stream beendet")
-            self._show_message("Stream beendet – prüfe erneut …")
+            log.info("Video %s: playback ended", self.platform)
+            self.set_status(_("stream ended"))
+            self._show_message(_("Stream ended – checking again …"))
             self.retry.start(ENDED_RETRY * 1000)
 
     def _on_quality(self, q: str) -> None:
@@ -472,7 +474,7 @@ class VideoTile(QFrame):
 
 
 class VideoPanel(QWidget):
-    """Rechte Spalte mit einer Kachel pro Plattform."""
+    """Right-hand column with one tile per platform."""
 
     changed = pyqtSignal()
 
@@ -487,7 +489,7 @@ class VideoPanel(QWidget):
 
         if not load_mpv():
             hint = QLabel(
-                "<b>Videos brauchen libmpv.</b><br><br>"
+                "<b>" + _("Videos need libmpv.") + "</b><br><br>"
                 "Ubuntu/Debian: <code>sudo apt install libmpv2</code><br>"
                 "Fedora: <code>sudo dnf install mpv-libs</code><br>"
                 "Arch: <code>sudo pacman -S mpv</code><br><br>"
@@ -498,7 +500,7 @@ class VideoPanel(QWidget):
             lay.addWidget(hint)
             return
 
-        self.empty = QLabel("Trag links Kanäle ein und klick „Verbinden“ –\ndann erscheinen hier die Streams.")
+        self.empty = QLabel(_("Enter channels on the left and click “Connect” –\nthe streams will then appear here."))
         self.empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.empty.setStyleSheet("color:#888")
         lay.addWidget(self.empty, 1)

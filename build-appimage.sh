@@ -39,6 +39,7 @@ pyinstaller --noconfirm --clean --windowed --name multichat \
   --collect-all pytchat --collect-all curl_cffi --collect-submodules yt_dlp --collect-all yt_dlp_ejs --collect-all streamlink \
   --hidden-import PyQt6.QtNetwork --hidden-import PyQt6.QtOpenGLWidgets \
   --exclude-module mpv --add-data "$MPV_PY:." \
+  --add-data "$PWD/multichat.png:." --add-data "$PWD/locales:locales" \
   --hidden-import queue --hidden-import concurrent.futures --hidden-import ctypes.util \
   main.py
 
