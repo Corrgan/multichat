@@ -60,6 +60,7 @@ Das Skript legt eine eigene Python-Umgebung in `build-appimage/` an, bündelt di
 - **Twitch:** Kanalname, z. B. `kanalname`
 - **Kick:** Kanalname (Slug), z. B. `kanalname`
 - **YouTube:** Kanal, z. B. `@kanalname`, `https://www.youtube.com/@kanalname` oder eine `UC…`-Kanal-ID. Die App prüft jede Minute, ob der Kanal live ist, verbindet sich automatisch mit dem laufenden Stream und wartet nach Stream-Ende auf den nächsten. Eine Video-URL/-ID geht weiterhin, wenn du einen bestimmten Stream willst.
+- **Verbinden / Trennen:** „Verbinden“ startet Chats und Video-Kacheln, „Trennen“ stoppt alles wieder.
 - **Anzeigen:** Häkchen blenden Plattformen in der Ansicht ein/aus.
 
 ### Video-Kacheln
@@ -69,7 +70,7 @@ Links der Chat, rechts eine Video-Kachel pro eingetragenem Kanal. Sie starten mi
 - **Ton:** Immer nur eine Kachel ist laut (blauer Rahmen). Klick ins Video oder aufs Lautsprecher-Symbol schaltet den Ton dorthin, ein zweiter Klick macht alles stumm.
 - **Qualität** pro Kachel: 360p, 480p (Standard), 720p oder Quelle. Drei Streams in 480p brauchen zusammen etwa 5–8 Mbit/s.
 - **Offline:** Die Kachel zeigt „offline“ und prüft jede Minute erneut. Nach Stream-Ende sucht sie automatisch weiter; bei YouTube findet sie so auch den nächsten Livestream des Kanals.
-- **Neu laden** (Pfeil-Symbol), falls ein Stream hängt.
+- **Neu laden** (Pfeil-Symbol), falls ein Stream hängt; **Stopp/Start** (■/▶) hält nur diese eine Kachel an.
 - **Ansicht → Video-Kacheln** blendet die Spalte aus und stoppt die Streams (spart Bandbreite). Den Trenner zwischen Chat und Videos kannst du verschieben.
 - Die Videos laufen ein paar Sekunden hinter dem Live-Signal, wie im Browser-Player.
 - Twitch und YouTube werden über `yt-dlp` geladen, Kick direkt über die Kick-API. Wenn eine Plattform etwas ändert, hilft oft `pip install -U yt-dlp` (bzw. AppImage neu bauen).
@@ -135,6 +136,8 @@ Gelöschte Nachrichten und gebannte Nutzer verschwinden auch aus dem Overlay.
 - **Hilfe → Ausführliches Log (Debug)** schreibt zusätzlich jede HTTP-Antwort, Kick-WebSocket-Ereignisse, Stream-Suche und mpv-Meldungen mit. Danach das Problem nachstellen und das Log kopieren.
 - Rechtsklick auf einen Statustext (neben den Kanalfeldern oder in einer Video-Kachel) → **Status kopieren** kopiert den vollständigen Text.
 - Tokens, Secrets und Login-Codes werden im Log automatisch geschwärzt.
+- Stürzt die App ab, zeigt `coredumpctl info multichat` (Fedora, systemd) einen Backtrace, der bei der Fehlersuche hilft.
+- Probleme mit der Hardware-Dekodierung der Videos: mit `MULTICHAT_HWDEC=no` starten, z. B. `MULTICHAT_HWDEC=no ./MultiChat-x86_64.AppImage`.
 
 **YouTube-Video bleibt schwarz / „DNS-Blocker“:** Pi-hole, AdGuard Home & Co. sperren oft `manifest.googlevideo.com`. Darüber liefert YouTube aber die Livestream-Playlists aus (keine Werbung). Die Kachel meldet das dann ausdrücklich. Lösung: im Blocker freigeben, z. B. Pi-hole `pihole allow manifest.googlevideo.com`, AdGuard Home `@@||manifest.googlevideo.com^`, danach `resolvectl flush-caches`. Prüfen mit `getent ahosts manifest.googlevideo.com` – dort muss eine echte IP stehen, nicht `0.0.0.0`.
 

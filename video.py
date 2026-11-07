@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import ctypes.util
+import os
 import logging
 import re
 import sys
@@ -153,7 +154,7 @@ class MpvWidget(QOpenGLWidget):
         self.player = mpv.MPV(
             log_handler=mpv_log,
             vo="libmpv",
-            hwdec="auto-safe",
+            hwdec=os.environ.get("MULTICHAT_HWDEC", "auto-safe"),
             idle=True,
             keep_open=False,
             osc=False,
@@ -261,6 +262,12 @@ class VideoTile(QFrame):
         reload_btn.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_BrowserReload))
         reload_btn.setToolTip("Stream neu laden")
         reload_btn.clicked.connect(self.start)
+        self.icon_stop = style.standardIcon(QStyle.StandardPixmap.SP_MediaStop)
+        self.icon_play = style.standardIcon(QStyle.StandardPixmap.SP_MediaPlay)
+        self.stop_btn = QToolButton()
+        self.stop_btn.setIcon(self.icon_stop)
+        self.stop_btn.setToolTip("Diesen Stream stoppen / wieder starten")
+        self.stop_btn.clicked.connect(self.toggle_stop)
 
         head = QHBoxLayout()
         head.setContentsMargins(8, 4, 6, 2)
@@ -270,6 +277,7 @@ class VideoTile(QFrame):
         head.addWidget(self.qbox)
         head.addWidget(self.audio_btn)
         head.addWidget(reload_btn)
+        head.addWidget(self.stop_btn)
 
         self.message = QLabel()
         self.message.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -309,6 +317,7 @@ class VideoTile(QFrame):
             return
         gen = self.gen
         self.state = "resolving"
+        self.stop_btn.setIcon(self.icon_stop)
         self.set_status("suche Stream …")
         if self.stack.currentIndex() == 0:
             self._show_message("Suche Stream …")
@@ -324,8 +333,16 @@ class VideoTile(QFrame):
             self.video.player.command("stop")
         except Exception:  # noqa: BLE001
             pass
-        self.set_status("–")
-        self._show_message("Gestoppt")
+        self.stop_btn.setIcon(self.icon_play)
+        self.set_status("gestoppt")
+        self._show_message("Gestoppt – ▶ startet den Stream wieder")
+        log.info("Video %s: gestoppt", self.platform)
+
+    def toggle_stop(self) -> None:
+        if self.state == "idle":
+            self.start()
+        else:
+            self.stop()
 
     async def _resolve(self):
         try:

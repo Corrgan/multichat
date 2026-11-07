@@ -104,7 +104,7 @@ class Bridge(QObject):
 
     message = pyqtSignal(object)
     deletion = pyqtSignal(object)
-    status = pyqtSignal(str, str)
+    status = pyqtSignal(str, str, int)  # Plattform, Text, Verbindungs-Generation
     result = pyqtSignal(object, object)
 
 
@@ -201,7 +201,7 @@ class MainWindow(QMainWindow):
         self.bridge = Bridge()
         self.bridge.message.connect(self.add_message)
         self.bridge.deletion.connect(self.apply_deletion)
-        self.bridge.status.connect(self.set_status)
+        self.bridge.status.connect(self._reader_status)
         self.bridge.result.connect(self._on_result)
 
         self.loop = asyncio.new_event_loop()
@@ -216,6 +216,7 @@ class MainWindow(QMainWindow):
         qt_formats = {bytes(f).decode().lower() for f in QImageReader.supportedImageFormats()}
         self.emotes = EmoteStore(lambda: self.session, [f for f in ("webp", "png", "gif") if f in qt_formats])
         self.readers: list = []
+        self.conn_gen = 0  # erhöht sich bei jedem Verbinden/Trennen
         self.messages: OrderedDict[int, ChatMessage] = OrderedDict()
 
         self._build_ui()
@@ -307,6 +308,13 @@ class MainWindow(QMainWindow):
 
         self.connect_btn = QPushButton("Verbinden")
         self.connect_btn.clicked.connect(self.connect_all)
+        self.disconnect_btn = QPushButton("Trennen")
+        self.disconnect_btn.setToolTip("Alle Chats und Videos stoppen")
+        self.disconnect_btn.clicked.connect(self.disconnect_all)
+        self.disconnect_btn.setEnabled(False)
+        conn_row = QHBoxLayout()
+        conn_row.addWidget(self.connect_btn, 3)
+        conn_row.addWidget(self.disconnect_btn, 1)
 
         filters = QHBoxLayout()
         filters.addWidget(QLabel("Anzeigen:"))
@@ -337,7 +345,7 @@ class MainWindow(QMainWindow):
         root = QVBoxLayout()
         root.setContentsMargins(0, 0, 0, 0)
         root.addLayout(grid)
-        root.addWidget(self.connect_btn)
+        root.addLayout(conn_row)
         root.addLayout(filters)
         root.addWidget(self.view, 1)
         root.addLayout(send)
@@ -472,18 +480,23 @@ class MainWindow(QMainWindow):
             self.show()
 
     # ---- Verbinden ------------------------------------------------------- #
-    def connect_all(self) -> None:
+    def _stop_readers(self) -> None:
+        self.conn_gen += 1  # Statusmeldungen der alten Verbindungen ab jetzt ignorieren
         for t in self.readers:
             t.cancel()
         self.readers.clear()
+
+    def connect_all(self) -> None:
+        self._stop_readers()
         self.save_config()
+        gen = self.conn_gen
 
         def emit(ev) -> None:
             (self.bridge.message if isinstance(ev, ChatMessage) else self.bridge.deletion).emit(ev)
 
         def status(platform: str, text: str) -> None:
             log.info("[%s] %s", platform, text)
-            self.bridge.status.emit(platform, text)
+            self.bridge.status.emit(platform, text, gen)
 
         runners = {"twitch": run_twitch, "kick": run_kick, "youtube": run_youtube}
         for p, edit in self.inputs.items():
@@ -494,8 +507,23 @@ class MainWindow(QMainWindow):
             coro = runners[p](value, emit, status, self.emotes)
             self.readers.append(asyncio.run_coroutine_threadsafe(coro, self.loop))
         self.connect_btn.setText("Neu verbinden")
+        self.disconnect_btn.setEnabled(bool(self.readers))
         if self.video_action.isChecked():
             self.video.set_sources(self._channels())
+
+    def disconnect_all(self) -> None:
+        self._stop_readers()
+        self.video.stop_all()
+        for p in PLATFORMS:
+            self.set_status(p, "getrennt" if self.inputs[p].text().strip() else "–")
+        self.connect_btn.setText("Verbinden")
+        self.disconnect_btn.setEnabled(False)
+        log.info("Alle Verbindungen getrennt")
+        self.statusBar().showMessage("Getrennt – Chats und Videos gestoppt", 5000)
+
+    def _reader_status(self, platform: str, text: str, gen: int) -> None:
+        if gen == self.conn_gen:  # Meldungen aus einer schon getrennten Verbindung verwerfen
+            self.set_status(platform, text)
 
     def set_status(self, platform: str, text: str) -> None:
         self.status_labels[platform].set_full(text)
