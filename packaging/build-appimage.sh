@@ -16,10 +16,27 @@ set -euo pipefail
 cd "$(dirname "$(readlink -f "$0")")/.."  # repository root
 
 ARCH="$(uname -m)"
+[ "$ARCH" = "x86_64" ] || { echo "ERROR: only x86_64 is supported (pinned build tools)"; exit 1; }
 BUILD="build-appimage"
 APPDIR="$BUILD/MultiChat.AppDir"
 OUT="MultiChat-$ARCH.AppImage"
 TOOL="$BUILD/appimagetool-$ARCH.AppImage"
+
+# Build tools: fixed releases, verified by checksum (x86_64)
+APPIMAGETOOL_URL="https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage"
+APPIMAGETOOL_SHA256="ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0"
+LINUXDEPLOY_URL="https://github.com/linuxdeploy/linuxdeploy/releases/download/1-alpha-20251107-1/linuxdeploy-x86_64.AppImage"
+LINUXDEPLOY_SHA256="c20cd71e3a4e3b80c3483cef793cda3f4e990aca14014d23c544ca3ce1270b4d"
+
+# download <url> <sha256> <file>: (re)downloads unless the file has the expected checksum
+download() {
+  if ! echo "$2  $3" | sha256sum -c --status 2>/dev/null; then
+    curl -fL -o "$3.part" "$1"
+    echo "$2  $3.part" | sha256sum -c --quiet || { echo "ERROR: checksum mismatch for $1"; rm -f "$3.part"; exit 1; }
+    mv "$3.part" "$3"
+  fi
+  chmod +x "$3"
+}
 
 echo "==> Python environment"
 mkdir -p "$BUILD"
@@ -28,10 +45,9 @@ mkdir -p "$BUILD"
 # shellcheck disable=SC1091
 . "$BUILD/venv/bin/activate"
 pip install -q --upgrade pip
-# dependencies from pyproject.toml (the app itself is taken from the source tree)
-python3 -c 'import tomllib; print("\n".join(tomllib.load(open("pyproject.toml", "rb"))["project"]["dependencies"]))' \
-  > "$BUILD/requirements.txt"
-pip install -q -r "$BUILD/requirements.txt" pyinstaller
+# exact, hash-checked versions of all dependencies and build tools
+# (the app itself is taken from the source tree)
+pip install -q --require-hashes -r packaging/requirements-lock.txt
 
 echo "==> PyInstaller"
 # python-mpv is NOT analysed (otherwise PyInstaller would bundle the build machine's
@@ -39,7 +55,7 @@ echo "==> PyInstaller"
 MPV_PY="$(python3 -c 'import mpv; print(mpv.__file__)')"
 pyinstaller --noconfirm --clean --windowed --name multichat \
   --distpath "$BUILD/dist" --workpath "$BUILD/work" --specpath "$BUILD" \
-  --collect-all pytchat --collect-all curl_cffi --collect-submodules yt_dlp --collect-all yt_dlp_ejs --collect-all streamlink \
+  --collect-all pytchat --collect-all curl_cffi --collect-submodules yt_dlp --collect-all yt_dlp_ejs --collect-all streamlink --collect-all keyring \
   --hidden-import PyQt6.QtNetwork --hidden-import PyQt6.QtOpenGLWidgets \
   --exclude-module mpv --add-data "$MPV_PY:." \
   --paths "$PWD" --add-data "$PWD/multichat/resources:multichat/resources" \
@@ -95,11 +111,7 @@ else
 fi
 if [ -n "$LIBMPV" ]; then
   LDTOOL="$BUILD/linuxdeploy-$ARCH.AppImage"
-  if [ ! -x "$LDTOOL" ]; then
-    curl -fL -o "$LDTOOL" \
-      "https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-$ARCH.AppImage"
-    chmod +x "$LDTOOL"
-  fi
+  download "$LINUXDEPLOY_URL" "$LINUXDEPLOY_SHA256" "$LDTOOL"
   # Use a separate AppDir so linuxdeploy doesn't touch the PyInstaller files
   MPVDIR="$BUILD/mpv.AppDir"
   rm -rf "$MPVDIR"
@@ -119,11 +131,7 @@ EOF
 chmod +x "$APPDIR/AppRun"
 
 echo "==> appimagetool"
-if [ ! -x "$TOOL" ]; then
-  curl -fL -o "$TOOL" \
-    "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-$ARCH.AppImage"
-  chmod +x "$TOOL"
-fi
+download "$APPIMAGETOOL_URL" "$APPIMAGETOOL_SHA256" "$TOOL"
 # APPIMAGE_EXTRACT_AND_RUN: works without FUSE as well
 ARCH="$ARCH" APPIMAGE_EXTRACT_AND_RUN=1 "$TOOL" --no-appstream "$APPDIR" "$OUT"
 

@@ -61,7 +61,7 @@ packaging/build-appimage.sh
 ./MultiChat-x86_64.AppImage
 ```
 
-The script creates its own Python environment in `build-appimage/`, bundles the app with PyInstaller and packs it with `appimagetool` (downloaded automatically). The result is a single file of about 105 MB. `PYTHON=python3.12 packaging/build-appimage.sh` selects a specific Python interpreter.
+The script creates its own Python environment in `build-appimage/` with the exact, hash-checked versions from `packaging/requirements-lock.txt`, bundles the app with PyInstaller and packs it with a pinned `appimagetool` release (downloaded automatically and verified by checksum). The result is a single file of about 105 MB. `PYTHON=python3.12 packaging/build-appimage.sh` selects a specific Python interpreter.
 
 - **libmpv** is taken from the system by default (see Requirements) – small, and guaranteed to match your graphics drivers. `MPV_BUNDLE=1 packaging/build-appimage.sh` bundles libmpv and FFmpeg (~270 MB, then runs without mpv installed).
 - The AppImage runs on systems with **at least the glibc version of the build machine**, so build on the oldest distribution you want to support.
@@ -103,7 +103,8 @@ docs/                 additional documentation
 - Each message starts with the platform's icon (the website's favicon, as in a browser tab). If it can't be loaded, a coloured abbreviation (TW/KI/YT) is shown instead.
 - **Click on a name** to open the menu: mention, copy text, delete message, timeout (1 min / 10 min / 1 h), ban.
 - **Input line at the bottom:** send to one platform or to all you're logged in to.
-- Settings: `~/.config/multichat/config.json`, logins: `~/.config/multichat/tokens.json` (both readable only by you).
+- Settings: `~/.config/multichat/config.json` (readable only by you).
+- Logins and the client secrets of your developer apps are stored in the system keyring (KWallet, GNOME Keyring, KeePassXC … via the Secret Service API). Without one, they go to `tokens.json` / `apps.json` next to the settings, readable only by you. `MULTICHAT_SECRETS=file` forces the files; the log and `--selftest` show which storage is used. Data from older versions is moved into the keyring automatically.
 
 Reading works without logging in. To send and moderate you need to be logged in **and** have moderator rights on the channel (or it's your own channel).
 
@@ -164,6 +165,8 @@ The URL can be customised:
 Example: `http://127.0.0.1:17564/?fade=30&size=24&platforms=twitch,youtube`
 
 Deleted messages and banned users disappear from the overlay as well.
+
+The overlay only answers requests from this computer (`127.0.0.1` / `localhost`); other websites open in your browser cannot read the chat through it. Use the URL as copied – addresses such as the machine's LAN IP are rejected.
 
 ## Troubleshooting / log
 

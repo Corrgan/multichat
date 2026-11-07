@@ -18,7 +18,7 @@ on:
     tags: ["v*"]
 
 permissions:
-  contents: write  # for the release
+  contents: read  # write access only for the build job (release)
 
 concurrency:
   group: appimage-${{ github.ref }}
@@ -52,6 +52,8 @@ jobs:
     runs-on: ubuntu-24.04
     container: ubuntu:22.04
     timeout-minutes: 45
+    permissions:
+      contents: write  # for the release
     env:
       DEBIAN_FRONTEND: noninteractive
     steps:
@@ -72,7 +74,9 @@ jobs:
             libwayland-client0 libwayland-cursor0 libwayland-egl1 \
             libmpv1
 
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false  # no token in .git/config while third-party code runs
 
       - name: Check tag against __version__
         if: startsWith(github.ref, 'refs/tags/v')
@@ -88,7 +92,6 @@ jobs:
 
       - name: Tests
         run: |
-          build-appimage/venv/bin/pip install -q pytest
           QT_QPA_PLATFORM=offscreen build-appimage/venv/bin/python -m pytest -q tests
 
       - name: Self-test of the AppImage
@@ -97,7 +100,7 @@ jobs:
       - name: Checksum
         run: sha256sum MultiChat-x86_64.AppImage | tee MultiChat-x86_64.AppImage.sha256
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
           name: MultiChat-x86_64-AppImage
           path: |
@@ -108,7 +111,7 @@ jobs:
 
       - name: Release
         if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v3
+        uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3  # v3.0.4
         with:
           files: |
             MultiChat-x86_64.AppImage
