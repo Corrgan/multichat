@@ -55,6 +55,7 @@ Der Workflow [`.github/workflows/appimage.yml`](.github/workflows/appimage.yml) 
 
 - **Manuell:** Actions → *AppImage* → *Run workflow* → die AppImage liegt danach als Artefakt am Lauf (14 Tage).
 - **Release:** `APP_VERSION` in `logsetup.py` anheben, committen, dann `git tag v<Version> && git push origin v<Version>` – der Workflow erstellt das Release mit AppImage und Prüfsumme. Passt der Tag nicht zu `APP_VERSION`, bricht er mit einer Meldung ab.
+- **Welche Tags ein Release auslösen:** nur `vX.Y`, bei denen die zweite Zahl einstellig ist oder auf 0 endet – z. B. `v0.10`, `v0.20`, `v1.6`, `v2.0`. Zwischenstände wie `v0.11`, `v0.15` oder `v0.10.1` lösen keinen Build aus.
 
 ## AppImage selbst bauen
 

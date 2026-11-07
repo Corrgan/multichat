@@ -3,8 +3,10 @@
 # Baut die AppImage auf GitHub.
 #
 # - Manuell (Actions → AppImage → „Run workflow“): AppImage als Artefakt zum Herunterladen.
-# - Tag „v*“ pushen (z. B. `git tag v0.10 && git push origin v0.10`): zusätzlich ein
-#   GitHub-Release mit AppImage und Prüfsumme. Der Tag muss zu APP_VERSION in logsetup.py passen.
+# - Tag pushen (z. B. `git tag v0.10 && git push origin v0.10`): zusätzlich ein GitHub-Release
+#   mit AppImage und Prüfsumme – aber nur für Tags der Form vX.Y, bei denen Y einstellig ist oder
+#   auf 0 endet (v0.10, v0.20, v1.6, v2.0). Andere Tags (v0.11, v0.15, v0.10.1 …) bauen nichts.
+#   Der Tag muss außerdem zu APP_VERSION in logsetup.py passen.
 #
 # Gebaut wird in einem Ubuntu-22.04-Container (glibc 2.35). Die AppImage läuft damit auf allen
 # Systemen mit glibc ≥ 2.35, z. B. Ubuntu 22.04+, Debian 12+, Fedora 36+, aktuelles Arch.
@@ -23,7 +25,30 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  gate:
+    name: Tag-Regel prüfen
+    runs-on: ubuntu-24.04
+    outputs:
+      build: ${{ steps.rule.outputs.build }}
+    steps:
+      - id: rule
+        env:
+          EVENT: ${{ github.event_name }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          if [ "$EVENT" = "workflow_dispatch" ]; then
+            echo "build=true" >> "$GITHUB_OUTPUT"
+          elif [[ "$TAG" =~ ^v[0-9]+\.([0-9]|[0-9]+0)$ ]]; then
+            echo "Tag $TAG erfüllt die Release-Regel"
+            echo "build=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::Tag $TAG ist kein Release-Tag (nur vX.Y mit Y einstellig oder auf 0 endend) – kein Build"
+            echo "build=false" >> "$GITHUB_OUTPUT"
+          fi
+
   build:
+    needs: gate
+    if: needs.gate.outputs.build == 'true'
     runs-on: ubuntu-24.04
     container: ubuntu:22.04
     timeout-minutes: 45
