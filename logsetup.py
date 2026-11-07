@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Corrgan
 """Logdatei fürs Debugging.
 
 Ort: ~/.local/state/multichat/multichat.log (rotiert, max. 3 × 1 MB).

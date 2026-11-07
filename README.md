@@ -154,3 +154,12 @@ Gelöschte Nachrichten und gebannte Nutzer verschwinden auch aus dem Overlay.
   - fehlt Qt das WebP-Plugin (manche Distro-Pakete), nimmt die App PNG/GIF; sonst `sudo apt install qt6-image-formats-plugins` bzw. das pip-Paket nutzen
 - Unter Wayland kann „Immer im Vordergrund“ je nach Compositor ignoriert werden. Die Video-Kacheln laufen unter X11 und Wayland.
 - Startet die App unter X11 nicht („xcb platform plugin“): `sudo apt install libxcb-cursor0`.
+
+## Lizenz
+
+MultiChat ist freie Software unter der **GNU General Public License v3.0 oder später** (GPL-3.0-or-later), siehe [`LICENSE`](LICENSE).
+
+Verwendete Bibliotheken, Werkzeuge und Dienste mit ihren Lizenzen stehen in [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
+
+MultiChat ist ein unabhängiges Projekt und steht in keiner Verbindung zu Twitch, Kick, YouTube/Google, 7TV, BetterTTV oder FrankerFaceZ. Die Namen sind Marken ihrer jeweiligen Inhaber.
+

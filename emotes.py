@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Corrgan
 """Drittanbieter-Emotes: 7TV, BetterTTV und FrankerFaceZ.
 
 Diese Emotes sind einfache Wörter im Text ("KEKW", "catJAM" …). Der Store lädt

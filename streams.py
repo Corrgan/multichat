@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Corrgan
 """Findet die abspielbare Video-URL eines Livestreams (blockierend → in einem Thread aufrufen).
 
 - Twitch:  yt-dlp

@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Corrgan
 """OBS-Overlay: lokaler Webserver, den OBS als Browserquelle einbindet.
 
 http://127.0.0.1:<port>/            → transparente Chat-Seite

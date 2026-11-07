@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Corrgan
 """Chat-Leser für Twitch, Kick und YouTube (nur lesen, ohne Login).
 
 Jeder Leser läuft als asyncio-Task und ruft `emit(event)` auf – entweder mit

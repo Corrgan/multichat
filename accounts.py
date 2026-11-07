@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Corrgan
 """Login (OAuth im Browser) sowie Senden und Moderieren pro Plattform.
 
 Jede Plattform braucht eine eigene Entwickler-App (Client-ID + Secret), die der

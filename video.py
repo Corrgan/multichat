@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Corrgan
 """Video-Kacheln: libmpv über die OpenGL-Render-API in Qt (läuft unter X11 und Wayland).
 
 libmpv ist eine Systembibliothek (Ubuntu/Debian: libmpv2, Fedora: mpv-libs,

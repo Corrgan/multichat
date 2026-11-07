@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Corrgan
 """MultiChat – Twitch, Kick und YouTube Chat in einem Fenster.
 
 Lesen geht ohne Login. Zum Schreiben und Moderieren meldest du dich unter

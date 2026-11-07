@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Corrgan
 # Baut MultiChat-<arch>.AppImage aus diesem Ordner.
 #
 #   ./build-appimage.sh
@@ -48,6 +50,34 @@ cp multichat.desktop "$APPDIR/usr/share/applications/"
 cp multichat.png "$APPDIR/"
 cp multichat.png "$APPDIR/usr/share/icons/hicolor/256x256/apps/"
 ln -sf multichat.png "$APPDIR/.DirIcon"
+
+echo "==> Lizenztexte"
+DOC="$APPDIR/usr/share/doc/multichat"
+mkdir -p "$DOC/licenses"
+cp LICENSE THIRD_PARTY_NOTICES.md README.md "$DOC/"
+# Lizenzdateien aller gebündelten Python-Pakete (MIT/BSD/Apache verlangen, dass sie mitkommen)
+python3 - "$DOC/licenses" <<'PYEOF'
+import re, shutil, sys
+from importlib.metadata import distributions
+from pathlib import Path
+out = Path(sys.argv[1])
+skip = {"pip", "setuptools", "wheel", "pyinstaller", "pyinstaller-hooks-contrib", "altgraph", "packaging"}
+pat = re.compile(r"(LICEN[CS]E|COPYING|NOTICE|AUTHORS)", re.I)
+n = 0
+for d in distributions():
+    name = d.metadata["Name"]
+    if name.lower() in skip:
+        continue
+    for f in d.files or []:
+        if pat.search(f.name) and ".dist-info" in str(f):
+            src = Path(d.locate_file(f))
+            if src.is_file():
+                dst = out / name / f.name
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy(src, dst)
+                n += 1
+print(f"    {n} Lizenzdateien übernommen")
+PYEOF
 # Standard: Die AppImage nutzt die libmpv des Systems (klein, passt zu den
 # Grafiktreibern). Mit MPV_BUNDLE=1 wird libmpv samt FFmpeg mitgebündelt
 # (läuft dann auch ohne installiertes mpv, aber ~270 MB).
