@@ -14,4 +14,4 @@ def resource(name: str) -> Path:
 
 
 def app_icon_path() -> Path:
-    return resource("multichat.png")
+    return resource("io.github.Corrgan.MultiChat.png")

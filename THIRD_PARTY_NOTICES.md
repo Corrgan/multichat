@@ -84,7 +84,23 @@ If the AppImage is built with `MPV_BUNDLE=1`, it additionally contains **libmpv*
 (GPL-2.0-or-later or LGPL-2.1-or-later, depending on the build) and **FFmpeg**
 (LGPL-2.1-or-later or GPL-2.0-or-later, depending on the build) including their dependencies.
 
-## Used at runtime, not included
+## Additional components of the Flatpak
+
+The Flatpak uses the KDE runtime and the PyQt BaseApp from Flathub (Qt, PyQt6, Python and
+system libraries under their respective licenses) and builds the following itself:
+
+| Component | License |
+|---|---|
+| [mpv / libmpv](https://mpv.io/) (GPL build) | GPL-2.0-or-later |
+| [FFmpeg](https://ffmpeg.org/) (built with `--enable-gpl --enable-version3`) | GPL-3.0-or-later |
+| [libplacebo](https://code.videolan.org/videolan/libplacebo) | LGPL-2.1-or-later |
+| [libass](https://github.com/libass/libass) | ISC |
+| [LuaJIT](https://github.com/openresty/luajit2) | MIT |
+| [libdisplay-info](https://gitlab.freedesktop.org/emersion/libdisplay-info) | MIT |
+| [hwdata](https://github.com/vcrhonek/hwdata) | GPL-2.0-or-later |
+| [Deno](https://deno.com/) | MIT |
+
+## Used at runtime, not included in the AppImage
 
 | Component | License | Purpose |
 |---|---|---|

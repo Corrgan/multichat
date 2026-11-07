@@ -1,0 +1,14 @@
+[Desktop Entry]
+Type=Application
+Name=MultiChat
+Comment=Twitch, Kick and YouTube chat in one window
+Comment[de]=Twitch-, Kick- und YouTube-Chat in einem Fenster
+Comment[fr]=Les chats Twitch, Kick et YouTube dans une seule fenêtre
+Comment[es]=Chat de Twitch, Kick y YouTube en una sola ventana
+Comment[ja]=Twitch・Kick・YouTube のチャットを 1 つのウィンドウに
+Comment[zh_CN]=在一个窗口中显示 Twitch、Kick 和 YouTube 聊天
+Exec=multichat
+Icon=io.github.Corrgan.MultiChat
+Categories=Network;Chat;AudioVideo;
+Keywords=Twitch;Kick;YouTube;chat;stream;OBS;
+Terminal=false

@@ -3,7 +3,7 @@
 """Names, links and other constants shared across the app."""
 from __future__ import annotations
 
-APP_ID = "multichat"  # Wayland app ID – must match multichat.desktop
+APP_ID = "io.github.Corrgan.MultiChat"  # Wayland/Flatpak app ID – must match the name of the .desktop file
 REPO_URL = "https://github.com/Corrgan/multichat"
 LOGIN_DOCS = f"{REPO_URL}/blob/main/docs/LOGIN.md"
 

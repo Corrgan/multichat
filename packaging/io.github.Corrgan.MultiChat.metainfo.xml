@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- SPDX-License-Identifier: CC0-1.0 -->
+<component type="desktop-application">
+  <id>io.github.Corrgan.MultiChat</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-or-later</project_license>
+  <name>MultiChat</name>
+  <summary>Twitch, Kick and YouTube chat in one window</summary>
+  <developer id="io.github.corrgan">
+    <name>Corrgan</name>
+  </developer>
+  <description>
+    <p>
+      MultiChat combines the live chats of Twitch, Kick and YouTube in one window –
+      with video tiles to watch the streams, emotes (including 7TV, BetterTTV and
+      FrankerFaceZ), platform filters, sending and moderating after logging in, and an
+      overlay for OBS.
+    </p>
+    <ul>
+      <li>Reading works without an account; YouTube channels are checked for live streams automatically</li>
+      <li>Video tiles per platform, Twitch with ad breaks skipped</li>
+      <li>Delete messages, timeouts and bans with your own developer apps</li>
+      <li>Transparent browser source for OBS</li>
+      <li>Interface in English, German, French, Spanish, Japanese and Chinese</li>
+    </ul>
+  </description>
+  <launchable type="desktop-id">io.github.Corrgan.MultiChat.desktop</launchable>
+  <url type="homepage">https://github.com/Corrgan/multichat</url>
+  <url type="bugtracker">https://github.com/Corrgan/multichat/issues</url>
+  <url type="vcs-browser">https://github.com/Corrgan/multichat</url>
+  <categories>
+    <category>Network</category>
+    <category>Chat</category>
+  </categories>
+  <content_rating type="oars-1.1"/>
+  <supports>
+    <control>pointing</control>
+    <control>keyboard</control>
+  </supports>
+  <releases>
+    <release version="0.20" date="2026-11-07"/>
+  </releases>
+</component>

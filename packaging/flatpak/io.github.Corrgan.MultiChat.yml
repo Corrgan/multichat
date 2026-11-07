@@ -1,0 +1,192 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Flatpak build of MultiChat.
+#
+#   flatpak-builder --user --install-deps-from=flathub --force-clean \
+#     --repo=build-flatpak/repo build-flatpak/app packaging/flatpak/io.github.Corrgan.MultiChat.yml
+#   flatpak build-bundle build-flatpak/repo MultiChat.flatpak io.github.Corrgan.MultiChat
+#
+# Python packages: python-deps.json (regenerate with generate-python-deps.py after
+# changing packaging/requirements-lock.txt). The pins of the native libraries follow
+# Flathub's io.mpv.Mpv manifest.
+app-id: io.github.Corrgan.MultiChat
+runtime: org.kde.Platform
+runtime-version: '6.11'
+sdk: org.kde.Sdk
+base: com.riverbankcomputing.PyQt.BaseApp
+base-version: '6.11'
+command: multichat
+
+finish-args:
+  - --share=network            # chats, streams, logins
+  - --share=ipc
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --device=dri               # OpenGL video output, hardware decoding
+  - --socket=pulseaudio
+  - --talk-name=org.freedesktop.secrets   # logins in the system keyring
+
+cleanup-commands:
+  - /app/cleanup-BaseApp.sh
+build-options:
+  env:
+    BASEAPP_REMOVE_WEBENGINE: '1'
+
+cleanup:
+  - '*.la'
+  - '*.a'
+  - /include
+  - /lib/pkgconfig
+  - /share/man
+  - /share/doc
+
+modules:
+  # ---- libmpv and its libraries ------------------------------------------- #
+  - name: luajit   # Lua for mpv's ytdl_hook
+    no-autogen: true
+    make-args:
+      - BUILDMODE=dynamic
+      - PREFIX=${FLATPAK_DEST}
+    make-install-args:
+      - PREFIX=${FLATPAK_DEST}
+    cleanup:
+      - /bin
+    sources:
+      - type: git
+        url: https://github.com/openresty/luajit2.git
+        tag: v2.1-20260724
+        commit: 982cd8323eafd8604a9e5f2a916aa50b9f67d9ed
+
+  - name: libass
+    config-opts:
+      - --disable-static
+      - --enable-asm
+      - --enable-harfbuzz
+      - --enable-fontconfig
+    sources:
+      - type: git
+        url: https://github.com/libass/libass.git
+        tag: 0.17.5
+        commit: 4a05d8127f525943ebf45fdc6497c9e665947f0d
+
+  - name: ffmpeg   # decoding only; H.264/AAC/VP9 are built-in decoders
+    config-opts:
+      - --disable-debug
+      - --disable-doc
+      - --disable-static
+      - --disable-programs
+      - --disable-encoders
+      - --enable-encoder=png
+      - --disable-devices
+      - --enable-shared
+      - --enable-gpl
+      - --enable-version3
+      - --enable-gnutls
+      - --enable-libdrm
+      - --enable-vaapi
+    sources:
+      - type: git
+        url: https://git.ffmpeg.org/ffmpeg.git
+        tag: n9.0.2
+        commit: 946fcce07b6dcd0331c8cc609192aeff5e1924f8
+
+  - name: libplacebo
+    buildsystem: meson
+    config-opts:
+      - -Dvulkan=disabled
+      - -Dshaderc=disabled
+      - -Dglslang=disabled
+      - -Dopengl=enabled
+      - -Ddemos=false
+      - -Dtests=false
+    sources:
+      - type: git
+        url: https://code.videolan.org/videolan/libplacebo.git
+        tag: v7.387.0
+        commit: 275f7dea27924cdd34ab2e6c20e448b6bc4fab65
+
+  - name: hwdata
+    buildsystem: autotools
+    sources:
+      - type: archive
+        url: https://github.com/vcrhonek/hwdata/archive/refs/tags/v0.394.tar.gz
+        sha256: b7c3fd7214a3b7c49d2661db127a712dc11cffd1799f793947aa1cb20aaf3298
+
+  - name: libdisplay-info
+    buildsystem: meson
+    sources:
+      - type: archive
+        url: https://gitlab.freedesktop.org/emersion/libdisplay-info/-/archive/0.2.0/libdisplay-info-0.2.0.tar.gz
+        sha256: f7331fcaf5527251b84c8fb84238d06cd2f458422ce950c80e86c72927aa8c2b
+
+  - name: mpv
+    buildsystem: meson
+    config-opts:
+      - -Dlibmpv=true
+      - -Dcplayer=false
+      - -Dbuild-date=false
+      - -Dlua=luajit
+      - -Djavascript=disabled
+      - -Dgl=enabled
+      - -Degl=enabled
+      - -Dwayland=enabled
+      - -Dx11=disabled
+      - -Ddrm=enabled
+      - -Dvaapi=enabled
+      - -Dvulkan=disabled
+      - -Dpulse=enabled
+      - -Dpipewire=enabled
+      - -Dlibarchive=disabled
+      - -Dlibbluray=disabled
+      - -Ddvdnav=disabled
+      - -Dcdda=disabled
+      - -Drubberband=disabled
+      - -Duchardet=disabled
+      - -Dvapoursynth=disabled
+      - -Dmanpage-build=disabled
+      - -Dhtml-build=disabled
+      - -Dwerror=false
+    sources:
+      - type: git
+        url: https://github.com/mpv-player/mpv.git
+        tag: v0.42.0
+        commit: b0841e8c4d156b8403dc1876c4cbd9011eb583f3
+
+  # ---- JavaScript runtime for yt-dlp (YouTube) ------------------------------ #
+  - name: deno
+    buildsystem: simple
+    build-commands:
+      - unzip deno.zip
+      - install -Dm755 deno ${FLATPAK_DEST}/bin/deno
+    sources:
+      - type: file
+        url: https://github.com/denoland/deno/releases/download/v2.9.8/deno-x86_64-unknown-linux-gnu.zip
+        sha256: e890975bc2549807bbcc0b584ffafda72cc7c93349dd99c80483dd784f6c4609
+        dest-filename: deno.zip
+        only-arches:
+          - x86_64
+
+  # ---- Python packages (PyQt6 comes from the BaseApp) ----------------------- #
+  - python-deps.json
+
+  # ---- MultiChat ------------------------------------------------------------ #
+  - name: multichat
+    buildsystem: simple
+    build-commands:
+      - |
+        SITE="$(python3 -c 'import sysconfig; print(sysconfig.get_path("purelib", vars={"base": "/app"}))')"
+        mkdir -p "$SITE"
+        cp -r multichat "$SITE/"
+        printf '#!/bin/sh\nexec python3 -m multichat "$@"\n' > multichat-launcher
+        install -Dm755 multichat-launcher "${FLATPAK_DEST}/bin/multichat"
+        install -Dm644 "packaging/${FLATPAK_ID}.desktop" -t "${FLATPAK_DEST}/share/applications/"
+        install -Dm644 "packaging/${FLATPAK_ID}.metainfo.xml" -t "${FLATPAK_DEST}/share/metainfo/"
+        install -Dm644 "multichat/resources/${FLATPAK_ID}.png" -t "${FLATPAK_DEST}/share/icons/hicolor/256x256/apps/"
+        install -Dm644 LICENSE THIRD_PARTY_NOTICES.md README.md -t "${FLATPAK_DEST}/share/licenses/${FLATPAK_ID}/"
+    sources:
+      - type: dir
+        path: ../..
+        skip:
+          - .git
+          - build-appimage
+          - build-flatpak
+          - .flatpak-builder

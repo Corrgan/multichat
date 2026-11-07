@@ -65,7 +65,7 @@ def selftest() -> None:
     ]
     ok = ok and not missing
     print(f"MISSING locales: {', '.join(missing)}" if missing else f"OK      locales ({len(i18n.LANGUAGES)} languages)")
-    print("OK      icon" if app_icon_path().is_file() else "MISSING multichat.png")
+    print("OK      icon" if app_icon_path().is_file() else "MISSING app icon")
     from .accounts.store import system_keyring
 
     kr = system_keyring()
@@ -80,7 +80,7 @@ def main() -> None:
         selftest()
     config = load_config()
     setup_logging(config["debug_log"])
-    QApplication.setDesktopFileName(APP_ID)  # Wayland app ID → KDE/GNOME find multichat.desktop
+    QApplication.setDesktopFileName(APP_ID)  # Wayland app ID → KDE/GNOME find io.github.Corrgan.MultiChat.desktop
     app = QApplication(sys.argv)
     app.setApplicationName("MultiChat")
     app.setApplicationVersion(APP_VERSION)

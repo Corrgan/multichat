@@ -4,7 +4,22 @@ Twitch, Kick and YouTube live chat combined in one window for Linux – with vid
 
 ## Download
 
-Ready-made AppImages are available under [Releases](https://github.com/Corrgan/multichat/releases) – built automatically by GitHub Actions, with a SHA256 checksum. They run on systems with glibc ≥ 2.35 (e.g. Ubuntu 22.04+, Debian 12+, Fedora 36+, current Arch).
+Under [Releases](https://github.com/Corrgan/multichat/releases) there is an **AppImage** and a **Flatpak**, both built automatically by GitHub Actions, with SHA256 checksums.
+
+### Flatpak – recommended for SteamOS, Bazzite, Fedora Atomic and other immutable systems
+
+Everything is included (mpv, FFmpeg, a JavaScript runtime for YouTube); the KDE runtime is fetched from Flathub automatically.
+
+```bash
+flatpak install --user MultiChat-x86_64.flatpak
+flatpak run io.github.Corrgan.MultiChat
+```
+
+On many desktops a double-click on the file opens it in the software centre (e.g. Discover). The Flatpak keeps its settings in `~/.var/app/io.github.Corrgan.MultiChat/`, separate from the AppImage. Updates: install the file of the newer release the same way.
+
+### AppImage
+
+AppImages under [Releases](https://github.com/Corrgan/multichat/releases) – built automatically by GitHub Actions, with a SHA256 checksum. They run on systems with glibc ≥ 2.35 (e.g. Ubuntu 22.04+, Debian 12+, Fedora 36+, current Arch).
 
 ```bash
 chmod +x MultiChat-x86_64.AppImage
@@ -70,10 +85,10 @@ The script creates its own Python environment in `build-appimage/` with the exac
 
 ### Automatic builds (GitHub Actions)
 
-The workflow [`.github/workflows/appimage.yml`](.github/workflows/appimage.yml) builds the AppImage in an Ubuntu 22.04 container and tests it with `--selftest`:
+The workflow [`.github/workflows/build.yml`](.github/workflows/build.yml) builds the AppImage in an Ubuntu 22.04 container and the Flatpak with `flatpak-builder` ([`packaging/flatpak/`](packaging/flatpak)); both are tested with `--selftest`:
 
-- **Manual:** Actions → *AppImage* → *Run workflow* → the AppImage is attached to the run as an artifact (14 days).
-- **Release:** bump `__version__` in `multichat/__init__.py`, commit, then `git tag v<version> && git push origin v<version>` – the workflow creates the release with the AppImage and checksum. If the tag doesn't match `__version__`, it stops with an error.
+- **Manual:** Actions → *Build* → *Run workflow* → AppImage and Flatpak are attached to the run as artifacts (14 days).
+- **Release:** bump `__version__` in `multichat/__init__.py` (and add the release to `packaging/io.github.Corrgan.MultiChat.metainfo.xml`), commit, then `git tag v<version> && git push origin v<version>` – the workflow creates the release with both files and checksums. If the tag doesn't match `__version__`, it stops with an error.
 - **Which tags create a release:** only `vX.Y` where the second number is a single digit or ends in 0 – e.g. `v0.10`, `v0.20`, `v1.6`, `v2.0`. Intermediate versions such as `v0.11`, `v0.15` or `v0.10.1` don't trigger a build.
 
 ## Project layout
@@ -88,7 +103,7 @@ multichat/            the application (Python package)
   overlay/            local web server for the OBS overlay
   ui/                 main window, chat view, dialogs
   resources/          icon, overlay page, translations (locales/)
-packaging/            AppImage build script, .desktop file
+packaging/            AppImage build script, Flatpak manifest, .desktop and metainfo files
 tests/                automated tests (pytest)
 docs/                 additional documentation
 ```
