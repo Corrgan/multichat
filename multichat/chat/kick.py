@@ -158,6 +158,33 @@ def _kick_get(url: str, slug: str) -> dict:
     return r.json()
 
 
+def kick_event(name: str, data: dict) -> tuple[str, str, float, str] | None:
+    """Kick's subscription, gift, host and Kicks events → (user, event, value, text).
+    These are unofficial website events; unknown ones are logged in the verbose log."""
+    def num(v) -> float:
+        try:
+            return float(v or 0)
+        except (TypeError, ValueError):
+            return 0.0
+
+    if name.endswith("\\SubscriptionEvent") or name == "SubscriptionEvent":
+        return str(data.get("username") or "?"), "sub", num(data.get("months")) or 1, ""
+    if name.endswith("GiftedSubscriptionsEvent"):
+        gifted = data.get("gifted_usernames") or []
+        n = len(gifted) if isinstance(gifted, list) else 0
+        text = str(gifted[0]) if n == 1 else ""
+        return str(data.get("gifter_username") or "?"), "gift", n or 1, text
+    if name.endswith("StreamHostEvent"):
+        return str(data.get("host_username") or "?"), "raid", num(data.get("number_viewers")), ""
+    if name.endswith("KicksGifted"):
+        sender = data.get("sender") or {}
+        gift = data.get("gift") or {}
+        return str(sender.get("username") or "?"), "bits", num(gift.get("amount")), "Kicks"
+    if not name.endswith(("ChatMessageEvent", "MessageDeletedEvent", "UserBannedEvent", "ChatroomClearEvent")):
+        log.debug("Kick event %s: %s", name, str(data)[:300])
+    return None
+
+
 def _handle_event(name: str, data: dict, slug: str, emit: Emit, emotes) -> None:
     if name.endswith("ChatMessageEvent"):
         sender = data.get("sender") or {}
@@ -175,6 +202,10 @@ def _handle_event(name: str, data: dict, slug: str, emit: Emit, emotes) -> None:
                 user_id=str(sender.get("id") or "") or None,
             )
         )
+    elif ev := kick_event(name, data):
+        user, event, value, text = ev
+        emit(ChatMessage(platform="kick", channel=slug, user=user, text="", parts=[],
+                         event=event, event_value=value, event_text=text))
     elif name.endswith("MessageDeletedEvent"):
         mid = (data.get("message") or {}).get("id")
         if mid:

@@ -34,7 +34,7 @@ from ..core.logsetup import LOG_DIR, LOG_FILE, asyncio_exception_handler, set_de
 from ..overlay.server import OverlayServer, deletion_payload, message_payload
 from ..video.tiles import VideoPanel
 from .chat_view import ChatView
-from .dialogs import AboutDialog, AppsDialog
+from .dialogs import AboutDialog, AlertsDialog, AppsDialog
 from .moderation import ActionBar, ModActions, ModNotes, UserCard
 from .widgets import CopyLabel
 
@@ -143,6 +143,7 @@ class MainWindow(QMainWindow):
         self.emotes.enabled = self.config["extra_emotes"]
         self.debug_action.setChecked(self.config["debug_log"])
         self.view.set_font_px(self.config["chat_font"])
+        self.view.alerts_cfg = self.config["alerts"]
         video_on = bool(self.config["video"].get("enabled", True))
         self.video_action.setChecked(video_on)
         self.video.setVisible(video_on)
@@ -269,6 +270,7 @@ class MainWindow(QMainWindow):
         self.video_action = view.addAction(_("Video tiles"))
         self.video_action.setCheckable(True)
         self.video_action.toggled.connect(self.toggle_video)
+        view.addAction(_("Alerts …")).triggered.connect(self.edit_alerts)
         font = view.addMenu(_("Chat font size"))
         for label, keys, step in ((_("Larger"), ("Ctrl++", "Ctrl+="), 2), (_("Smaller"), ("Ctrl+-",), -2),
                                   (_("Default size"), ("Ctrl+0",), 0)):
@@ -534,7 +536,7 @@ class MainWindow(QMainWindow):
             return
         for msg in batch:
             self.messages[msg.uid] = msg
-            self.overlay.publish(message_payload(msg))
+            self.overlay.publish(message_payload(msg, self.view.alerts_cfg))
             self.mod.observe(msg)
         while len(self.messages) > MAX_MESSAGES:
             self.messages.popitem(last=False)
@@ -549,7 +551,7 @@ class MainWindow(QMainWindow):
             return
         if self._render_timer.isActive():
             return  # a full re-render is due anyway
-        self.view.append_many([self.msg_html(m) for m in shown])  # scrolls along
+        self.view.append_many(self.view.items(shown))  # scrolls along
 
     def render_all(self) -> None:
         """Requests a full re-render (filters, deletions, failed images); coalesced."""
@@ -564,7 +566,7 @@ class MainWindow(QMainWindow):
         self._flush_messages()
         if self.view.follow:
             self._held = False
-        self.view.rebuild([self.msg_html(m) for m in self.messages.values() if self.filters[m.platform].isChecked()])
+        self.view.rebuild(self.view.items(m for m in self.messages.values() if self.filters[m.platform].isChecked()))
 
     def apply_deletion(self, ev: Deletion) -> None:
         self._flush_messages()  # the message to delete may still be queued
@@ -828,6 +830,14 @@ class MainWindow(QMainWindow):
         self.refresh_accounts()
         self.mod.account_changed(platform)
         self.statusBar().showMessage(_("Logged out of {platform}").format(platform=NAMES[platform]), 5000)
+
+    def edit_alerts(self) -> None:
+        dlg = AlertsDialog(self, self.config["alerts"])
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            self.config["alerts"] = dlg.values()
+            self.view.alerts_cfg = self.config["alerts"]
+            self.save_config()
+            self.render_all()
 
     def edit_apps(self) -> None:
         dlg = AppsDialog(self, self.apps.all())

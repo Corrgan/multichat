@@ -25,6 +25,38 @@ def _parse_tags(raw: str) -> dict[str, str]:
     return out
 
 
+SUB_PLANS = {"Prime": "Prime", "1000": "Tier 1", "2000": "Tier 2", "3000": "Tier 3"}
+
+
+def _int(value: str | None) -> int:
+    try:
+        return int(value or 0)
+    except ValueError:
+        return 0
+
+
+def twitch_event(tags: dict[str, str]) -> tuple[str, float, str] | None:
+    """USERNOTICE tags → (event, value, text) for subs, gifts and raids; None for others.
+
+    A community gift ("gifted 5 subs") is followed by one subgift notice per recipient –
+    those carry msg-param-community-gift-id and are skipped, the total counts once."""
+    kind = tags.get("msg-id", "")
+    plan = SUB_PLANS.get(tags.get("msg-param-sub-plan", ""), "")
+    if kind in ("sub", "resub"):
+        return "sub", _int(tags.get("msg-param-cumulative-months")) or 1, plan
+    if kind in ("giftpaidupgrade", "anongiftpaidupgrade", "primepaidupgrade"):
+        return "sub", 1, plan
+    if kind in ("subgift", "anonsubgift"):
+        if tags.get("msg-param-community-gift-id"):
+            return None
+        return "gift", 1, tags.get("msg-param-recipient-display-name", "")
+    if kind in ("submysterygift", "anonsubmysterygift"):
+        return "gift", _int(tags.get("msg-param-mass-gift-count")) or 1, ""
+    if kind == "raid":
+        return "raid", _int(tags.get("msg-param-viewerCount")), ""
+    return None
+
+
 def parse_irc(line: str) -> tuple[dict[str, str], str, str, list[str]]:
     """Splits an IRC line into (tags, prefix, command, params)."""
     tags: dict[str, str] = {}
@@ -111,6 +143,25 @@ async def run_twitch(channel: str, emit: Emit, status: Status, emotes=None) -> N
                                     msg_id=tags.get("id"),
                                     user_id=tags.get("user-id"),
                                     badges=roles(b.split("/")[0] for b in (tags.get("badges") or "").split(",") if b),
+                                    **({"event": "bits", "event_value": _int(tags["bits"])} if tags.get("bits") else {}),
+                                )
+                            )
+                        elif cmd == "USERNOTICE" and (ev := twitch_event(tags)):
+                            text = params[1] if len(params) >= 2 else ""  # e.g. the resub message
+                            emit(
+                                ChatMessage(
+                                    platform="twitch",
+                                    channel=channel,
+                                    user=tags.get("msg-param-displayName") or tags.get("display-name")
+                                    or tags.get("login") or "?",
+                                    text=text,
+                                    parts=_extra(emotes, "twitch", channel, twitch_parts(text, tags.get("emotes")))
+                                    if text else [],
+                                    color=tags.get("color") or None,
+                                    msg_id=tags.get("id"),
+                                    user_id=tags.get("user-id"),
+                                    badges=roles(b.split("/")[0] for b in (tags.get("badges") or "").split(",") if b),
+                                    event=ev[0], event_value=ev[1], event_text=ev[2],
                                 )
                             )
                         elif cmd == "CLEARMSG":

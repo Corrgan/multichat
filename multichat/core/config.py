@@ -10,6 +10,12 @@ from pathlib import Path
 
 from .constants import PLATFORMS
 
+# defaults for the alert highlighting (multichat.chat.alerts imports them from here)
+DEFAULT_ALERTS = {
+    "sub": True, "gift": True, "raid": True, "bits": True, "superchat": True, "member": True,
+    "min_bits": 1, "min_gift": 1, "min_raid": 1, "min_superchat": 0,
+}
+
 CONF_DIR = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config") / "multichat"
 CONFIG = CONF_DIR / "config.json"
 OVERLAY_PORT = 17564
@@ -52,6 +58,7 @@ def load_config() -> dict:
         "language": "auto",
         "chat_font": 14,
         "usercard_docked": False,
+        "alerts": dict(DEFAULT_ALERTS),
         "video": {"enabled": True, "quality": {}, "volume": {}, "audio": None, "sizes": [440, 860]},
         "overlay": {"enabled": False, "port": OVERLAY_PORT},
         "_warnings": [],
@@ -87,6 +94,10 @@ def load_config() -> dict:
     cfg["language"] = pick(data.get("language"), "auto") or "auto"
     cfg["chat_font"] = max(9, min(40, pick(data.get("chat_font"), 14)))
     cfg["usercard_docked"] = pick(data.get("usercard_docked"), False)
+    al = data.get("alerts") if isinstance(data.get("alerts"), dict) else {}
+    for k, default in DEFAULT_ALERTS.items():
+        value = pick(al.get(k), default)
+        cfg["alerts"][k] = max(0, min(1_000_000, value)) if k.startswith("min_") else value
     ov = data.get("overlay") if isinstance(data.get("overlay"), dict) else {}
     cfg["overlay"]["enabled"] = pick(ov.get("enabled"), False)
     port = pick(ov.get("port"), OVERLAY_PORT)

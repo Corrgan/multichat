@@ -137,6 +137,7 @@ docs/                 additional documentation
 - **Right-click a name** for the menu: user card, mention, copy text and the same moderation actions.
 - **User card** (👤): roles, account age, followage (Twitch, Kick), subscription months (Kick), ban status (Kick), the user's recent messages, your moderation actions and your own notes. It opens as a window; the 📌 button docks it next to the chat (remembered). Notes and the action log are stored only on this computer in `~/.config/multichat/modnotes.json`.
 - **Moderator check:** MultiChat asks Twitch which channels you moderate; on Kick and YouTube it knows your own channel. In addition, the badge on your own chat messages counts. Where you are known **not** to be a moderator, the moderation actions are hidden.
+- **Alerts:** subs, resubs, gifted subs, raids/hosts, bits/Kicks, Super Chats and memberships are shown with a headline and highlighted in the chat and in the OBS overlay. **View → Alerts …** turns each kind on or off and sets minimum values (e.g. bits from 100). The alert settings of the streamer (StreamElements, Streamlabs …) can't be read by other apps, so set values that match them. Events below the minimum are still shown, without highlight. Follows aren't part of the chat and are not shown.
 - **View → Chat font size** (Ctrl + / Ctrl − / Ctrl 0) makes the chat text and emotes larger, e.g. to read it from further away. Only the chat changes, not the rest of the window.
 - **Input line at the bottom:** send to one platform or to all you're logged in to.
 - Settings: `~/.config/multichat/config.json` (readable only by you).
@@ -198,6 +199,7 @@ The URL can be customised:
 | `max` | maximum number of messages | `max=20` |
 | `platforms` | only these platforms | `platforms=twitch,kick` |
 | `badges` | hide platform icons | `badges=0` |
+| `alerts` | no highlight for alerts (subs, bits, raids …) | `alerts=0` |
 
 Example: `http://127.0.0.1:17564/?fade=30&size=24&platforms=twitch,youtube`
 

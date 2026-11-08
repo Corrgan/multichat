@@ -8,8 +8,8 @@ import platform as py_platform
 from PyQt6.QtCore import QT_VERSION_STR, Qt
 from PyQt6.QtGui import QPixmap
 from PyQt6.QtWidgets import (
-    QApplication, QDialog, QDialogButtonBox, QFormLayout, QGroupBox,
-    QHBoxLayout, QLabel, QLineEdit, QVBoxLayout, QWidget,
+    QApplication, QCheckBox, QDialog, QDialogButtonBox, QFormLayout, QGridLayout, QGroupBox,
+    QHBoxLayout, QLabel, QLineEdit, QSpinBox, QVBoxLayout, QWidget,
 )
 
 from .. import __version__ as APP_VERSION
@@ -24,6 +24,58 @@ DEV_CONSOLES = {
     "kick": "https://kick.com/settings/developer",
     "youtube": "https://console.cloud.google.com/apis/credentials",
 }
+
+
+class AlertsDialog(QDialog):
+    """Which events (subs, bits, raids …) are highlighted, with minimum values."""
+
+    def __init__(self, parent: QWidget, cfg: dict) -> None:
+        super().__init__(parent)
+        self.setWindowTitle(_("Alerts"))
+        lay = QVBoxLayout(self)
+        intro = QLabel(_(
+            "Highlight these events in the chat and in the OBS overlay. The alert settings of the "
+            "streamer (StreamElements, Streamlabs …) can't be read by other apps – set minimum "
+            "values here to match them. Events below the minimum are still shown, without highlight."
+        ))
+        intro.setWordWrap(True)
+        lay.addWidget(intro)
+        grid = QGridLayout()
+        rows = [
+            ("sub", _("Subscriptions and resubs (Twitch, Kick)"), None, ""),
+            ("gift", _("Gifted subs / memberships"), "min_gift", _("from {n} gifts")),
+            ("raid", _("Raids / hosts"), "min_raid", _("from {n} viewers")),
+            ("bits", _("Bits (Twitch) / Kicks (Kick)"), "min_bits", _("from {n}")),
+            ("superchat", _("Super Chats and Super Stickers (YouTube)"), "min_superchat", _("from {n} (any currency)")),
+            ("member", _("New members and milestones (YouTube)"), None, ""),
+        ]
+        self.checks: dict[str, QCheckBox] = {}
+        self.mins: dict[str, QSpinBox] = {}
+        for row, (key, label, min_key, min_label) in enumerate(rows):
+            cb = QCheckBox(label)
+            cb.setChecked(bool(cfg.get(key, True)))
+            self.checks[key] = cb
+            grid.addWidget(cb, row, 0)
+            if min_key:
+                spin = QSpinBox()
+                spin.setRange(0, 1_000_000)
+                spin.setValue(int(cfg.get(min_key) or 0))
+                before, _sep, after = min_label.partition("{n}")
+                spin.setPrefix(before)
+                spin.setSuffix(after)
+                spin.setEnabled(cb.isChecked())
+                cb.toggled.connect(spin.setEnabled)
+                self.mins[min_key] = spin
+                grid.addWidget(spin, row, 1)
+        lay.addLayout(grid)
+        bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        bb.accepted.connect(self.accept)
+        bb.rejected.connect(self.reject)
+        lay.addWidget(bb)
+
+    def values(self) -> dict:
+        return {**{k: cb.isChecked() for k, cb in self.checks.items()},
+                **{k: spin.value() for k, spin in self.mins.items()}}
 
 
 class AppsDialog(QDialog):

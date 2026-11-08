@@ -20,6 +20,7 @@ import logging
 
 from aiohttp import WSMsgType, web
 
+from ..chat import alerts
 from ..chat.models import ChatMessage, Deletion
 from ..core.constants import FAVICONS
 from ..core.paths import resource
@@ -33,8 +34,11 @@ MAX_BACKLOG = 500  # messages queued for a slow client before it is disconnected
 
 
 
-def message_payload(m: ChatMessage) -> dict:
+def message_payload(m: ChatMessage, alerts_cfg: dict | None = None) -> dict:
     return {
+        "event": m.event,
+        "headline": alerts.headline(m) if m.event else "",
+        "alert": bool(m.event) and alerts.is_alert(m, alerts_cfg or alerts.DEFAULT_ALERTS),
         "type": "msg",
         "platform": m.platform,
         "user": m.user,

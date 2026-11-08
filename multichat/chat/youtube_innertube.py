@@ -19,6 +19,7 @@ from collections import OrderedDict
 
 import aiohttp
 
+from .alerts import parse_amount
 from .models import ChatMessage, Deletion, Emit, Part, roles
 
 log = logging.getLogger("multichat.chat")
@@ -126,6 +127,12 @@ def _badges(r: dict) -> tuple:
     return roles(names)
 
 
+_RENDERERS = (
+    "liveChatTextMessageRenderer", "liveChatPaidMessageRenderer", "liveChatMembershipItemRenderer",
+    "liveChatPaidStickerRenderer", "liveChatSponsorshipsGiftPurchaseAnnouncementRenderer",
+)
+
+
 def parse_actions(actions: list, video_id: str) -> list:
     """InnerTube actions → ChatMessage/Deletion events (unknown kinds are skipped)."""
     events: list = []
@@ -133,17 +140,25 @@ def parse_actions(actions: list, video_id: str) -> list:
         a = a.get("replayChatItemAction", {}).get("actions", [{}])[0] if "replayChatItemAction" in a else a
         if "addChatItemAction" in a:
             item = a["addChatItemAction"].get("item") or {}
-            r = (item.get("liveChatTextMessageRenderer") or item.get("liveChatPaidMessageRenderer")
-                 or item.get("liveChatMembershipItemRenderer") or item.get("liveChatPaidStickerRenderer"))
+            kind = next((k for k in item if k in _RENDERERS), None)
+            r = item.get(kind) if kind else None
             if not r or not r.get("id"):
                 continue
             parts = runs_to_parts((r.get("message") or {}).get("runs"))
-            if "purchaseAmountText" in r:  # Super Chat / Super Sticker
-                parts.insert(0, ("text", f"[💰 {_text(r['purchaseAmountText'])}] ", ""))
-            elif "liveChatMembershipItemRenderer" in item:
-                header = _text(r.get("headerSubtext")) or "member"
-                parts.insert(0, ("text", f"[⭐ {header}] ", ""))
-            if not parts:
+            event, value, etext = "", 0.0, ""
+            if kind in ("liveChatPaidMessageRenderer", "liveChatPaidStickerRenderer"):  # Super Chat / Sticker
+                etext = _text(r.get("purchaseAmountText"))
+                event, value = "superchat", parse_amount(etext)
+            elif kind == "liveChatMembershipItemRenderer":  # new member or milestone
+                event = "member"
+                m = re.search(r"(\d+)", _text(r.get("headerPrimaryText")))  # "Member for 12 months"
+                value = float(m.group(1)) if m else 1.0
+            elif kind == "liveChatSponsorshipsGiftPurchaseAnnouncementRenderer":  # gifted memberships
+                header = (r.get("header") or {}).get("liveChatSponsorshipsHeaderRenderer") or {}
+                r = {**r, **header}  # author name/ID/badges live in the header
+                m = re.search(r"(\d+)", _text(header.get("primaryText")))  # "Gifted 5 … memberships"
+                event, value = "gift", float(m.group(1)) if m else 1.0
+            if not parts and not event:
                 continue
             events.append(ChatMessage(
                 platform="youtube",
@@ -154,6 +169,7 @@ def parse_actions(actions: list, video_id: str) -> list:
                 msg_id=r["id"],
                 user_id=r.get("authorExternalChannelId"),
                 badges=_badges(r),
+                event=event, event_value=value, event_text=etext,
             ))
         elif "markChatItemAsDeletedAction" in a:
             mid = a["markChatItemAsDeletedAction"].get("targetItemId")

@@ -51,13 +51,27 @@ def test_parse_actions():
         {"markChatItemsByAuthorAsDeletedAction": {"externalChannelId": "UCbad"}},
         {"addChatItemAction": {"item": {"liveChatViewerEngagementMessageRenderer": {"id": "x"}}}},
         {"addLiveChatTickerItemAction": {}},
+        {"addChatItemAction": {"item": {"liveChatPaidStickerRenderer": {
+            "id": "s1", "authorName": {"simpleText": "Sticky"}, "purchaseAmountText": {"simpleText": "$2.00"}}}}},
+        {"addChatItemAction": {"item": {"liveChatMembershipItemRenderer": {
+            "id": "mm", "authorName": {"simpleText": "Loyal"}, "headerPrimaryText": {"runs": [{"text": "Member for "},
+                                                                                         {"text": "12"}, {"text": " months"}]}}}}},
+        {"addChatItemAction": {"item": {"liveChatSponsorshipsGiftPurchaseAnnouncementRenderer": {
+            "id": "g1", "authorExternalChannelId": "UCg", "header": {"liveChatSponsorshipsHeaderRenderer": {
+                "authorName": {"simpleText": "Giver"}, "primaryText": {"runs": [{"text": "Gifted "}, {"text": "5"},
+                                                                                {"text": " memberships"}]}}}}}}},
     ]
     ev = it.parse_actions(actions, "vid")
     assert isinstance(ev[0], ChatMessage) and ev[0].text == "hi 😀" and ev[0].user_id == "UCa"
-    assert ev[1].parts[0] == ("text", "[💰 €5.00] ", "") and ev[1].user == "Rich"
+    assert ev[1].text == "gg" and ev[1].user == "Rich"
+    assert (ev[1].event, ev[1].event_value, ev[1].event_text) == ("superchat", 5.0, "€5.00")
     assert isinstance(ev[2], Deletion) and ev[2].msg_id == "m2"
     assert isinstance(ev[3], Deletion) and ev[3].user_id == "UCbad"
-    assert len(ev) == 4
+    sticker, member, gift = ev[4:]
+    assert sticker.event == "superchat" and sticker.event_value == 2.0 and sticker.parts == []
+    assert (member.event, member.event_value) == ("member", 12.0)
+    assert (gift.user, gift.event, gift.event_value, gift.user_id) == ("Giver", "gift", 5.0, "UCg")
+    assert len(ev) == 7
 
 
 def test_reader_against_fake_youtube(monkeypatch):

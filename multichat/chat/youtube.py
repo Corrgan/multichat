@@ -92,9 +92,17 @@ def _yt_parts(c) -> list[Part]:
                 out.append(("text", p.get("txt", ""), ""))
         else:
             out.append(("text", str(p), ""))
-    if getattr(c, "type", "") in ("superChat", "superSticker") and getattr(c, "amountString", ""):
-        out.insert(0, ("text", f"[💰 {c.amountString}] ", ""))
-    return out
+    return [p for p in out if p[1]]
+
+
+def _yt_event(c) -> dict:
+    kind = getattr(c, "type", "")
+    if kind in ("superChat", "superSticker"):
+        amount = str(getattr(c, "amountString", "") or "")
+        return {"event": "superchat", "event_value": float(getattr(c, "amountValue", 0) or 0), "event_text": amount}
+    if kind == "newSponsor":
+        return {"event": "member", "event_value": 1}
+    return {}
 
 
 def chat_reader_mode() -> str:
@@ -119,6 +127,7 @@ async def _read_pytchat(vid: str, emit: Emit, emotes) -> None:
                         user=c.author.name,
                         text=c.message,
                         parts=_extra(emotes, "youtube", vid, _yt_parts(c)),
+                        **_yt_event(c),
                         msg_id=getattr(c, "id", None),
                         user_id=getattr(c.author, "channelId", None),
                         badges=roles(

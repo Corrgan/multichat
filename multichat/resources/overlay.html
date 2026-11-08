@@ -13,6 +13,9 @@ body{font:600 var(--size)/1.4 "Inter","Segoe UI","Noto Sans",sans-serif;color:#f
 .u{margin-right:.15em}
 img.e{height:1.5em;vertical-align:middle;margin:-.25em 0}
 img.pi{width:1em;height:1em;vertical-align:-.12em;margin-right:.35em;filter:drop-shadow(0 0 2px rgba(0,0,0,.7))}
+.h{font-size:.85em;opacity:.85}
+.m.alert{background:rgba(20,10,40,.55);border-left:.25em solid var(--ac);padding:.25em .5em;border-radius:6px;margin:6px 0}
+.m.alert .h{opacity:1;color:var(--ac);font-weight:800}
 @keyframes in{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
 </style></head><body><div id="chat"></div>
 <script>
@@ -20,6 +23,9 @@ const q=new URLSearchParams(location.search);
 const fade=+q.get("fade")||0, max=+q.get("max")||40;
 const show=(q.get("platforms")||"twitch,kick,youtube").split(",");
 const badges=q.get("badges")!=="0";
+const highlight=q.get("alerts")!=="0";
+const AC={sub:"#bf94ff",gift:"#bf94ff",member:"#5fd38d",raid:"#ffb84d",bits:"#e88ef0",superchat:"#ffcc4d"};
+const AI={sub:"⭐",gift:"🎁",member:"⭐",raid:"🚀",bits:"💎",superchat:"💰"};
 if(q.get("size"))document.documentElement.style.setProperty("--size",q.get("size")+"px");
 const B={twitch:["#9146FF","TW"],kick:["#53FC18","KI"],youtube:["#FF0000","YT"]};
 const ICONS=__FAVICONS__;
@@ -38,6 +44,14 @@ function add(m){
   const d=document.createElement("div");d.className="m";
   d.dataset.p=m.platform;d.dataset.mid=m.msg_id||"";d.dataset.uid=m.user_id||"";
   if(badges){d.append(badge(m.platform));}
+  if(m.headline){
+    const h=document.createElement("span");h.className="h";
+    const hl=highlight&&m.alert;
+    if(hl){d.classList.add("alert");d.style.setProperty("--ac",AC[m.event]||"#bf94ff");}
+    h.textContent=(hl?(AI[m.event]||"")+" ":"")+m.headline;d.append(h);
+    if(!m.parts.length){add2(d);return;}
+    d.append(document.createElement("br"));
+  }
   const u=document.createElement("span");u.className="u";u.style.color=m.color||"#b9a3e3";
   u.textContent=m.user+":";d.append(u," ");
   for(const p of m.parts){
@@ -45,6 +59,9 @@ function add(m){
       i.onerror=()=>i.replaceWith(p.a);d.append(i);}
     else d.append(p.v);
   }
+  add2(d);
+}
+function add2(d){
   chat.append(d);
   while(chat.children.length>max)chat.firstChild.remove();
   if(fade>0)setTimeout(()=>{d.classList.add("out");setTimeout(()=>d.remove(),900)},fade*1000);

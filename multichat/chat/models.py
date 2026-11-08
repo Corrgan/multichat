@@ -32,9 +32,13 @@ class ChatMessage:
     deleted: bool = False
     # normalised roles: "broadcaster", "moderator", "vip", "subscriber" (also YouTube members), "verified"
     badges: tuple = ()
+    # alert-like events (see alerts.py): "sub", "gift", "raid", "bits", "superchat", "member"
+    event: str = ""
+    event_value: float = 0  # months, gifted subs, raid viewers, bits, Super Chat amount
+    event_text: str = ""  # tier, recipient, "€5.00", "Kicks" …
 
     def __post_init__(self) -> None:
-        if not self.parts:
+        if not self.parts and (self.text or not self.event):  # an event may come without a message
             self.parts = [("text", self.text, "")]
         # name colours come from the platforms; only accept #RRGGBB (ends up in HTML/CSS)
         if self.color and not _COLOR_RE.fullmatch(self.color):

@@ -340,3 +340,29 @@ def test_autoscroll_pauses_and_resumes(window, app):
     bar.setValue(0)
     bar.setValue(bar.maximum())  # scrolling back down by hand also resumes
     assert view.follow
+
+
+def test_alert_highlight_and_settings(window, monkeypatch):
+    from multichat.overlay.server import message_payload
+    from multichat.ui import dialogs
+
+    w = window
+    w.view.alerts_cfg = dict(w.config["alerts"], min_bits=100)
+    sub = ChatMessage("twitch", "chan", "Alice", "still here", event="sub", event_value=12, event_text="Tier 1")
+    small = ChatMessage("twitch", "chan", "Bob", "", event="bits", event_value=5)
+    raid = ChatMessage("twitch", "chan", "Carol", "", event="raid", event_value=42)
+    items = w.view.items([sub, small, raid])
+    assert isinstance(items[0], tuple) and "resubscribed (12 months)" in items[0][0]
+    assert isinstance(items[1], str) and "cheered 5 bits" in items[1]  # below the minimum: no highlight
+    assert isinstance(items[2], tuple) and f"msg:{raid.uid}" in items[2][0]  # name stays clickable
+    w.view.rebuild(items)
+    assert "Carol is raiding with 42 viewers" in w.view.toPlainText()
+    p = message_payload(sub, w.view.alerts_cfg)
+    assert p["alert"] and p["event"] == "sub" and p["headline"].startswith("Alice resubscribed")
+    assert message_payload(small, w.view.alerts_cfg)["alert"] is False
+
+    dlg = dialogs.AlertsDialog(w, w.config["alerts"])
+    dlg.checks["raid"].setChecked(False)
+    dlg.mins["min_bits"].setValue(500)
+    values = dlg.values()
+    assert values["raid"] is False and values["min_bits"] == 500 and values["sub"] is True

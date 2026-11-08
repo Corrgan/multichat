@@ -13,10 +13,11 @@ import time
 from collections import OrderedDict
 
 from PyQt6.QtCore import QBuffer, QByteArray, QIODevice, QSize, Qt, QTimer, QUrl, pyqtSignal
-from PyQt6.QtGui import QImage, QImageReader, QMovie, QTextBlockFormat, QTextCharFormat, QTextCursor, QTextDocument
+from PyQt6.QtGui import QColor, QImage, QImageReader, QMovie, QTextBlockFormat, QTextCharFormat, QTextCursor, QTextDocument
 from PyQt6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
 from PyQt6.QtWidgets import QTextBrowser, QToolButton
 
+from ..chat import alerts
 from ..chat.models import ChatMessage, user_key
 from ..core.constants import BADGES, BROWSER_UA, FAVICONS
 from ..core.i18n import _
@@ -50,6 +51,7 @@ class ChatView(QTextBrowser):
         self.font_px = DEFAULT_FONT
         self.emote_h = EMOTE_H
         self.selected: tuple[str, str] | None = None  # (platform, user key) of the selected user
+        self.alerts_cfg: dict = dict(alerts.DEFAULT_ALERTS)  # which events are highlighted
         self._apply_style()
         self.nam = QNetworkAccessManager(self)
         self.nam.setTransferTimeout(15000)
@@ -264,20 +266,37 @@ class ChatView(QTextBrowser):
         doc = self.document()
         doc.markContentsDirty(0, doc.characterCount())
 
-    def append_many(self, htmls: list[str]) -> None:
+    def append_many(self, htmls: list) -> None:
         """Appends several messages in one edit block – one layout pass instead of one per message
-        (about twice as fast as append() in a full chat)."""
+        (about twice as fast as append() in a full chat). Items are HTML strings or
+        (html, background colour) for highlighted lines."""
         if not htmls:
             return
         doc = self.document()
         cur = QTextCursor(doc)
         cur.movePosition(QTextCursor.MoveOperation.End)
         cur.beginEditBlock()
-        for h in htmls:
+        for item in htmls:
+            h, bg = item if isinstance(item, tuple) else (item, None)
             if not doc.isEmpty():
                 cur.insertBlock(QTextBlockFormat(), QTextCharFormat())  # no formatting carried over
             cur.insertHtml(h)
+            if bg:
+                fmt = QTextBlockFormat()
+                fmt.setBackground(QColor(bg))
+                fmt.setTopMargin(3)
+                fmt.setBottomMargin(3)
+                fmt.setLeftMargin(4)
+                cur.mergeBlockFormat(fmt)
         cur.endEditBlock()
+
+    def items(self, msgs) -> list:
+        """Messages → items for append_many/rebuild (highlighted events get a background)."""
+        out = []
+        for m in msgs:
+            h = self.message_html(m)
+            out.append((h, alerts.COLORS[m.event][0]) if m.event and alerts.is_alert(m, self.alerts_cfg) else h)
+        return out
 
     # ---- Font size and selection ----------------------------------------- #
     def _apply_style(self) -> None:
@@ -341,9 +360,17 @@ class ChatView(QTextBrowser):
         name_style = f"color:{name_color};font-weight:bold;text-decoration:none"
         if selected:
             name_style += ";background:#3a3a55"
-        return (
-            f"<span style='color:#888'>{ts}</span> "
-            f"{badge} {roles}"
-            f"<a href='msg:{m.uid}' style='{name_style}'>"
-            f"{html.escape(m.user)}</a>: {body}"
-        )
+        name = f"<a href='msg:{m.uid}' style='{name_style}'>{html.escape(m.user)}</a>"
+        head = f"<span style='color:#888'>{ts}</span> {badge} "
+        if m.event:
+            title = html.escape(alerts.headline(m))
+            if alerts.is_alert(m, self.alerts_cfg):
+                title = (f"<span style='color:{alerts.COLORS[m.event][1]};font-weight:bold'>"
+                         f"{alerts.ICONS[m.event]} {title}</span>")
+            else:
+                title = f"<span style='color:#aaa'>{title}</span>"
+            # the name stays clickable (user card, moderation) through the link below or the headline
+            if not m.parts:
+                return f"{head}<a href='msg:{m.uid}' style='text-decoration:none'>{title}</a>"
+            return f"{head}{title}<br>{roles}{name}: {body}"
+        return f"{head}{roles}{name}: {body}"
