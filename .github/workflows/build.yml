@@ -51,6 +51,25 @@ jobs:
             echo "build=false" >> "$GITHUB_OUTPUT"
           fi
 
+      # Releases only from main: the tagged commit must be part of main's history
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        if: github.ref_type == 'tag' && steps.rule.outputs.build == 'true'
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Tag must be on main
+        if: github.ref_type == 'tag' && steps.rule.outputs.build == 'true'
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          if git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "Tag $TAG is on main"
+          else
+            echo "::error::Tag $TAG is not on main – releases are only built from main. Merge first, then tag on main."
+            exit 1
+          fi
+
   appimage:
     name: AppImage
     needs: gate

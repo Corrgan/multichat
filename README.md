@@ -104,7 +104,7 @@ The script creates its own Python environment in `build-appimage/` with the exac
 
 
 - **Manual:** Actions → *Build* → *Run workflow* → AppImage and Flatpak are attached to the run as artifacts (14 days).
-- **Release:** bump `__version__` in `multichat/__init__.py` (and add the release to `packaging/io.github.Corrgan.MultiChat.metainfo.xml`), commit, then `git tag v<version> && git push origin v<version>` – the workflow creates the release with both files and checksums. If the tag doesn't match `__version__`, it stops with an error.
+- **Release:** bump `__version__` in `multichat/__init__.py` (and add the release to `packaging/io.github.Corrgan.MultiChat.metainfo.xml`), commit, then `git tag v<version> && git push origin v<version>` – the workflow creates the release with both files and checksums. If the tag doesn't match `__version__` or the tagged commit isn't on `main`, it stops with an error – tag only on `main`.
 - **Which tags create a release:** only `vX.Y` where the second number is a single digit or ends in 0 – e.g. `v0.10`, `v0.20`, `v1.6`, `v2.0`. Intermediate versions such as `v0.11`, `v0.15` or `v0.10.1` don't trigger a build; one-off exceptions are listed in `EXTRA_RELEASES` in the workflow (currently `v0.25`, the first release with the Flatpak).
 
 ## Project layout
