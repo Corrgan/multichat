@@ -3,7 +3,7 @@
 """Removes system libraries from the PyInstaller bundle that every desktop provides.
 
 PyInstaller copies the build machine's libraries (Ubuntu 22.04). Libraries such as
-libstdc++, freetype, X11 or OpenSSL must come from the host instead:
+libstdc++, freetype, ncurses, X11 or OpenSSL must come from the host instead:
 - the host's libmpv (and other host libraries loaded later) need the host's newer
   versions – an older bundled libstdc++/freetype makes loading libmpv fail;
 - the host's OpenSSL knows where the host keeps its CA certificates.
@@ -19,37 +19,29 @@ import subprocess
 import sys
 from pathlib import Path
 
-HOST_LIBS = [
-    # compiler runtime
-    "libstdc++", "libgcc_s",
-    # X11 / xcb core (the xcb-util libraries Qt needs are kept – often not installed)
-    "libX11", "libX11-xcb", "libXau", "libXdmcp", "libXext", "libXfixes", "libXi", "libXinerama",
-    "libXrandr", "libXrender", "libXcursor", "libXcomposite", "libXdamage", "libbsd", "libmd",
-    "libxcb", "libxcb-render", "libxcb-shm", "libxcb-xfixes", "libxcb-xkb", "libxcb-randr",
-    "libxcb-shape", "libxcb-sync", "libxcb-glx", "libxkbcommon",
-    # fonts and text
-    "libfontconfig", "libfreetype", "libharfbuzz", "libgraphite2", "libfribidi", "libexpat",
-    "libpng16", "libz", "libbrotlicommon", "libbrotlidec",
-    # GLib, D-Bus, systemd and friends
-    "libglib-2.0", "libgobject-2.0", "libgio-2.0", "libgmodule-2.0", "libgthread-2.0", "libpcre2-8",
-    "libmount", "libblkid", "libselinux", "libdbus-1", "libsystemd", "libcap", "libgcrypt",
-    "libgpg-error", "liblz4", "liblzma", "libzstd",
-    # TLS / Kerberos (host OpenSSL → host CA certificates)
-    "libssl", "libcrypto", "libgssapi_krb5", "libkrb5", "libk5crypto", "libkrb5support",
-    "libkeyutils", "libcom_err",
-    # GTK stack (only needed by the GTK3 theme plugin, which is removed)
-    "libgtk-3", "libgdk-3", "libgdk_pixbuf-2.0", "libatk-1.0", "libatk-bridge-2.0", "libatspi",
-    "libcairo", "libcairo-gobject", "libpango-1.0", "libpangocairo-1.0", "libpangoft2-1.0",
-    "libpixman-1", "libepoxy", "libthai", "libdatrie", "libjpeg",
+# Everything named lib*.so* at the top of the bundle comes from the build machine and is
+# removed, except libraries that hosts often lack or ship under another soname:
+KEEP = [
+    r"libpython3[.0-9]*",  # the interpreter itself
+    r"libQt6\w*", r"libicu\w*",  # Qt from the PyQt6 wheel (links into PyQt6/Qt6/lib)
+    r"libmpdec",  # _decimal – Fedora ships libmpdec.so.4, Ubuntu 22.04 .so.3
+    r"libbz2",  # libbz2.so.1.0 is a Debian soname
+    r"libcrypt", r"libnsl", r"libtirpc",  # soname differences between distributions
+    r"libxcb-(cursor|icccm|image|keysyms|render-util|util)",  # xcb-util: not always installed
+    r"libxkbcommon-x11",
 ]
 PLUGINS = ["PyQt6/Qt6/plugins/platformthemes/libqgtk3.so"]
 
 
 def main(root: Path) -> None:
-    pattern = re.compile(r"^(%s)\.so(\.[0-9.]+)?$" % "|".join(re.escape(n) for n in HOST_LIBS))
+    keep = re.compile(r"^(%s)\.so(\.[0-9.]+)?$" % "|".join(KEEP))
     removed = []
     for f in sorted(root.iterdir()):
-        if pattern.match(f.name):
+        is_lib = (
+            f.is_file() and not f.is_symlink()  # symlinks point into the bundle (Qt) – keep them
+            and f.name.startswith("lib") and ".so" in f.name and ".cpython-" not in f.name
+        )
+        if is_lib and not keep.match(f.name):
             f.unlink()
             removed.append(f.name)
     for rel in PLUGINS:
