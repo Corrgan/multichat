@@ -6,6 +6,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import threading
 import time
 
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal
@@ -127,10 +128,17 @@ class VideoTile(QFrame):
     def _release(self) -> None:
         """Stop the running Streamlink data stream (and close pipes that were never loaded)."""
         if self._closer:
-            try:
-                self._closer()
-            except Exception:  # noqa: BLE001
-                pass
+            # closing Streamlink waits for its download threads – in the background, or the
+            # window freezes for a moment on every disconnect
+            closer = self._closer
+
+            def close() -> None:
+                try:
+                    closer()
+                except Exception:  # noqa: BLE001
+                    pass
+
+            threading.Thread(target=close, name=f"close-{self.platform}", daemon=True).start()
         self._closer = None
         self._ads = None
         pending = self.video._pending
@@ -163,7 +171,7 @@ class VideoTile(QFrame):
         self.state = "idle"
         self._release()
         try:
-            self.video.player.command("stop")
+            self.video.player.command_async("stop")  # doesn't wait for mpv
         except Exception:  # noqa: BLE001
             pass
         self.stop_btn.setIcon(self.icon_play)
@@ -361,13 +369,14 @@ class VideoPanel(QWidget):
         for p, t in self.tiles.items():
             t.set_muted(p != self.audio)
 
-    def frame_counts(self) -> dict[str, int]:
-        """Frames drawn per tile since the last call (performance log)."""
+    def frame_counts(self) -> dict[str, tuple[int, float]]:
+        """(frames drawn, ms spent drawing) per tile since the last call (performance log)."""
         out = {}
         for p, t in self.tiles.items():
             video = getattr(t, "video", None)
             if video is not None and getattr(video, "frames", 0):
-                out[p], video.frames = video.frames, 0
+                out[p] = (video.frames, video.paint_ms)
+                video.frames, video.paint_ms = 0, 0.0
         return out
 
     def state(self) -> dict:

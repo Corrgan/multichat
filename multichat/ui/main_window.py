@@ -596,8 +596,9 @@ class MainWindow(QMainWindow):
             "animations playing": sum(m.state() == m.MovieState.Running for m, _b in movies),
             "of": len(self.view.movies),
         }
-        for p, frames in self.video.frame_counts().items():
+        for p, (frames, ms) in self.video.frame_counts().items():
             stats[f"{p} fps"] = round(frames / 60, 1)
+            stats[f"{p} ms/frame"] = round(ms / frames, 1)
         return stats
 
     def _image_failed(self, key: str) -> None:

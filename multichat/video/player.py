@@ -10,6 +10,7 @@ from __future__ import annotations
 import ctypes.util
 import logging
 import os
+import time
 import re
 import sys
 from pathlib import Path
@@ -171,7 +172,8 @@ class MpvWidget(QOpenGLWidget):
         self._pending: tuple[str, dict] | None = None
         self._proc = mpv.MpvGlGetProcAddressFn(self._get_proc)
         self._frame.connect(self._on_frame, Qt.ConnectionType.QueuedConnection)
-        self.frames = 0  # drawn frames (for the performance log)
+        self.frames = 0  # drawn frames and time spent drawing them (performance log)
+        self.paint_ms = 0.0
 
     def play(self, url: str, **opts) -> None:
         """Load only once the render context exists – otherwise mpv plays audio only."""
@@ -216,6 +218,13 @@ class MpvWidget(QOpenGLWidget):
 
     def paintGL(self) -> None:  # noqa: N802
         self.frames += 1
+        t0 = time.perf_counter()
+        try:
+            self._render()
+        finally:
+            self.paint_ms += (time.perf_counter() - t0) * 1000
+
+    def _render(self) -> None:
         if self.ctx:
             r = self.devicePixelRatioF()
             self.ctx.render(
