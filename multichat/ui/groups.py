@@ -143,9 +143,10 @@ class GroupPanel(QWidget):
             rows_layout.addWidget(row)
 
         self.view = ChatView()
+        self.action_bar: QWidget | None = None
         chat = QWidget()
         chat.setMinimumWidth(320)
-        lay = QVBoxLayout(chat)
+        self.chat_lay = lay = QVBoxLayout(chat)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(4)
         lay.addLayout(head)
@@ -167,6 +168,11 @@ class GroupPanel(QWidget):
         outer.addWidget(self.split)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self._update_placeholder()
+
+    def set_action_bar(self, bar: QWidget) -> None:
+        """The user actions (selected user, moderation) – right above the group's chat."""
+        self.action_bar = bar
+        self.chat_lay.insertWidget(self.chat_lay.indexOf(self.view), bar)
 
     # ---- rows ------------------------------------------------------------- #
     def _row_changed(self) -> None:

@@ -209,9 +209,9 @@ class MainWindow(QMainWindow):
         add.clicked.connect(lambda: self.add_group())
         tab_row = QHBoxLayout()
         tab_row.setContentsMargins(0, 0, 0, 0)
+        tab_row.addWidget(add)  # left of the tabs – new groups appear on the right
         tab_row.addWidget(self.tabs)
         tab_row.addStretch(1)
-        tab_row.addWidget(add)
         self.side = QSplitter(Qt.Orientation.Horizontal)
         self.side.setChildrenCollapsible(False)
         self._side_active: GroupPanel | None = None  # side by side: the group clicked last
@@ -219,7 +219,6 @@ class MainWindow(QMainWindow):
         for g in self.config["groups"]:
             self._add_panel(g)
 
-        self.action_bar = ActionBar(self.mod)
 
         send = QHBoxLayout()
         self.target = QComboBox()
@@ -244,7 +243,6 @@ class MainWindow(QMainWindow):
         root = QVBoxLayout()
         root.setContentsMargins(9, 9, 9, 0)
         root.addLayout(filters)
-        root.addWidget(self.action_bar)
         root.addLayout(tab_row)
         root.addWidget(self.side, 1)
         root.addLayout(send)
@@ -277,6 +275,7 @@ class MainWindow(QMainWindow):
             video = VideoPanel(self.run, self.config["video"], self.audio)
             video.changed.connect(self._schedule_save)
         panel = GroupPanel(cfg, len(self.panels), video)
+        panel.set_action_bar(ActionBar(self.mod, lambda m, pn=panel: pn in self.panels_for(m)))
         sizes = self.config["video"].get("sizes") or [440, 860]
         panel.split.setSizes([int(x) for x in sizes[:2]])
         panel.split.splitterMoved.connect(lambda _pos, _i, pn=panel: self._split_moved(pn))
@@ -429,6 +428,9 @@ class MainWindow(QMainWindow):
             if panel.video is not None:
                 panel.video.forget(panel.keys())  # tiles of channels the group doesn't have any more
         self._update_titles()  # an unnamed group is named after its first channel
+        for panel in self.panels:
+            if panel.action_bar is not None:
+                panel.action_bar.refresh()  # the selected user may belong to another group now
         self._update_conn_buttons()
         self._refresh_targets()
         self._update_video()  # e.g. a video box was ticked

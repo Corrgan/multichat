@@ -33,11 +33,13 @@ def _button(icon_name: str, tip: str) -> QToolButton:
 
 
 class ActionBar(QWidget):
-    """Row above the chat: works on the selected user."""
+    """Row above a group's chat: works on the selected user. `shows(msg)` tells whether the
+    selection belongs to this bar's group (the other groups' bars stay empty)."""
 
-    def __init__(self, mod: ModActions) -> None:
+    def __init__(self, mod: ModActions, shows=None) -> None:
         super().__init__()
         self.mod = mod
+        self.shows = shows or (lambda _m: True)
         self.label = QLabel()
         self.label.setTextFormat(Qt.TextFormat.RichText)
         self.label.setMinimumWidth(60)
@@ -71,7 +73,7 @@ class ActionBar(QWidget):
 
     def refresh(self) -> None:
         m = self.mod.selected
-        if not m:
+        if not m or not self.shows(m):
             self.label.setText(f"<span style='color:#888'>{html.escape(_('Click a name to select a user'))}</span>")
             for b in (self.card, self.mention, *self.mod_buttons, self.clear):
                 b.setEnabled(False)

@@ -107,10 +107,13 @@ def test_selection_action_bar_and_user_card(window, app, monkeypatch):
     w.add_message(ChatMessage("twitch", "chan", "Bob", "other", msg_id="b1", user_id="2"))
     w._flush_messages()
     settle()
-    bar = w.action_bar
+    bar = w.panels[0].action_bar
     assert not bar.card.isEnabled()  # nothing selected yet
     w.on_anchor(QUrl(f"msg:{first.uid}"))  # left click selects
     assert w.mod.selected is first and bar.card.isEnabled()
+    other = w.add_group()  # the other group's bar stays empty: Alice chats in the first group
+    assert not other.action_bar.card.isEnabled() and bar.isVisibleTo(w.panels[0])
+    w.tabs.setCurrentIndex(0)
     # Twitch said: not a moderator in #chan → mod buttons hidden, menu says so
     assert w.mod.is_mod(first) is False and bar.ban.isHidden() and bar.delete.isHidden()
     shown = []
