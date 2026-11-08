@@ -24,7 +24,7 @@ def test_keeps_normal_text():
 def test_ca_certificates_fallback(monkeypatch, tmp_path):
     import ssl
 
-    from multichat import app
+    from multichat.core import tls as app
 
     bundle = tmp_path / "ca-bundle.crt"
     bundle.write_text("-----BEGIN CERTIFICATE-----\n")

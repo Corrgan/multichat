@@ -27,6 +27,10 @@ def _openssl() -> None:
 
 _openssl()
 
+from multichat.core.tls import ensure_ca_certificates  # noqa: E402
+
+ensure_ca_certificates()  # before any library builds its SSL context (aiohttp does so on import)
+
 from multichat.app import main  # noqa: E402
 
 main()

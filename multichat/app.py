@@ -30,52 +30,9 @@ from .core.config import load_config  # noqa: E402
 from .core.constants import APP_ID  # noqa: E402
 from .core.logsetup import install_qt_handler, log_system_info, setup_logging  # noqa: E402
 from .core.paths import app_icon_path  # noqa: E402
+from .core.tls import ensure_ca_certificates, openssl_info  # noqa: E402
 
 log = logging.getLogger("multichat")
-
-# CA certificates, by distribution (OpenSSL's built-in default depends on where it was built)
-CA_BUNDLES = (
-    "/etc/pki/tls/certs/ca-bundle.crt",  # Fedora, RHEL
-    "/etc/ssl/certs/ca-certificates.crt",  # Debian, Ubuntu, Arch, SteamOS
-    "/etc/ssl/ca-bundle.pem",  # openSUSE
-    "/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem",
-    "/etc/ssl/cert.pem",  # Alpine, Void
-)
-
-
-def openssl_info() -> str:
-    try:
-        import ssl
-    except ImportError as e:
-        return f"unavailable ({e})"
-    return f"{ssl.OPENSSL_VERSION} – {os.environ.get('MULTICHAT_OPENSSL', 'from the system')}"
-
-
-def ensure_ca_certificates() -> str:
-    """Makes sure TLS finds the system's CA certificates; returns where they come from.
-
-    OpenSSL looks where it was configured at build time. If that doesn't exist here
-    (e.g. a library built on Ubuntu running on Fedora), point it to the system bundle,
-    or to certifi's as a last resort."""
-    import ssl
-
-    if os.environ.get("SSL_CERT_FILE"):
-        return os.environ["SSL_CERT_FILE"]
-    paths = ssl.get_default_verify_paths()
-    if (paths.cafile and os.path.isfile(paths.cafile)) or (paths.capath and os.path.isdir(paths.capath) and os.listdir(paths.capath)):
-        return paths.cafile or paths.capath
-    for cand in CA_BUNDLES:
-        if os.path.isfile(cand):
-            os.environ["SSL_CERT_FILE"] = cand
-            return cand
-    try:
-        import certifi
-
-        os.environ["SSL_CERT_FILE"] = certifi.where()
-        return certifi.where()
-    except ImportError:
-        return "none found"
-
 
 def run_ytdlp(args: list[str]) -> None:
     """`multichat --yt-dlp …` behaves like the yt-dlp program (for mpv's ytdl_hook)."""
@@ -166,11 +123,10 @@ def selftest_video(path: str) -> None:
 def selftest_net(url: str = "https://api.github.com/") -> None:
     """`multichat --selftest-net [URL]`: one HTTPS request with the app's own network stack –
     checks that TLS and the CA certificates work on this system."""
+    print(f"OK      TLS certificates: {ensure_ca_certificates()}")
     import asyncio
 
     import aiohttp
-
-    print(f"OK      TLS certificates: {ensure_ca_certificates()}")
 
     async def fetch() -> int:
         async with aiohttp.ClientSession(trust_env=True, timeout=aiohttp.ClientTimeout(total=20)) as s:
@@ -187,6 +143,7 @@ def selftest_net(url: str = "https://api.github.com/") -> None:
 
 
 def main() -> None:
+    ensure_ca_certificates()  # before anything creates an SSL context
     if len(sys.argv) > 1 and sys.argv[1] == "--yt-dlp":
         run_ytdlp(sys.argv[2:])
     if len(sys.argv) > 1 and sys.argv[1] == "--selftest":
