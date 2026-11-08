@@ -181,6 +181,13 @@ class EmoteStore:
         return self._ffz_parse(data.get("sets"))
 
     # ---- Replacing -------------------------------------------------------- #
+    def available(self, platform: str, channel: str) -> dict[str, str]:
+        """7TV/BTTV/FFZ emotes of this channel and the global ones: code → image URL (for
+        the emote suggestions while typing)."""
+        if not self.enabled:
+            return {}
+        return {**self.global_, **self.channels.get((platform, channel.lower()), {})}
+
     def apply(self, platform: str, channel: str, parts: list[Part]) -> list[Part]:
         if not self.enabled or not (self.global_ or self.channels):
             return parts

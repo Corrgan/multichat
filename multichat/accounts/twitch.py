@@ -11,6 +11,8 @@ from .oauth import Account, ApiError
 
 log = logging.getLogger("multichat.accounts")
 
+MAX_EMOTES = 5000  # emote suggestions per channel
+
 
 class TwitchAccount(Account):
     platform = "twitch"
@@ -18,10 +20,11 @@ class TwitchAccount(Account):
     auth_url = "https://id.twitch.tv/oauth2/authorize"
     token_url = "https://id.twitch.tv/oauth2/token"
     # moderator:read:followers → followage on the user card,
-    # user:read:moderated_channels → where you are a moderator (older logins lack both)
+    # user:read:moderated_channels → where you are a moderator,
+    # user:read:emotes → emote suggestions with all emotes you can use (older logins lack these)
     scopes = (
         "user:write:chat moderator:manage:banned_users moderator:manage:chat_messages "
-        "moderator:read:followers user:read:moderated_channels"
+        "moderator:read:followers user:read:moderated_channels user:read:emotes"
     )
     pkce = False
     API = "https://api.twitch.tv/helix"
@@ -99,6 +102,42 @@ class TwitchAccount(Account):
                 raise
             self._cache[key] = channels
         return login in self._cache[key]
+
+    async def usable_emotes(self, channel: str) -> tuple[list[tuple[str, str]], bool]:
+        """([(code, image URL)], complete) – the Twitch emotes you can use in this channel:
+        global, your subscriptions, follower emotes of the channel. complete=False: login
+        without user:read:emotes – only global and channel emotes (some may need a sub)."""
+        bid = await self.broadcaster_id(channel)
+        out: dict[str, str] = {}
+
+        def add(res: dict) -> None:
+            template = res.get("template") or ""
+            for e in res.get("data") or []:
+                if not isinstance(e, dict) or not e.get("name") or not e.get("id"):
+                    continue
+                url = (template.replace("{{id}}", str(e["id"])).replace("{{format}}", "default")
+                       .replace("{{theme_mode}}", "dark").replace("{{scale}}", "1.0") if template else "")
+                url = url or (e.get("images") or {}).get("url_1x", "")
+                if url.startswith("https://") and len(out) < MAX_EMOTES:
+                    out.setdefault(str(e["name"])[:100], url)
+
+        try:
+            cursor = None
+            for _page in range(30):
+                params = {"user_id": self.user_id, "broadcaster_id": bid, **({"after": cursor} if cursor else {})}
+                res = await self.request("GET", f"{self.API}/chat/emotes/user", params=params)
+                add(res)
+                cursor = (res.get("pagination") or {}).get("cursor")
+                if not cursor or len(out) >= MAX_EMOTES:
+                    break
+            return list(out.items()), True
+        except ApiError as e:
+            if e.status not in (401, 403):
+                raise
+            log.info("Twitch: can't list your emotes (%s) – log in again for all of them", e)
+        add(await self.request("GET", f"{self.API}/chat/emotes/global"))
+        add(await self.request("GET", f"{self.API}/chat/emotes", params={"broadcaster_id": bid}))
+        return list(out.items()), False
 
     async def user_info(self, msg: ChatMessage) -> dict:
         info: dict = {}

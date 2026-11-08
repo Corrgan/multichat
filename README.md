@@ -136,6 +136,7 @@ docs/                 additional documentation
 - Every channel has its own connect button; **Connect** / **Disconnect** at the top of a group handle all its channels, **View → Connect all groups / Disconnect everything** all of them.
 - **Videos** belong to their group: the camera box of a channel decides whether it gets a tile. Only one tile in the whole window plays sound – click a tile to give it the sound. Quality and volume are remembered per channel.
 - **Sending** goes to the active group: pick one of its channels or “All in this group”.
+- **Emote suggestions:** type `:` and two letters (`:kap`) – a list with the matching emotes appears; ↑/↓ choose, Tab/Enter/click insert, Esc closes. A complete `:kappa:` becomes `Kappa` right away. It offers your Twitch emotes for that channel (global, subscriptions, follower emotes) and the channel's 7TV/BTTV/FFZ emotes. Logins from before 0.80 only get global and channel emotes – log in to Twitch again for all of yours.
 - Symbols before a name show the user's role: 🎥 broadcaster, 🛡 moderator, 💎 VIP, ★ subscriber/member, ✔ verified.
 - **Mentions:** lines that name the account you are logged in with on that platform – with or without @, as a whole word – are highlighted in red; your own messages are not.
 - **Click on a name** to select the user. The **action bar** above that group's chat then works on that user: user card, mention, delete their last message, timeout (1 min / 10 min / 1 h), ban, unban.

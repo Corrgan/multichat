@@ -761,3 +761,30 @@ def test_back_at_the_bottom_rebuilds_only_that_group(window):
     w.render_all()  # e.g. a filter: all groups
     w._render_now()
     assert rebuilt == [first, other]
+
+
+def test_enter_on_an_emote_suggestion_does_not_send(window, app):
+    from PyQt6.QtCore import Qt
+    from PyQt6.QtTest import QTest
+
+    w = window
+    w.accounts["twitch"].store.update("twitch", access_token="x", expires_at=9e12, user_name="Me", user_id="42")
+    w.panels[0].rows["twitch"].edit.setText("examplechan")
+    w.refresh_accounts()
+    w._native_emotes["twitch:examplechan"] = {"PogChamp": "https://e/pog", "Kappa": "https://e/kappa"}
+    sent = []
+    w.send_to = lambda platform, channel, text: sent.append(text) or _done()
+    w.run = lambda coro, **kw: coro.close() if hasattr(coro, "close") else None
+    w.show()
+    w.input.setFocus()
+    QTest.keyClicks(w.input, "gg :po")
+    assert w.emote_complete.visible()
+    QTest.keyClick(w.emote_complete.completer.popup(), Qt.Key.Key_Return)
+    assert w.input.text() == "gg PogChamp " and sent == []  # Enter picked the emote only
+    QTest.keyClick(w.input, Qt.Key.Key_Return)
+    assert sent == ["gg PogChamp"]
+    w.logout("twitch")
+
+
+async def _done():
+    return None

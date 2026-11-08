@@ -35,6 +35,7 @@ from ..overlay.server import OverlayServer, deletion_payload, message_payload
 from ..video.player import load_mpv
 from ..video.tiles import AudioHub
 from .chat_view import DEFAULT_FONT, own_pattern
+from .emote_complete import EmoteCompleter
 from .groups import GroupPanel
 from .dialogs import AboutDialog, AlertsDialog, AppsDialog
 from .moderation import ModActions, ModNotes
@@ -228,6 +229,10 @@ class MainWindow(GroupsMixin, ConnectionsMixin, QMainWindow):
         self.input = QLineEdit()
         self.input.setMaxLength(MAX_INPUT)
         self.input.returnPressed.connect(self.send)
+        self.emote_complete = EmoteCompleter(self.input, self._send_emotes)  # ":kap" → Kappa
+        self._native_emotes: dict[str, dict[str, str]] = {}  # source key → Twitch emotes you can use there
+        self._native_loading: set[str] = set()
+        self._native_hint = False
         self.send_btn = QPushButton(_("Send"))
         self.send_btn.clicked.connect(self.send)
         send.addWidget(self.target)
@@ -339,24 +344,30 @@ class MainWindow(GroupsMixin, ConnectionsMixin, QMainWindow):
         m.addAction(_("Set up developer apps …")).triggered.connect(self.edit_apps)
 
     # ---- Helpers --------------------------------------------------------- #
-    def run(self, coro, then=None, label: str | None = None, on_error=None):
-        """Run a coroutine in the asyncio thread; the result arrives in the Qt thread."""
+    def run(self, coro, then=None, label: str | None = None, on_error=None, quiet: bool = False):
+        """Run a coroutine in the asyncio thread; the result arrives in the Qt thread.
+        quiet: a failure is only logged (background work the user didn't start)."""
         name = getattr(coro, "__qualname__", "action")  # English name for the log (the label is translated)
         fut = asyncio.run_coroutine_threadsafe(coro, self.loop)
-        fut.add_done_callback(lambda f: self._deliver(then, label, on_error, name, f))
+        fut.add_done_callback(lambda f: self._deliver(then, label, on_error, name, f, quiet))
         return fut
 
-    def _deliver(self, then, label, on_error, name, fut) -> None:
+    def _deliver(self, then, label, on_error, name, fut, quiet=False) -> None:
         try:
-            self.bridge.result.emit((then, label, on_error, name), fut)
+            self.bridge.result.emit((then, label, on_error, name, quiet), fut)
         except RuntimeError:  # window already closed – nobody left to tell
             pass
 
     def _on_result(self, meta, fut) -> None:
-        then, label, on_error, name = meta
+        then, label, on_error, name, quiet = meta
         if fut.cancelled():
             return
         exc = fut.exception()
+        if exc and quiet:
+            log.warning("%s failed: %s", name, exc)
+            if on_error:
+                on_error()
+            return
         if exc:
             log.error("%s failed: %s", name, exc, exc_info=exc)
             self.statusBar().showMessage(_("Error: {error}").format(error=exc), 12000)
@@ -631,11 +642,45 @@ class MainWindow(GroupsMixin, ConnectionsMixin, QMainWindow):
         for w in (self.target, self.input, self.send_btn):
             w.setEnabled(enabled)
         if enabled:
-            self.input.setPlaceholderText(_("Send a message …"))
+            self.input.setPlaceholderText(_("Send a message … (: for emotes)"))
+            self._load_send_emotes()
         elif logged:
             self.input.setPlaceholderText(_("Enter a channel of a platform you are logged in to"))
         else:
             self.input.setPlaceholderText(_("Log in under “Accounts” to send and moderate"))
+
+    def _send_emotes(self) -> dict[str, str]:
+        """Emotes for the suggestions: the ones usable in the chosen send target(s) – your
+        Twitch emotes there, plus 7TV/BTTV/FFZ of the channel and global ones."""
+        target = self.target.currentData()
+        out: dict[str, str] = {}
+        for key, platform, channel, _label in self._send_options():
+            if target in (None, key):
+                out.update(self.emotes.available(platform, channel))
+                out.update(self._native_emotes.get(key, {}))
+        return out
+
+    def _load_send_emotes(self) -> None:
+        """Fetches the Twitch emotes you can use in the active group's Twitch channel (once)."""
+        for key, platform, channel, _label in self._send_options():
+            if platform != "twitch" or key in self._native_emotes or key in self._native_loading:
+                continue
+            self._native_loading.add(key)
+
+            def done(result, key=key) -> None:
+                self._native_loading.discard(key)
+                emotes, complete = result
+                self._native_emotes[key] = dict(emotes)
+                if not complete and not self._native_hint:
+                    self._native_hint = True
+                    self.statusBar().showMessage(
+                        _("Log in to Twitch again to get suggestions for all your emotes (subscriptions included)"), 10000)
+
+            def failed(key=key) -> None:
+                self._native_loading.discard(key)
+                self._native_emotes[key] = {}  # not again until the next login
+
+            self.run(self.accounts["twitch"].usable_emotes(channel), then=done, on_error=failed, quiet=True)
 
     def send(self) -> None:
         text = self.input.text().strip()
@@ -667,6 +712,9 @@ class MainWindow(GroupsMixin, ConnectionsMixin, QMainWindow):
 
     # ---- Accounts -------------------------------------------------------- #
     def refresh_accounts(self) -> None:
+        if self._native_emotes and not self.accounts["twitch"].logged_in:
+            self._native_emotes.clear()  # logged out (or in as someone else)
+        self._native_hint = False
         self._refresh_targets()
         own = {p: (own_pattern(a.user_name), a.user_id, a.user_name.lower())
                for p, a in self.accounts.items() if a.logged_in and a.user_name}
