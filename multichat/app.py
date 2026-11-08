@@ -101,7 +101,18 @@ def selftest() -> None:
     ok = ok and not missing
     print(f"MISSING locales: {', '.join(missing)}" if missing else f"OK      locales ({len(i18n.LANGUAGES)} languages)")
     print("OK      icon" if app_icon_path().is_file() else "MISSING app icon")
-    print(f"OK      TLS certificates: {ensure_ca_certificates()}")
+    source = ensure_ca_certificates()
+    import ssl
+
+    ctx = ssl.create_default_context()
+    paths = ssl.get_default_verify_paths()
+    loaded = ctx.cert_store_stats().get("x509_ca", 0)
+    lazy_dir = bool(paths.capath and os.path.isdir(paths.capath) and os.listdir(paths.capath))
+    if loaded or lazy_dir:
+        print(f"OK      TLS certificates: {source} ({loaded or 'directory'})")
+    else:
+        ok = False
+        print(f"MISSING TLS certificates (OpenSSL looks in {paths.openssl_cafile} / {paths.openssl_capath})")
     from .accounts.store import system_keyring
 
     kr = system_keyring()
@@ -109,11 +120,68 @@ def selftest() -> None:
     sys.exit(0 if ok else 1)
 
 
+def selftest_video(path: str) -> None:
+    """`multichat --selftest-video FILE`: decodes a video with libmpv (no window) – checks
+    that libmpv and the system's codecs really work together, not only that they load."""
+    import time as _time
+
+    from .video import player
+
+    if not player.load_mpv():
+        print(f"FAILED  libmpv: {player.MPV_ERROR}")
+        sys.exit(1)
+    m = player.mpv.MPV(vo="null", ao="null", hwdec="no", terminal=False, idle=True)
+    try:
+        m.play(path)
+        deadline = _time.monotonic() + 20
+        frames = 0
+        while _time.monotonic() < deadline:
+            frames = m.estimated_frame_number or 0
+            if frames >= 10:
+                break
+            _time.sleep(0.2)
+        params = m.video_params or {}
+    finally:
+        m.terminate()
+    if frames >= 10:
+        print(f"OK      video decoded: {frames} frames, {params.get('w')}x{params.get('h')} ({params.get('pixelformat')})")
+        sys.exit(0)
+    print(f"FAILED  video: only {frames} frames decoded from {path}")
+    sys.exit(1)
+
+
+def selftest_net(url: str = "https://api.github.com/") -> None:
+    """`multichat --selftest-net [URL]`: one HTTPS request with the app's own network stack –
+    checks that TLS and the CA certificates work on this system."""
+    import asyncio
+
+    import aiohttp
+
+    print(f"OK      TLS certificates: {ensure_ca_certificates()}")
+
+    async def fetch() -> int:
+        async with aiohttp.ClientSession(trust_env=True, timeout=aiohttp.ClientTimeout(total=20)) as s:
+            async with s.get(url, headers={"User-Agent": f"MultiChat/{APP_VERSION}"}) as r:
+                return r.status
+
+    try:
+        status = asyncio.run(fetch())
+    except Exception as e:  # noqa: BLE001
+        print(f"FAILED  {url}: {e}")
+        sys.exit(1)
+    print(f"OK      {url} → HTTP {status}")
+    sys.exit(0)
+
+
 def main() -> None:
     if len(sys.argv) > 1 and sys.argv[1] == "--yt-dlp":
         run_ytdlp(sys.argv[2:])
     if len(sys.argv) > 1 and sys.argv[1] == "--selftest":
         selftest()
+    if len(sys.argv) > 1 and sys.argv[1] == "--selftest-net":
+        selftest_net(*sys.argv[2:3])
+    if len(sys.argv) > 2 and sys.argv[1] == "--selftest-video":
+        selftest_video(sys.argv[2])
     config = load_config()
     setup_logging(config["debug_log"])
     QApplication.setDesktopFileName(APP_ID)  # Wayland app ID → KDE/GNOME find io.github.Corrgan.MultiChat.desktop
@@ -127,6 +195,8 @@ def main() -> None:
     install_qt_handler()
     log_system_info()
     log.info("TLS certificates: %s", ensure_ca_certificates())
+    for warning in config.get("_warnings", []):
+        log.warning("Settings: %s", warning)
     log.info("Language: %s (setting: %s)", lang, config["language"])
     from .ui.main_window import MainWindow
 
