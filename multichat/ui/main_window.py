@@ -14,7 +14,7 @@ from pathlib import Path
 
 import aiohttp
 
-from PyQt6.QtCore import QObject, QProcess, Qt, QTimer, QUrl, pyqtSignal
+from PyQt6.QtCore import QEvent, QObject, QProcess, Qt, QTimer, QUrl, pyqtSignal
 from PyQt6.QtGui import QAction, QActionGroup, QDesktopServices, QImageReader, QKeySequence
 from PyQt6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDialog, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMessageBox, QPushButton, QSplitter, QStyle, QToolButton,
@@ -28,7 +28,7 @@ from ..chat.models import kick_channel, twitch_channel
 from ..core import i18n
 from ..core.config import CONF_DIR, OVERLAY_PORT, load_config, load_config_apps, save_config
 from .. import __version__ as APP_VERSION
-from ..core.constants import BADGES, LOGIN_DOCS, NAMES, PLATFORMS, REPO_SLUG, REPO_URL, version_tuple
+from ..core.constants import BADGES, FAVICONS, LOGIN_DOCS, NAMES, PLATFORMS, REPO_SLUG, REPO_URL, version_tuple
 from ..core.i18n import _
 from ..core.logsetup import LOG_DIR, LOG_FILE, asyncio_exception_handler, set_debug, tail
 from ..overlay.server import OverlayServer, deletion_payload, message_payload
@@ -36,6 +36,7 @@ from ..video.tiles import VideoPanel
 from .chat_view import ChatView
 from .dialogs import AboutDialog, AlertsDialog, AppsDialog
 from .moderation import ActionBar, ModActions, ModNotes
+from .watchdog import Watchdog
 from .widgets import CopyLabel
 
 log = logging.getLogger("multichat")
@@ -113,6 +114,8 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(
                 _("The settings file was damaged – started with defaults (the old file was kept as a backup)"), 15000
             )
+        self._msg_count = 0
+        self.watchdog = Watchdog(self, self._perf_stats)
         if self.config.get("check_updates", True) and not os.environ.get("MULTICHAT_NO_UPDATE_CHECK"):
             self.run(self._check_update())
 
@@ -211,6 +214,7 @@ class MainWindow(QMainWindow):
         self.view.document().setMaximumBlockCount(MAX_MESSAGES)
         self.view.anchorClicked.connect(self.on_anchor)
         self.view.rerender_needed.connect(self.render_all)
+        self.view.image_failed.connect(self._image_failed)
         self.view.name_context.connect(self.on_name_context)
         self.view.follow_changed.connect(self._follow_changed)
         self._held = False  # messages arrived while scrolled up
@@ -532,6 +536,7 @@ class MainWindow(QMainWindow):
         batch, self._incoming = self._incoming[-MAX_MESSAGES:], []
         if not batch:
             return
+        self._msg_count += len(batch)
         for msg in batch:
             self.messages[msg.uid] = msg
             self.overlay.publish(message_payload(msg, self.view.alerts_cfg))
@@ -568,18 +573,54 @@ class MainWindow(QMainWindow):
 
     def apply_deletion(self, ev: Deletion) -> None:
         self._flush_messages()  # the message to delete may still be queued
-        changed = False
+        changed = []
         for m in self.messages.values():
             if m.platform != ev.platform or m.deleted:
                 continue
             if ev.clear_all or (ev.msg_id and m.msg_id == ev.msg_id) or (ev.user_id and m.user_id == ev.user_id):
                 m.deleted = True
-                changed = True
+                changed.append(m)
         self.overlay.publish(deletion_payload(ev))
         self.mod.apply_deletion(ev)
         if changed:
-            self.render_all()
+            self.update_lines(changed)
             self.mod.history_changed.emit()
+
+    def _perf_stats(self) -> dict:
+        """For the verbose log's minute summary (see watchdog.py)."""
+        n, self._msg_count = self._msg_count, 0
+        movies = self.view.movies.values()
+        stats = {
+            "messages/s": round(n / 60, 1),
+            "chat lines": self.view.document().blockCount(),
+            "animations playing": sum(m.state() == m.MovieState.Running for m, _b in movies),
+            "of": len(self.view.movies),
+        }
+        for p, frames in self.video.frame_counts().items():
+            stats[f"{p} fps"] = round(frames / 60, 1)
+        return stats
+
+    def _image_failed(self, key: str) -> None:
+        if any(key in urls for urls in FAVICONS.values()):  # platform icon: every line shows it
+            self.render_all()
+        else:
+            self.update_lines([m for m in self.messages.values() if any(p[1] == key for p in m.parts)])
+
+    def changeEvent(self, event) -> None:  # noqa: N802
+        super().changeEvent(event)
+        if event.type() == QEvent.Type.WindowStateChange:
+            self.view.update_animations()  # minimised: animations pause
+
+    def update_lines(self, msgs) -> None:
+        """Re-renders just these messages' lines (busy chats delete and time out all the time –
+        rebuilding the whole view each time made the window stutter)."""
+        shown = [m for m in msgs if self.filters[m.platform].isChecked()]
+        if not shown or self._render_timer.isActive():
+            return  # a full re-render is due anyway
+        if len(shown) > 200:  # e.g. "clear chat": one rebuild is cheaper
+            self.render_all()
+        else:
+            self.view.update_messages(self.view.items(shown))
 
     def clear_chat(self) -> None:
         self._incoming.clear()

@@ -361,6 +361,15 @@ class VideoPanel(QWidget):
         for p, t in self.tiles.items():
             t.set_muted(p != self.audio)
 
+    def frame_counts(self) -> dict[str, int]:
+        """Frames drawn per tile since the last call (performance log)."""
+        out = {}
+        for p, t in self.tiles.items():
+            video = getattr(t, "video", None)
+            if video is not None and getattr(video, "frames", 0):
+                out[p], video.frames = video.frames, 0
+        return out
+
     def state(self) -> dict:
         return {
             "quality": {p: t.quality for p, t in self.tiles.items()},

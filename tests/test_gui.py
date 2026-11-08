@@ -353,9 +353,9 @@ def test_alert_highlight_and_settings(window, monkeypatch):
     small = ChatMessage("twitch", "chan", "Bob", "", event="bits", event_value=5)
     raid = ChatMessage("twitch", "chan", "Carol", "", event="raid", event_value=42)
     items = w.view.items([sub, small, raid])
-    assert isinstance(items[0], tuple) and "resubscribed (12 months)" in items[0][0]
-    assert isinstance(items[1], str) and "cheered 5 bits" in items[1]  # below the minimum: no highlight
-    assert isinstance(items[2], tuple) and f"msg:{raid.uid}" in items[2][0]  # name stays clickable
+    assert items[0][2] and "resubscribed (12 months)" in items[0][1]
+    assert items[1][2] is None and "cheered 5 bits" in items[1][1]  # below the minimum: no highlight
+    assert items[2][2] and f"msg:{raid.uid}" in items[2][1]  # name stays clickable
     w.view.rebuild(items)
     assert "Carol is raiding with 42 viewers" in w.view.toPlainText()
     p = message_payload(sub, w.view.alerts_cfg)
@@ -367,3 +367,41 @@ def test_alert_highlight_and_settings(window, monkeypatch):
     dlg.mins["min_bits"].setValue(500)
     values = dlg.values()
     assert values["raid"] is False and values["min_bits"] == 500 and values["sub"] is True
+
+
+def test_deletion_updates_single_lines(window):
+    w = window
+    msgs = [ChatMessage("twitch", "chan", f"u{i}", f"text {i}", msg_id=f"m{i}", user_id=str(i)) for i in range(300)]
+    msgs.append(ChatMessage("twitch", "chan", "Zed", "", event="raid", event_value=9))
+    for m in msgs:
+        w.add_message(m)
+    w._flush_messages()
+    w._render_now()
+    blocks = w.view.document().blockCount()
+    called = []
+    w.render_all = lambda: called.append(1)  # must not be needed
+    w.apply_deletion(Deletion("twitch", msg_id="m150"))
+    assert not called and w.view.document().blockCount() == blocks
+    text = w.view.toPlainText()
+    assert "text 150 (deleted)" in text and "text 149" in text and "text 151 (deleted)" not in text
+    # the alert line keeps its highlight when it changes
+    raid = msgs[-1]
+    w.view.update_messages(w.view.items([raid]))
+    assert w.view.document().lastBlock().blockFormat().background().color().name() != "#000000"
+
+
+def test_watchdog_reports_stalls(window, caplog):
+    import logging
+    import time as _time
+
+    w = window
+    stats = w._perf_stats()
+    assert {"messages/s", "chat lines", "animations playing"} <= stats.keys()
+    wd = w.watchdog
+    with caplog.at_level(logging.DEBUG, logger="multichat.perf"):
+        wd._last = _time.monotonic() - 0.6  # the event loop was blocked for ~500 ms
+        wd._tick()
+        wd._summary_at = 0
+        wd._tick()
+    text = caplog.text
+    assert "Window was busy for" in text and "Last minute: 1 stalls" in text

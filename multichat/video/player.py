@@ -170,7 +170,8 @@ class MpvWidget(QOpenGLWidget):
         self.ctx = None
         self._pending: tuple[str, dict] | None = None
         self._proc = mpv.MpvGlGetProcAddressFn(self._get_proc)
-        self._frame.connect(self.update, Qt.ConnectionType.QueuedConnection)
+        self._frame.connect(self._on_frame, Qt.ConnectionType.QueuedConnection)
+        self.frames = 0  # drawn frames (for the performance log)
 
     def play(self, url: str, **opts) -> None:
         """Load only once the render context exists – otherwise mpv plays audio only."""
@@ -207,7 +208,14 @@ class MpvWidget(QOpenGLWidget):
             self.ctx = None
             self.doneCurrent()
 
+    def _on_frame(self) -> None:
+        """mpv has a new frame. Not drawn while the window is minimised – mpv then simply drops
+        frames, and the next one is drawn when the window is back."""
+        if self.isVisible() and not self.window().isMinimized():
+            self.update()
+
     def paintGL(self) -> None:  # noqa: N802
+        self.frames += 1
         if self.ctx:
             r = self.devicePixelRatioF()
             self.ctx.render(

@@ -88,9 +88,11 @@ class ModActions(QObject):
         m = self.history.latest(m) if m is not None else None  # newest message of that user
         old = self.win.view.selected
         self.selected = m
-        self.win.view.selected = self.history.key(m) if m else None
-        if self.win.view.selected != old:
-            self.win.render_all()  # highlight the name
+        new = self.history.key(m) if m else None
+        self.win.view.selected = new
+        if new != old:  # move the highlight: only the lines of the old and the new user change
+            keys = {k for k in (old, new) if k}
+            self.win.update_lines([x for x in self.win.messages.values() if self.history.key(x) in keys])
         self.selection_changed.emit()
         if m and self.card and self.card.isVisible():
             self.card.show_user(m)

@@ -32,6 +32,7 @@ MAX_IMAGE_BYTES = 4 * 1024 * 1024  # emotes are a few KB – anything bigger is 
 MAX_CACHED = 1500  # distinct images kept in memory
 MAX_ANIMATED = 64  # animations that play at the same time (the most recently shown ones)
 FRAME_MS = 50  # repaint rate for animations (20 fps)
+RELAYOUT_SCAN = 400  # lines checked for a newly loaded image
 
 
 def _allowed_url(url: QUrl) -> bool:
@@ -43,6 +44,7 @@ class ChatView(QTextBrowser):
     """Chat view that loads emote images asynchronously."""
 
     rerender_needed = pyqtSignal()
+    image_failed = pyqtSignal(str)  # an emote that couldn't be loaded – its lines show the name instead
     name_context = pyqtSignal(QUrl)  # right-click on a user name
     follow_changed = pyqtSignal(bool)  # True: sticks to the newest message
 
@@ -67,8 +69,9 @@ class ChatView(QTextBrowser):
         self._relayout.timeout.connect(self._do_relayout)
         self._repaint = QTimer(self, singleShot=True, interval=FRAME_MS)
         self._repaint.timeout.connect(self.viewport().update)
-        self._prune = QTimer(self, singleShot=True, interval=500)
-        self._prune.timeout.connect(self._pause_old_movies)
+        self._loaded_keys: set[str] = set()  # images loaded since the last relayout
+        self._anim = QTimer(self, singleShot=True, interval=200)  # which animations are on screen
+        self._anim.timeout.connect(self.update_animations)
 
         # Auto-scroll: follow the newest message until the user scrolls up; scrolling back to
         # the bottom (or the jump button) follows again. Kept as state instead of checking the
@@ -105,6 +108,7 @@ class ChatView(QTextBrowser):
         self._update_jump()
 
     def _on_scroll(self, _value: int) -> None:
+        self._anim.start()
         if not self._programmatic:  # moved by the user (wheel, scrollbar, keys)
             self._set_follow(self._at_bottom())
 
@@ -121,7 +125,7 @@ class ChatView(QTextBrowser):
             self._programmatic -= 1
         self._set_follow(True)
 
-    def rebuild(self, htmls: list[str]) -> None:
+    def rebuild(self, htmls: list) -> None:
         """Replaces all messages; keeps following, or keeps the position while scrolled up."""
         bar = self.verticalScrollBar()
         value = bar.value()
@@ -205,10 +209,12 @@ class ChatView(QTextBrowser):
         img = self._decode(key, data) if 0 < data.size() <= MAX_IMAGE_BYTES else None
         if img is None:
             self.failed.add(key)
-            self.rerender_needed.emit()
+            self.image_failed.emit(key)
             return
         self._store(key, img)
+        self._loaded_keys.add(key)
         self._relayout.start()
+        self._anim.start()
 
     def _decode(self, key: str, data: QByteArray) -> QImage | None:
         buf = QBuffer()
@@ -255,59 +261,144 @@ class ChatView(QTextBrowser):
                 entry[0].deleteLater()
 
     def touch(self, key: str) -> None:
-        """Marks an image as just shown; only the most recently shown animations keep playing."""
+        """Marks an image as just shown (least recently shown ones leave the cache first)."""
         if key in self.cache:
             self.cache.move_to_end(key)
-            entry = self.movies.get(key)
-            if entry:
-                if entry[0].state() != QMovie.MovieState.Running:
-                    entry[0].setPaused(False)
-                if not self._prune.isActive():
-                    self._prune.start()
+            if key in self.movies:
+                self._anim.start()
 
-    def _pause_old_movies(self) -> None:
-        if len(self.movies) <= MAX_ANIMATED:
+    # ---- What is on screen ------------------------------------------------ #
+    @staticmethod
+    def _block_images(block) -> set[str]:
+        names = set()
+        it = block.begin()
+        while not it.atEnd():
+            fmt = it.fragment().charFormat()
+            if fmt.isImageFormat():
+                names.add(fmt.toImageFormat().name())
+            it += 1
+        return names
+
+    def _visible_images(self) -> set[str]:
+        vp = self.viewport()
+        block = self.cursorForPosition(vp.rect().topLeft()).block()
+        bottom = self.cursorForPosition(vp.rect().bottomRight()).block().blockNumber()
+        names: set[str] = set()
+        while block.isValid() and block.blockNumber() <= bottom:
+            names |= self._block_images(block)
+            block = block.next()
+        return names
+
+    def update_animations(self) -> None:
+        """Only emotes on screen are animated – off-screen ones, or all of them while the window
+        is minimised or hidden, are paused (each running animation repaints the chat)."""
+        if not self.movies:
             return
-        recent = list(self.cache.keys())[-MAX_ANIMATED * 4:]
-        playing = [k for k in reversed(recent) if k in self.movies][:MAX_ANIMATED]
-        for k, (movie, _buf) in self.movies.items():
-            if k not in playing and movie.state() == QMovie.MovieState.Running:
+        win = self.window()
+        active = self.isVisible() and not win.isMinimized()
+        visible = self._visible_images() if active else set()
+        playing = 0
+        for key, (movie, _buf) in self.movies.items():
+            run = key in visible and playing < MAX_ANIMATED
+            playing += run
+            state = movie.state()
+            if run and state != QMovie.MovieState.Running:
+                if state == QMovie.MovieState.NotRunning:
+                    movie.start()
+                else:
+                    movie.setPaused(False)
+            elif not run and state == QMovie.MovieState.Running:
                 movie.setPaused(True)
 
-    def _do_relayout(self) -> None:
-        doc = self.document()
-        doc.markContentsDirty(0, doc.characterCount())
+    def showEvent(self, event) -> None:  # noqa: N802
+        super().showEvent(event)
+        self._anim.start()
 
-    def append_many(self, htmls: list) -> None:
+    def hideEvent(self, event) -> None:  # noqa: N802
+        super().hideEvent(event)
+        self.update_animations()
+
+    def _do_relayout(self) -> None:
+        """Newly loaded images change line heights – lay out just the lines that show them
+        (relaying out the whole chat took ~40 ms each time a batch of emotes arrived)."""
+        keys, self._loaded_keys = self._loaded_keys, set()
+        doc = self.document()
+        block = doc.lastBlock()
+        for _n in range(RELAYOUT_SCAN):  # images are requested by recent lines
+            if not block.isValid():
+                break
+            if self._block_images(block) & keys:
+                doc.markContentsDirty(block.position(), block.length())
+            block = block.previous()
+
+    @staticmethod
+    def _block_format(bg: str | None) -> QTextBlockFormat:
+        fmt = QTextBlockFormat()
+        if bg:  # highlighted alert line
+            fmt.setBackground(QColor(bg))
+            fmt.setTopMargin(3)
+            fmt.setBottomMargin(3)
+            fmt.setLeftMargin(4)
+        return fmt
+
+    def append_many(self, items: list) -> None:
         """Appends several messages in one edit block – one layout pass instead of one per message
-        (about twice as fast as append() in a full chat). Items are HTML strings or
-        (html, background colour) for highlighted lines."""
-        if not htmls:
+        (about twice as fast as append() in a full chat). Items come from items(): (uid, html,
+        background or None); a plain HTML string also works. The uid is kept on the text block,
+        so update_messages() can later change single lines without rebuilding everything."""
+        if not items:
             return
         doc = self.document()
         cur = QTextCursor(doc)
         cur.movePosition(QTextCursor.MoveOperation.End)
         cur.beginEditBlock()
-        for item in htmls:
-            h, bg = item if isinstance(item, tuple) else (item, None)
+        for item in items:
+            uid, h, bg = item if isinstance(item, tuple) else (-1, item, None)
             if not doc.isEmpty():
                 cur.insertBlock(QTextBlockFormat(), QTextCharFormat())  # no formatting carried over
             cur.insertHtml(h)
-            if bg:
-                fmt = QTextBlockFormat()
-                fmt.setBackground(QColor(bg))
-                fmt.setTopMargin(3)
-                fmt.setBottomMargin(3)
-                fmt.setLeftMargin(4)
-                cur.mergeBlockFormat(fmt)
+            cur.setBlockFormat(self._block_format(bg))
+            cur.block().setUserState(uid)
         cur.endEditBlock()
 
+    def update_messages(self, items: list) -> int:
+        """Re-renders only the lines of these messages (deleted, selection changed …) instead of
+        the whole chat – a full rebuild of 1000 lines blocks the window for a noticeable moment.
+        Returns how many lines were updated."""
+        wanted = {uid: (h, bg) for uid, h, bg in items}
+        if not wanted:
+            return 0
+        doc = self.document()
+        cur = QTextCursor(doc)
+        done = 0
+        self._programmatic += 1
+        cur.beginEditBlock()
+        try:
+            block = doc.lastBlock()  # changes usually concern recent lines
+            while block.isValid() and done < len(wanted):
+                hit = wanted.get(block.userState())
+                if hit:
+                    cur.setPosition(block.position())
+                    cur.setPosition(block.position() + block.length() - 1, QTextCursor.MoveMode.KeepAnchor)
+                    cur.removeSelectedText()
+                    cur.setCharFormat(QTextCharFormat())
+                    cur.insertHtml(hit[0])
+                    cur.setBlockFormat(self._block_format(hit[1]))
+                    done += 1
+                block = block.previous()
+        finally:
+            cur.endEditBlock()
+            self._programmatic -= 1
+        if self.follow:
+            self.scroll_to_bottom()
+        return done
+
     def items(self, msgs) -> list:
-        """Messages → items for append_many/rebuild (highlighted events get a background)."""
+        """Messages → (uid, html, background) for append_many/rebuild/update_messages."""
         out = []
         for m in msgs:
-            h = self.message_html(m)
-            out.append((h, alerts.COLORS[m.event][0]) if m.event and alerts.is_alert(m, self.alerts_cfg) else h)
+            bg = alerts.COLORS[m.event][0] if m.event and alerts.is_alert(m, self.alerts_cfg) else None
+            out.append((m.uid, self.message_html(m), bg))
         return out
 
     # ---- Font size and selection ----------------------------------------- #
