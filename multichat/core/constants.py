@@ -4,7 +4,8 @@
 from __future__ import annotations
 
 APP_ID = "io.github.Corrgan.MultiChat"  # Wayland/Flatpak app ID – must match the name of the .desktop file
-REPO_URL = "https://github.com/Corrgan/multichat"
+REPO_SLUG = "Corrgan/multichat"
+REPO_URL = f"https://github.com/{REPO_SLUG}"
 LOGIN_DOCS = f"{REPO_URL}/blob/main/docs/LOGIN.md"
 
 PLATFORMS = ("twitch", "kick", "youtube")
@@ -19,3 +20,11 @@ FAVICONS = {
     "kick": ["https://kick.com/favicon.ico", "https://www.google.com/s2/favicons?domain=kick.com&sz=32"],
     "youtube": ["https://www.youtube.com/favicon.ico", "https://www.google.com/s2/favicons?domain=youtube.com&sz=32"],
 }
+
+
+def version_tuple(version: str) -> tuple[int, ...]:
+    """'0.30' → (0, 30); anything unparsable counts as oldest."""
+    try:
+        return tuple(int(x) for x in version.strip().lstrip("v").split("."))
+    except ValueError:
+        return ()

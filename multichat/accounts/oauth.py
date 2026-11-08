@@ -81,6 +81,8 @@ class Account:
         self._session = session
         self._cache: dict = {}
         self._refresh_lock: asyncio.Lock | None = None
+        # called with the login URL if no browser could be opened (set by the UI)
+        self.show_url: Callable[[str], None] | None = None
 
     # ---- State --------------------------------------------------------- #
     @property
@@ -154,7 +156,11 @@ class Account:
             except OSError as e:
                 raise ApiError(_("Port {port} in use – is a login already running? ({error})").format(port=REDIRECT_PORT, error=e)) from e
             url = f"{self.auth_url}?{urlencode(params)}"
-            await asyncio.to_thread(webbrowser.open, url)
+            opened = await asyncio.to_thread(webbrowser.open, url)
+            if not opened:
+                log.warning("%s login: no browser could be opened – showing the link", self.name)
+                if self.show_url:
+                    self.show_url(url)
             try:
                 code = await asyncio.wait_for(code_fut, LOGIN_TIMEOUT)
             except asyncio.TimeoutError as e:

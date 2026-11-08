@@ -177,3 +177,16 @@ def test_no_video_when_tiles_are_off(window, monkeypatch):
     window.connect_platform("kick")
     window.disconnect_platform("kick")
     assert started == []  # video tiles are switched off in this window
+
+
+def test_update_notice_and_login_link(window, app):
+    w = window
+    w._show_update("9.90", "https://github.com/Corrgan/multichat/releases/tag/v9.90")
+    assert any("9.90" in a.text() for a in w.menuBar().actions())
+    w._show_login_url("https://id.example/authorize?x=1")
+    app.processEvents()
+    box = next(b for b in w.findChildren(QMessageBox) if "authorize" in b.informativeText())
+    copy = next(b for b in box.buttons() if b.text() == "Copy link")
+    copy.click()
+    assert QApplication.clipboard().text() == "https://id.example/authorize?x=1"
+    box.close()

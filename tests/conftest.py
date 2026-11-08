@@ -10,4 +10,5 @@ for var in ("XDG_CONFIG_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME"):
     os.environ[var] = str(_tmp / var.lower())
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ["MULTICHAT_SECRETS"] = "file"  # never touch the real keyring from tests
+os.environ["MULTICHAT_NO_UPDATE_CHECK"] = "1"  # no requests to GitHub from tests
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))

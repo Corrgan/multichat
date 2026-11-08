@@ -14,7 +14,7 @@ from pathlib import Path
 import aiohttp
 
 from PyQt6.QtCore import QObject, QProcess, Qt, QTimer, QUrl, pyqtSignal
-from PyQt6.QtGui import QActionGroup, QCursor, QDesktopServices, QImageReader
+from PyQt6.QtGui import QAction, QActionGroup, QCursor, QDesktopServices, QImageReader
 from PyQt6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDialog, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMenu, QMessageBox, QPushButton, QSplitter, QStyle, QToolButton,
     QVBoxLayout, QWidget,
@@ -25,8 +25,9 @@ from ..accounts.store import choose_backend
 from ..chat import ChatMessage, Deletion, EmoteStore, run_kick, run_twitch, run_youtube
 from ..chat.models import kick_channel, twitch_channel
 from ..core import i18n
-from ..core.config import CONF_DIR, CONFIG, OVERLAY_PORT, load_config, load_config_apps, write_private
-from ..core.constants import BADGES, LOGIN_DOCS, NAMES, PLATFORMS
+from ..core.config import CONF_DIR, OVERLAY_PORT, load_config, load_config_apps, save_config
+from .. import __version__ as APP_VERSION
+from ..core.constants import BADGES, LOGIN_DOCS, NAMES, PLATFORMS, REPO_SLUG, REPO_URL, version_tuple
 from ..core.i18n import _
 from ..core.logsetup import LOG_DIR, LOG_FILE, asyncio_exception_handler, set_debug, tail
 from ..overlay.server import OverlayServer, deletion_payload, message_payload
@@ -51,6 +52,8 @@ class Bridge(QObject):
     deletion = pyqtSignal(object)
     status = pyqtSignal(str, str, int)  # platform, text, connection generation
     result = pyqtSignal(object, object)
+    login_url = pyqtSignal(str)  # login link to show when no browser could be opened
+    update = pyqtSignal(str, str)  # newer version, release page
 
 
 class MainWindow(QMainWindow):
@@ -78,7 +81,7 @@ class MainWindow(QMainWindow):
             legacy = load_config_apps()
             if legacy and not self.apps.all():
                 self.apps.replace_all(legacy)
-            write_private(CONFIG, self.config)
+            save_config(self.config)
         log.info("Secrets: stored in %s", backend.name)
         args = (store, self.app_creds, lambda: self.session)
         self.accounts = {"twitch": TwitchAccount(*args), "kick": KickAccount(*args), "youtube": YouTubeAccount(*args)}
@@ -100,6 +103,16 @@ class MainWindow(QMainWindow):
         self.apply_config()
         self.refresh_accounts()
         self._update_conn_buttons()
+        self.bridge.login_url.connect(self._show_login_url)
+        self.bridge.update.connect(self._show_update)
+        for acc in self.accounts.values():
+            acc.show_url = self.bridge.login_url.emit
+        if self.config.get("_warnings"):
+            self.statusBar().showMessage(
+                _("The settings file was damaged – started with defaults (the old file was kept as a backup)"), 15000
+            )
+        if self.config.get("check_updates", True) and not os.environ.get("MULTICHAT_NO_UPDATE_CHECK"):
+            self.run(self._check_update())
 
     # ---- Configuration --------------------------------------------------- #
     def load_config(self) -> dict:
@@ -116,7 +129,7 @@ class MainWindow(QMainWindow):
         self.config["video"]["enabled"] = self.video_action.isChecked()
         if self.video.isVisible():
             self.config["video"]["sizes"] = self.splitter.sizes()
-        write_private(CONFIG, self.config)
+        save_config(self.config)
 
     def apply_config(self) -> None:
         for p in PLATFORMS:
@@ -278,6 +291,10 @@ class MainWindow(QMainWindow):
         self.debug_action = hlp.addAction(_("Verbose log (debug)"))
         self.debug_action.setCheckable(True)
         self.debug_action.toggled.connect(self.toggle_debug)
+        self.update_action = hlp.addAction(_("Check for new versions at start"))
+        self.update_action.setCheckable(True)
+        self.update_action.setChecked(bool(self.config.get("check_updates", True)))
+        self.update_action.toggled.connect(self._toggle_update_check)
         hlp.addSeparator()
         hlp.addAction(_("Login setup guide")).triggered.connect(lambda: QDesktopServices.openUrl(QUrl(LOGIN_DOCS)))
         hlp.addAction(_("About MultiChat")).triggered.connect(lambda: AboutDialog(self).exec())
@@ -685,6 +702,49 @@ class MainWindow(QMainWindow):
             then=lambda who: self.refresh_accounts(),
             label=_("Logged in to {platform}").format(platform=NAMES[platform]),
         )
+
+    def _show_login_url(self, url: str) -> None:
+        box = QMessageBox(self)
+        box.setWindowTitle(_("Log in"))
+        box.setText(_("No browser could be opened. Open this link in your browser to log in:"))
+        box.setInformativeText(url)
+        box.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        copy = box.addButton(_("Copy link"), QMessageBox.ButtonRole.ActionRole)
+        box.addButton(QMessageBox.StandardButton.Close)
+        copy.clicked.connect(lambda: QApplication.clipboard().setText(url))
+        box.open()
+
+    # ---- Updates --------------------------------------------------------- #
+    async def _check_update(self) -> None:
+        """Asks GitHub once for the latest release (no data about you is sent besides the request)."""
+        url = f"https://api.github.com/repos/{REPO_SLUG}/releases/latest"
+        headers = {"Accept": "application/vnd.github+json", "User-Agent": f"MultiChat/{APP_VERSION}"}
+        try:
+            async with self.session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as r:
+                if r.status != 200:
+                    log.info("Update check: HTTP %s", r.status)
+                    return
+                data = await r.json()
+        except Exception as e:  # noqa: BLE001 – offline etc.: not worth bothering anyone
+            log.info("Update check failed: %s", e)
+            return
+        latest = str(data.get("tag_name") or "").lstrip("v")
+        if version_tuple(latest) > version_tuple(APP_VERSION):
+            log.info("Update check: %s available (running %s)", latest, APP_VERSION)
+            self.bridge.update.emit(latest, str(data.get("html_url") or f"{REPO_URL}/releases/latest"))
+        else:
+            log.info("Update check: %s is current", APP_VERSION)
+
+    def _show_update(self, version: str, url: str) -> None:
+        text = _("New version {version} available – open download page").format(version=version)
+        self.statusBar().showMessage(text, 30000)
+        act = QAction(text, self)
+        act.triggered.connect(lambda: QDesktopServices.openUrl(QUrl(url)))
+        self.menuBar().addAction(act)  # visible right in the menu bar
+
+    def _toggle_update_check(self, on: bool) -> None:
+        self.config["check_updates"] = on
+        self.save_config()
 
     def logout(self, platform: str) -> None:
         self.accounts[platform].logout()
