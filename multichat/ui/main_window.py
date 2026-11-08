@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 Corrgan
-"""Main window: channel inputs, chat, menus, video column."""
+"""Main window: channel groups (chat + videos each), menus, send line."""
 from __future__ import annotations
 
 import asyncio
@@ -17,9 +17,10 @@ import aiohttp
 from PyQt6.QtCore import QEvent, QObject, QProcess, Qt, QTimer, QUrl, pyqtSignal
 from PyQt6.QtGui import QAction, QActionGroup, QDesktopServices, QImageReader, QKeySequence
 from PyQt6.QtGui import QColor
+from PyQt6.QtOpenGLWidgets import QOpenGLWidget
 from PyQt6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDialog, QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMessageBox,
-    QPushButton, QSplitter, QStackedWidget, QStyle, QTabWidget, QToolButton, QVBoxLayout, QWidget,
+    QPushButton, QSplitter, QStyle, QTabBar, QToolButton, QVBoxLayout, QWidget,
 )
 
 from ..accounts import ApiError, KickAccount, SecretStore, TwitchAccount, YouTubeAccount
@@ -33,7 +34,8 @@ from ..core.constants import FAVICONS, LOGIN_DOCS, NAMES, PLATFORMS, REPO_SLUG, 
 from ..core.i18n import _
 from ..core.logsetup import LOG_DIR, LOG_FILE, asyncio_exception_handler, set_debug, tail
 from ..overlay.server import OverlayServer, deletion_payload, message_payload
-from ..video.tiles import VideoPanel
+from ..video.player import load_mpv
+from ..video.tiles import AudioHub, VideoPanel
 from .chat_view import DEFAULT_FONT, ChatView
 from .groups import GroupPanel, normalize_channel
 from .dialogs import AboutDialog, AlertsDialog, AppsDialog
@@ -133,16 +135,16 @@ class MainWindow(QMainWindow):
         self.config["active_group"] = self.panels.index(self.active_panel())
         self.config["side_by_side"] = self.side_action.isChecked()
         first = self.panels[0]  # older versions read this – keeps a downgrade working
-        self.config["channels"] = {p: first.rows[p][0].edit.text().strip() for p in PLATFORMS}
+        self.config["channels"] = {p: first.rows[p].edit.text().strip() for p in PLATFORMS}
         self.config["show"] = {p: c.isChecked() for p, c in self.filters.items()}
         self.config["on_top"] = self.top_action.isChecked()
         self.config["extra_emotes"] = self.emote_action.isChecked()
         self.config["debug_log"] = self.debug_action.isChecked()
-        if self.video.available:
-            self.config["video"].update(self.video.state())
+        if self.video_ok:
+            for panel in self.panels:
+                self.config["video"].update(panel.video.state())
+            self.config["video"]["audio"] = self.audio.audio
         self.config["video"]["enabled"] = self.video_action.isChecked()
-        if self.video.isVisible():
-            self.config["video"]["sizes"] = self.splitter.sizes()
         save_config(self.config)
 
     def apply_config(self) -> None:
@@ -157,12 +159,11 @@ class MainWindow(QMainWindow):
             v.alerts_cfg = self.config["alerts"]
         video_on = bool(self.config["video"].get("enabled", True))
         self.video_action.setChecked(video_on)
-        self.video.setVisible(video_on)
+        self.toggle_video(video_on, resize=False)
         self.resize(1300 if video_on else 520, 820 if video_on else 780)
-        sizes = self.config["video"].get("sizes") or [440, 860]
-        self.splitter.setSizes([int(s) for s in sizes])
-        self.side_action.setChecked(bool(self.config.get("side_by_side")) and len(self.panels) > 1)
         self.tabs.setCurrentIndex(min(self.config.get("active_group", 0), len(self.panels) - 1))
+        self.side_action.setChecked(bool(self.config.get("side_by_side")) and len(self.panels) > 1)
+        self._show_panels()
         if self.config["overlay"].get("enabled"):
             self.overlay_action.setChecked(True)
 
@@ -189,21 +190,30 @@ class MainWindow(QMainWindow):
             filters.addWidget(cb)
         filters.addStretch(1)
 
-        # groups: tabs, or side by side (the same panels are moved between the two)
-        self.tabs = QTabWidget()
+        # groups: all panels sit in one splitter for good – as tabs only the active one is
+        # shown, side by side all of them (moving them between widgets would move their
+        # OpenGL video tiles to another parent, which makes Qt recreate the GL contexts)
+        self.video_ok = bool(load_mpv())
+        self.audio = AudioHub(self.config["video"].get("audio"))
+        self.audio.changed.connect(self._schedule_save)
+        self.side_by_side = False
+        self.tabs = QTabBar()
         self.tabs.setDocumentMode(True)
-        self.tabs.setMovable(False)
+        self.tabs.setExpanding(False)
+        self.tabs.setDrawBase(False)
+        self.tabs.currentChanged.connect(lambda _i: self._tab_changed())
         add = QToolButton()
         add.setText("+")
+        add.setAutoRaise(True)
         add.setToolTip(_("New channel group"))
         add.clicked.connect(lambda: self.add_group())
-        self.tabs.setCornerWidget(add, Qt.Corner.TopRightCorner)
-        self.tabs.currentChanged.connect(lambda _i: self._active_changed())
+        tab_row = QHBoxLayout()
+        tab_row.setContentsMargins(0, 0, 0, 0)
+        tab_row.addWidget(self.tabs)
+        tab_row.addStretch(1)
+        tab_row.addWidget(add)
         self.side = QSplitter(Qt.Orientation.Horizontal)
         self.side.setChildrenCollapsible(False)
-        self.groups_stack = QStackedWidget()
-        self.groups_stack.addWidget(self.tabs)
-        self.groups_stack.addWidget(self.side)
         self._side_active: GroupPanel | None = None  # side by side: the group clicked last
         QApplication.instance().focusChanged.connect(self._focus_changed)
         for g in self.config["groups"]:
@@ -223,28 +233,24 @@ class MainWindow(QMainWindow):
         send.addWidget(self.input, 1)
         send.addWidget(self.send_btn)
 
+        if self.video_ok:
+            # An OpenGL widget present from the start: adding the first one to a window that
+            # is already shown makes Qt rebuild the window's rendering – with mpv contexts
+            # around, that crashed (seen with the AppImage when a second group was added).
+            self._keeper = QOpenGLWidget()
+            self._keeper.setFixedSize(1, 1)
+            filters.addWidget(self._keeper)
+
         root = QVBoxLayout()
-        root.setContentsMargins(0, 0, 0, 0)
+        root.setContentsMargins(9, 9, 9, 0)
         root.addLayout(filters)
         root.addWidget(self.action_bar)
-        root.addWidget(self.groups_stack, 1)
+        root.addLayout(tab_row)
+        root.addWidget(self.side, 1)
         root.addLayout(send)
-        chat = QWidget()
-        chat.setLayout(root)
-        chat.setMinimumWidth(340)
-
-        # right: video tiles of the active group
-        self.video = VideoPanel(self.run, self.config["video"])
-        self.video.changed.connect(self.save_config)
-
-        self.splitter = QSplitter(Qt.Orientation.Horizontal)
-        self.splitter.addWidget(chat)
-        self.splitter.addWidget(self.video)
-        self.splitter.setStretchFactor(0, 0)
-        self.splitter.setStretchFactor(1, 1)
-        self.splitter.setChildrenCollapsible(False)
-        self.splitter.setContentsMargins(9, 9, 9, 0)
-        self.setCentralWidget(self.splitter)
+        central = QWidget()
+        central.setLayout(root)
+        self.setCentralWidget(central)
         self.statusBar().showMessage(_("Tip: click a name to select the user, right-click it for the menu."), 8000)
 
     # ---- Groups ------------------------------------------------------------ #
@@ -257,16 +263,23 @@ class MainWindow(QMainWindow):
         return self.active_panel().view
 
     def active_panel(self) -> GroupPanel:
-        if self.groups_stack.currentWidget() is self.side and self._side_active in self.panels:
+        if self.side_by_side and self._side_active in self.panels:
             return self._side_active
-        w = self.tabs.currentWidget()
-        return w if w in self.panels else self.panels[0]
+        i = self.tabs.currentIndex()
+        return self.panels[i] if 0 <= i < len(self.panels) else self.panels[0]
 
     def _visible_panels(self) -> list[GroupPanel]:
-        return list(self.panels) if self.groups_stack.currentWidget() is self.side else [self.active_panel()]
+        return list(self.panels) if self.side_by_side else [self.active_panel()]
 
     def _add_panel(self, cfg: dict) -> GroupPanel:
-        panel = GroupPanel(cfg, len(self.panels))
+        video = None
+        if self.video_ok:
+            video = VideoPanel(self.run, self.config["video"], self.audio)
+            video.changed.connect(self._schedule_save)
+        panel = GroupPanel(cfg, len(self.panels), video)
+        sizes = self.config["video"].get("sizes") or [440, 860]
+        panel.split.setSizes([int(x) for x in sizes[:2]])
+        panel.split.splitterMoved.connect(lambda _pos, _i, pn=panel: self._split_moved(pn))
         v = panel.view
         v.document().setMaximumBlockCount(MAX_MESSAGES)
         v.anchorClicked.connect(self.on_anchor)
@@ -286,24 +299,35 @@ class MainWindow(QMainWindow):
         panel.renamed.connect(lambda _p: self._update_titles())
         panel.changed.connect(self._schedule_save)
         panel.rows_changed.connect(lambda _p: self._rows_changed())
+        if video is not None and hasattr(self, "video_action"):
+            video.setVisible(self.video_action.isChecked())
         self.panels.append(panel)
-        if self.groups_stack.currentWidget() is self.side:
-            self.side.addWidget(panel)
-        else:
-            self.tabs.addTab(panel, panel.title())
+        self.side.addWidget(panel)
+        panel.setVisible(self.side_by_side)
+        self.tabs.addTab(panel.title())  # may switch the tab → _tab_changed shows the right panel
         self._rows_changed()
         self._update_titles()
         return panel
+
+    def _split_moved(self, panel: GroupPanel) -> None:
+        """Chat/video width: the same for all groups (side by side each keeps its own until
+        it is changed)."""
+        sizes = panel.split.sizes()
+        if len(sizes) == 2 and min(sizes) > 0:
+            self.config["video"]["sizes"] = sizes
+            self._schedule_save()
 
     def add_group(self) -> GroupPanel | None:
         if len(self.panels) >= MAX_GROUPS:
             self.statusBar().showMessage(_("At most {n} groups").format(n=MAX_GROUPS), 5000)
             return None
         panel = self._add_panel({"name": "", "channels": []})
-        self.tabs.setCurrentWidget(panel)
         self._side_active = panel
-        panel.rows["twitch"][0].edit.setFocus()
+        self.tabs.setCurrentIndex(len(self.panels) - 1)
         self.side_action.setEnabled(len(self.panels) > 1)
+        if self.side_by_side:
+            self._fit_width()
+        panel.rows["twitch"].edit.setFocus()
         self.save_config()
         return panel
 
@@ -315,43 +339,58 @@ class MainWindow(QMainWindow):
         ) != QMessageBox.StandardButton.Yes:
             return
         self.disconnect_group(panel)
+        i = self.panels.index(panel)
         self.panels.remove(panel)
-        panel.setParent(None)
-        panel.deleteLater()
-        for i, pn in enumerate(self.panels):
-            pn.set_index(i)
+        if panel.video is not None:
+            panel.video.shutdown()
+        self.tabs.blockSignals(True)
+        self.tabs.removeTab(i)
+        self.tabs.blockSignals(False)
+        panel.hide()
+        panel.deleteLater()  # the whole window goes on – the panel only leaves the splitter
+        for j, pn in enumerate(self.panels):
+            pn.set_index(j)
         if len(self.panels) < 2 and self.side_action.isChecked():
             self.side_action.setChecked(False)
         self.side_action.setEnabled(len(self.panels) > 1)
         self._rows_changed()
-        self._update_titles()
-        self._active_changed()
+        self._show_panels()
         self.save_config()
 
     def toggle_side_by_side(self, on: bool) -> None:
-        """Groups as columns next to each other, or as tabs."""
+        """Groups next to each other (chat 1 | videos 1 | chat 2 | videos 2 …), or as tabs."""
         active = self.active_panel() if self.panels else None
-        if on and len(self.panels) > 1:
-            for panel in self.panels:
-                self.side.addWidget(panel)  # takes it out of the tab widget
-                panel.show()  # the tab widget had hidden the inactive pages
-            while self.tabs.count():
-                self.tabs.removeTab(0)
-            self.groups_stack.setCurrentWidget(self.side)
-            self._side_active = active
-            if self.width() < 900:
-                self.resize(max(self.width(), 900), self.height())
-        else:
-            self.groups_stack.setCurrentWidget(self.tabs)
-            for panel in self.panels:
-                self.tabs.addTab(panel, panel.title())
-            if active:
-                self.tabs.setCurrentWidget(active)
-        self._update_titles()
+        self.side_by_side = bool(on and len(self.panels) > 1)
+        self._side_active = active
+        if not self.side_by_side and active in self.panels:
+            self.tabs.setCurrentIndex(self.panels.index(active))
+        self._show_panels()
+        if self.side_by_side:
+            self._fit_width()
+
+    def _fit_width(self) -> None:
+        per = 900 if self.video_ok and self.video_action.isChecked() else 420
+        screen = self.screen().availableGeometry().width() if self.screen() else 1920
+        want = min(screen, per * len(self.panels))
+        if self.width() < want:
+            self.resize(want, self.height())
+
+    def _tab_changed(self) -> None:
+        if not self.side_by_side:
+            self._show_panels()
+
+    def _show_panels(self) -> None:
+        """Tabs: only the active group. Side by side: all groups."""
+        if not self.panels:
+            return
+        self.tabs.setVisible(not self.side_by_side)
+        active = self.active_panel()
+        for panel in self.panels:
+            panel.setVisible(self.side_by_side or panel is active)
         self._active_changed()
 
     def _focus_changed(self, _old, new) -> None:
-        if self.groups_stack.currentWidget() is not self.side or new is None:
+        if not self.side_by_side or new is None:
             return
         for panel in self.panels:
             if panel.isAncestorOf(new) and panel is not self._side_active:
@@ -372,37 +411,26 @@ class MainWindow(QMainWindow):
             v.update_animations()  # hidden tabs pause their animations
 
     def _update_titles(self) -> None:
-        side = self.groups_stack.currentWidget() is self.side
-        for panel in self.panels:
+        for i, panel in enumerate(self.panels):
             text = panel.title()
             if panel.unread:
                 text += f" ({'@' if panel.mentions else ''}{min(panel.unread, 999)})"
-            if not side:
-                i = self.tabs.indexOf(panel)
-                if i >= 0:
-                    self.tabs.setTabText(i, text)
-                    self.tabs.tabBar().setTabTextColor(i, QColor("#ff9a3c") if panel.mentions else QColor())
+            if i < self.tabs.count():
+                self.tabs.setTabText(i, text)
+                self.tabs.setTabTextColor(i, QColor("#ff9a3c") if panel.mentions else QColor())
             panel.remove_btn.setVisible(len(self.panels) > 1)
 
     def _rows_changed(self) -> None:
-        """Channel rows were added, removed or edited: routing, buttons and send targets follow."""
+        """A channel was edited: routing, titles, buttons and send targets follow."""
         self._route = {}
         for panel in self.panels:
             for key in panel.keys():
                 self._route.setdefault(key, []).append(panel)
-            # several channels of one platform in a group: a small channel tag tells them apart
-            tags = {}
-            for p in PLATFORMS:
-                keys = {r.key(): r.value() for r in panel.rows[p] if r.key()}
-                if len(keys) > 1:
-                    tags.update(keys)
-            if tags != panel.view.channel_tags:
-                panel.view.channel_tags = tags
-                self.render_all()
+            if panel.video is not None:
+                panel.video.forget(panel.keys())  # tiles of channels the group doesn't have any more
+        self._update_titles()  # an unnamed group is named after its first channel
         self._update_conn_buttons()
         self._refresh_targets()
-        if hasattr(self, "video"):
-            self.video.forget(set(self._route))  # tiles of channels that no group has any more
         self._update_video()  # e.g. a video box was ticked
 
     def _schedule_save(self) -> None:
@@ -569,18 +597,18 @@ class MainWindow(QMainWindow):
 
             self.run(self.emotes.load_global(), then=loaded)
 
-    def toggle_video(self, on: bool) -> None:
-        if not hasattr(self, "video"):
-            return
+    def toggle_video(self, on: bool, resize: bool = True) -> None:
+        for panel in self.panels:
+            if panel.video is None:
+                continue
+            if not on:
+                panel.video.set_entries([], shown=False)
+                panel.video.stop_all()  # saves bandwidth
+            panel.video.setVisible(on)
         if on:
-            self.video.setVisible(True)
-            if self.width() < 900:
+            if resize and self.width() < 900:
                 self.resize(1300, max(self.height(), 820))
             self._update_video()  # already connected → start the streams right away
-        else:
-            self.config["video"]["sizes"] = self.splitter.sizes()
-            self.video.set_sources([])  # saves bandwidth
-            self.video.setVisible(False)
 
     def _video_entries(self, panel: GroupPanel) -> list[tuple[str, str, str]]:
         """The group's connected channels with the video box ticked."""
@@ -593,11 +621,15 @@ class MainWindow(QMainWindow):
         return entries
 
     def _update_video(self) -> None:
-        """Tabs: the active group's videos. Side by side: one video column per group."""
-        if not hasattr(self, "video") or not self.video_action.isChecked():
+        """Each group shows its own videos while it is on screen; hidden groups' tiles keep
+        running muted for a while (see VideoPanel.set_entries)."""
+        if not hasattr(self, "video_action") or not self.video_action.isChecked():
             return
-        self.video.set_columns([self._video_entries(panel) for panel in self._visible_panels()])
-        self.video.stop_hidden(set(self.readers))  # disconnected channels: stop right away
+        visible = self._visible_panels()
+        for panel in self.panels:
+            if panel.video is not None:
+                panel.video.set_entries(self._video_entries(panel), shown=panel in visible)
+                panel.video.stop_hidden(set(self.readers))  # disconnected channels: stop right away
 
     normalize_channel = staticmethod(normalize_channel)
 
@@ -682,7 +714,10 @@ class MainWindow(QMainWindow):
         for key in list(self.readers):
             self._stop_reader(key)
             self.set_status(key, _("disconnected"))
-        self.video.set_sources([])
+        for panel in self.panels:
+            if panel.video is not None:
+                panel.video.stop_all()
+        self._update_video()
         self._update_conn_buttons()
         log.info("All connections closed")
         self.statusBar().showMessage(_("Disconnected – chats and videos stopped"), 5000)
@@ -802,9 +837,11 @@ class MainWindow(QMainWindow):
             "animations playing": sum(m.state() == m.MovieState.Running for m in movies),
             "of": len(movies),
         }
-        for key, (frames, ms) in self.video.frame_counts().items():
-            stats[f"{key} fps"] = round(frames / 60, 1)
-            stats[f"{key} ms/frame"] = round(ms / frames, 1)
+        for i, panel in enumerate(self.panels):
+            for key, (frames, ms) in (panel.video.frame_counts() if panel.video is not None else {}).items():
+                name = key if i == 0 else f"{key} (group {i + 1})"
+                stats[f"{name} fps"] = round(frames / 60, 1)
+                stats[f"{name} ms/frame"] = round(ms / frames, 1)
         return stats
 
     def _image_failed(self, key: str) -> None:
@@ -869,17 +906,8 @@ class MainWindow(QMainWindow):
     # ---- Sending --------------------------------------------------------- #
     def _send_options(self) -> list[tuple[str, str, str, str]]:
         """(key, platform, channel, label) of the active group's channels you are logged in for."""
-        rows = [r for r in self.active_panel().all_rows() if r.key() and self.accounts[r.platform].logged_in]
-        out, seen = [], set()
-        for r in rows:
-            key = r.key()
-            if key in seen:
-                continue
-            seen.add(key)
-            several = sum(x.platform == r.platform for x in rows) > 1
-            label = f"{NAMES[r.platform]} · {r.value()}" if several else NAMES[r.platform]
-            out.append((key, r.platform, r.value(), label))
-        return out
+        return [(r.key(), r.platform, r.value(), NAMES[r.platform]) for r in self.active_panel().all_rows()
+                if r.key() and self.accounts[r.platform].logged_in]
 
     def _refresh_targets(self) -> None:
         if not hasattr(self, "target"):
@@ -1057,7 +1085,9 @@ class MainWindow(QMainWindow):
         self.mod.notes.save()
         for t in self.readers.values():
             t.cancel()
-        self.video.shutdown()
+        for panel in self.panels:
+            if panel.video is not None:
+                panel.video.shutdown()
 
         async def shutdown() -> None:
             await self.overlay.stop()

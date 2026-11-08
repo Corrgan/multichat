@@ -72,7 +72,7 @@ def test_chat_and_moderation_menu(window):
     w.accounts["twitch"].store.update("twitch", access_token="x", expires_at=9e12, user_name="TestUser")
     w.refresh_accounts()
     assert not w.input.isEnabled()  # logged in, but no Twitch channel in this group yet
-    w.panels[0].rows["twitch"][0].edit.setText("chan")
+    w.panels[0].rows["twitch"].edit.setText("chan")
     assert w.input.isEnabled() and w.target.count() == 1
     w.on_name_context(QUrl(f"msg:{alice.uid}"))
     assert "Delete message" in shown[1] and "Ban …" in shown[1] and "Unban" in shown[1]
@@ -178,9 +178,9 @@ def rows(w, group=0):
 
 def test_connect_disconnect(window, app):
     w = window
-    rows(w)["twitch"][0].edit.setText("examplechan")
+    rows(w)["twitch"].edit.setText("examplechan")
     w.connect_all()
-    status = rows(w)["twitch"][0].status
+    status = rows(w)["twitch"].status
     for _ in range(50):
         app.processEvents()
         if status.full.startswith("connected"):
@@ -195,18 +195,18 @@ def test_connect_disconnect(window, app):
 def test_single_channel_connect_disconnect(window, app):
     w = window
     r = rows(w)
-    r["twitch"][0].edit.setText("examplechan")
-    r["kick"][0].edit.setText("examplekick")
+    r["twitch"].edit.setText("examplechan")
+    r["kick"].edit.setText("examplekick")
     panel = w.panels[0]
     w.connect_group(panel)
     assert set(w.readers) == {"twitch:examplechan", "kick:examplekick"}
-    assert r["youtube"][0].button.isEnabled() is False  # nothing entered
-    w.toggle_row(r["kick"][0])  # disconnect only Kick
+    assert r["youtube"].button.isEnabled() is False  # nothing entered
+    w.toggle_row(r["kick"])  # disconnect only Kick
     app.processEvents()
-    assert set(w.readers) == {"twitch:examplechan"} and r["kick"][0].status.full == "disconnected"
+    assert set(w.readers) == {"twitch:examplechan"} and r["kick"].status.full == "disconnected"
     assert panel.connect_btn.text() == "Reconnect" and panel.disconnect_btn.isEnabled()
     old_gen = w.conn_gen["kick:examplekick"]
-    w.toggle_row(r["kick"][0])  # and back
+    w.toggle_row(r["kick"])  # and back
     assert set(w.readers) == {"twitch:examplechan", "kick:examplekick"}
     assert w.conn_gen["kick:examplekick"] == old_gen + 1
     w.disconnect_all()
@@ -216,25 +216,26 @@ def test_single_channel_connect_disconnect(window, app):
 def test_several_channels_and_groups(window, app):
     w = window
     first = w.panels[0]
-    first.rows["twitch"][0].edit.setText("chan_a")
-    second_row = first.add_row("twitch")
-    second_row.edit.setText("twitch.tv/Chan_B")
-    assert second_row.key() == "twitch:chan_b" and not second_row.first
-    for _ in range(3):
-        first.add_row("twitch")
-    assert len(first.rows["twitch"]) == 5 and first.add_row("twitch") is None  # at most 5
-    assert not first.rows["twitch"][0].extra.isEnabled()
-    for extra in first.rows["twitch"][2:]:
-        first.remove_row(extra)
-    assert len(first.rows["twitch"]) == 2
+    assert set(first.rows) == {"twitch", "kick", "youtube"}  # one channel per platform
+    first.rows["twitch"].edit.setText("twitch.tv/Chan_A")
+    first.rows["youtube"].edit.setText("@first_yt")
+    assert first.rows["twitch"].key() == "twitch:chan_a"
+    assert first.title() == "chan_a" and w.tabs.tabText(0) == "chan_a"  # unnamed: first channel (top to bottom)
+    first.rows["twitch"].edit.setText("")
+    assert first.title() == "@first_yt"
+    first.rows["twitch"].edit.setText("chan_a")
 
     group_b = w.add_group()
+    assert group_b.title() == "Group 2"  # nothing entered yet
+    group_b.rows["kick"].edit.setText("examplekick")
+    assert w.tabs.tabText(1) == "examplekick"
     group_b.name.setText("Other streamer")
-    group_b.rows["kick"][0].edit.setText("examplekick")
-    group_b.rows["twitch"][0].edit.setText("chan_a")  # also in the first group
-    assert [w.tabs.tabText(i) for i in range(w.tabs.count())] == ["Group 1", "Other streamer"]
+    group_b.rows["twitch"].edit.setText("chan_a")  # also in the first group
+    group_c = w.add_group()
+    group_c.rows["twitch"].edit.setText("chan_b")  # a second Twitch channel: its own group
+    assert [w.tabs.tabText(i) for i in range(w.tabs.count())] == ["chan_a", "Other streamer", "chan_b"]
     w.connect_all()
-    assert set(w.readers) == {"twitch:chan_a", "twitch:chan_b", "kick:examplekick"}
+    assert set(w.readers) == {"twitch:chan_a", "twitch:chan_b", "kick:examplekick", "youtube:@first_yt"}
 
     # messages go to the groups that contain their channel
     def msg(source, text, **kw):
@@ -243,23 +244,23 @@ def test_several_channels_and_groups(window, app):
         w._emit(m, source)
         return m
 
-    w.tabs.setCurrentWidget(first)
-    msg("twitch:chan_b", "only in first")
+    w.tabs.setCurrentIndex(0)
+    assert first.isVisibleTo(w) and not group_b.isVisibleTo(w)  # tabs: only the active group
+    msg("twitch:chan_b", "only in third")
     msg("kick:examplekick", "only in second @testuser")
     msg("twitch:chan_a", "in both")
     w.accounts["twitch"].store.update("twitch", access_token="x", expires_at=9e12, user_name="TestUser")
     app.processEvents()
     w._flush_messages()
     w._render_timer.stop()
-    w._render_now()  # the channel tags queued a re-render
-    text_a, text_b = first.view.toPlainText(), group_b.view.toPlainText()
-    assert "#chan_a" in text_a and "#chan_b" in text_a and "#chan" not in text_b  # tags only where needed
-    assert "only in first" in text_a and "only in first" not in text_b
+    w._render_now()
+    text_a, text_b, text_c = first.view.toPlainText(), group_b.view.toPlainText(), group_c.view.toPlainText()
+    assert "only in third" in text_c and "only in third" not in text_a + text_b
     assert "only in second" in text_b and "only in second" not in text_a
-    assert "in both" in text_a and "in both" in text_b
+    assert "in both" in text_a and "in both" in text_b and "in both" not in text_c
     assert group_b.unread == 2 and group_b.mentions == 1  # counter on the hidden tab
     assert w.tabs.tabText(1) == "Other streamer (@2)"
-    w.tabs.setCurrentWidget(group_b)
+    w.tabs.setCurrentIndex(1)
     assert group_b.unread == 0 and w.tabs.tabText(1) == "Other streamer"
 
     # a ban in one Twitch channel leaves the other channel alone
@@ -274,32 +275,32 @@ def test_several_channels_and_groups(window, app):
     assert a1.deleted and not b1.deleted
 
     # sending: the active group's channels you're logged in for
-    w.tabs.setCurrentWidget(first)
-    assert [w.target.itemText(i) for i in range(w.target.count())] == [
-        "All in this group", "Twitch · chan_a", "Twitch · chan_b"]
-    w.tabs.setCurrentWidget(group_b)
+    w.tabs.setCurrentIndex(2)
     assert [w.target.itemText(i) for i in range(w.target.count())] == ["Twitch"]
+    w.tabs.setCurrentIndex(1)
+    assert [w.target.itemText(i) for i in range(w.target.count())] == ["Twitch"]  # Kick: not logged in
 
-    # side by side and back
+    # side by side (chat and videos of each group next to each other) and back
     w.side_action.setChecked(True)
-    assert w.groups_stack.currentWidget() is w.side and w.side.count() == 2
+    assert all(pn.isVisibleTo(w) for pn in w.panels) and not w.tabs.isVisibleTo(w)
+    assert [w.side.widget(i) for i in range(w.side.count())] == w.panels
     w.side_action.setChecked(False)
-    assert w.tabs.count() == 2
+    assert w.tabs.count() == 3 and [pn.isVisibleTo(w) for pn in w.panels] == [False, True, False]
 
     # settings round trip
     w.save_config()
     groups = w.config["groups"]
-    assert groups[1]["name"] == "Other streamer"
-    assert [c["channel"] for c in groups[0]["channels"] if c["platform"] == "twitch"] == ["chan_a", "twitch.tv/Chan_B"]
-    assert groups[0]["channels"][1]["video"] is False  # extra rows: no video by default
+    assert groups[1]["name"] == "Other streamer" and groups[0]["name"] == ""
+    assert [c["channel"] for c in groups[0]["channels"]] == ["chan_a", "@first_yt"]
 
     # disconnecting a group keeps channels another group still shows
     w.disconnect_group(group_b)
-    assert set(w.readers) == {"twitch:chan_a", "twitch:chan_b"}
+    assert set(w.readers) == {"twitch:chan_a", "twitch:chan_b", "youtube:@first_yt"}
     w.remove_group(group_b) if not group_b.keys() else None
     QMessageBox.question = lambda *a, **k: QMessageBox.StandardButton.Yes
     w.remove_group(group_b)
-    assert len(w.panels) == 1 and w.tabs.count() == 1
+    w.remove_group(group_c)
+    assert len(w.panels) == 1 and w.tabs.count() == 1 and first.isVisibleTo(w)
     w.disconnect_all()
     w.logout("twitch")
 
@@ -314,7 +315,7 @@ def test_old_settings_become_the_first_group(tmp_path):
         {"platform": "youtube", "channel": "@b", "video": True}]}]
     bad = clean_groups([{"name": 5, "channels": [{"platform": "twitch", "channel": f"c{i}"} for i in range(9)]
                          + [{"platform": "nope"}, "junk"]}, "junk"], {})
-    assert len(bad) == 1 and len(bad[0]["channels"]) == 5 and bad[0]["name"] == ""
+    assert len(bad) == 1 and len(bad[0]["channels"]) == 1 and bad[0]["name"] == ""  # one per platform
 
 
 @pytest.mark.parametrize("lang,view,help_", [("en", "View", "Help"), ("de", "Ansicht", "Hilfe"),
@@ -376,8 +377,10 @@ def test_channel_input_normalisation():
 
 def test_no_video_when_tiles_are_off(window, monkeypatch):
     started = []
-    monkeypatch.setattr(window.video, "set_sources", lambda values: started.append(values))
-    row = window.panels[0].rows["kick"][0]
+    from multichat.video.tiles import VideoPanel
+
+    monkeypatch.setattr(VideoPanel, "set_entries", lambda self, entries, shown=True: started.append(entries))
+    row = window.panels[0].rows["kick"]
     row.edit.setText("examplekick")
     window.toggle_row(row)
     window.toggle_row(row)

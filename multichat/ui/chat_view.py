@@ -56,7 +56,6 @@ class ChatView(QTextBrowser):
         self.selected: tuple[str, str] | None = None  # (platform, user key) of the selected user
         self.alerts_cfg: dict = dict(alerts.DEFAULT_ALERTS)  # which events are highlighted
         self._icons: dict = {}
-        self.channel_tags: dict[str, str] = {}  # source key → channel shown before the name
         self._apply_style()
         self.nam = QNetworkAccessManager(self)
         self.nam.setTransferTimeout(15000)
@@ -470,9 +469,6 @@ class ChatView(QTextBrowser):
             name_style += ";background:#3a3a55"
         name = f"<a href='msg:{m.uid}' style='{name_style}'>{html.escape(m.user)}</a>"
         head = f"<span style='color:#888'>{ts}</span> {badge} "
-        tag = self.channel_tags.get(m.source)
-        if tag:
-            head += f"<span style='color:#999'>#{html.escape(tag[:24])}</span> "
         if m.event:
             title = html.escape(alerts.headline(m))
             if alerts.is_alert(m, self.alerts_cfg):

@@ -123,7 +123,7 @@ def load_config() -> dict:
 
 
 MAX_GROUPS = 10
-MAX_PER_PLATFORM = 5  # channels per platform in one group
+MAX_PER_PLATFORM = 1  # channels per platform in one group (more channels: more groups)
 MAX_CHANNEL_LEN = 200  # YouTube video URLs are the longest entries
 
 

@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 Corrgan
-"""Video tiles in the right-hand column: one per channel of the active group."""
+"""Video tiles: each channel group has its own column of tiles next to its chat."""
 from __future__ import annotations
 
 import asyncio
@@ -10,13 +10,12 @@ import os
 import threading
 import time
 
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal
-from PyQt6.QtOpenGLWidgets import QOpenGLWidget
+from PyQt6.QtCore import QObject, Qt, QTimer, pyqtSignal
 from PyQt6.QtWidgets import (
-    QComboBox, QFrame, QGridLayout, QHBoxLayout, QLabel, QSizePolicy, QSlider, QStackedWidget, QStyle, QToolButton, QVBoxLayout, QWidget,
+    QComboBox, QFrame, QHBoxLayout, QLabel, QSizePolicy, QSlider, QStackedWidget, QStyle, QToolButton, QVBoxLayout, QWidget,
 )
 
-from ..core.constants import BADGES, NAMES
+from ..core.constants import BADGES, NAMES, PLATFORMS
 from ..core.i18n import _
 from ..ui.widgets import CopyLabel
 from . import player
@@ -47,6 +46,7 @@ class VideoTile(QFrame):
         self.gen = 0
         self.state = "idle"
         self.muted = True
+        self._mute_sent = False  # mute state not yet passed to mpv
         self._closer = None  # stops the running Streamlink data stream
         self._ads = None
         self._title = ""
@@ -289,9 +289,12 @@ class VideoTile(QFrame):
             pass
 
     def set_muted(self, muted: bool) -> None:
+        if muted == self.muted and self._mute_sent:
+            return  # unchanged – every mpv call waits for the player, which may be busy stopping
         self.muted = muted
+        self._mute_sent = True
         try:
-            self.video.player.mute = muted
+            self.video.player.command_async("set", "mute", "yes" if muted else "no")  # doesn't wait for mpv
         except Exception:  # noqa: BLE001
             pass
         self.audio_btn.setIcon(self.icon_off if muted else self.icon_on)
@@ -312,28 +315,55 @@ class VideoTile(QFrame):
         self.video.shutdown()
 
 
-class VideoPanel(QWidget):
-    """Right-hand column(s) with the video tiles.
-
-    Tabs: the active group's channels in one column. Side by side: one column per group,
-    in the same order as the chat columns. A tile is created once per channel and kept:
-    switching groups only hides and stops tiles (creating and destroying mpv players made
-    every switch hang). All tiles stay children of this widget in one grid – moving an
-    OpenGL widget to another parent makes Qt recreate its context."""
+class AudioHub(QObject):
+    """Sound across all groups: only one tile in the whole window plays sound."""
 
     changed = pyqtSignal()
 
-    def __init__(self, runner, config: dict) -> None:
+    def __init__(self, audio: str | None = None) -> None:
+        super().__init__()
+        self.audio = audio  # source key of the tile with sound
+        self.owner: VideoPanel | None = None  # the group whose tile it is (same channel in two groups)
+        self.panels: list[VideoPanel] = []
+
+    def toggle(self, panel: "VideoPanel", key: str) -> None:
+        if self.audio == key and self.owner in (None, panel):
+            self.audio, self.owner = None, None
+        else:
+            self.audio, self.owner = key, panel
+        self.apply()
+        self.changed.emit()
+
+    def apply(self) -> None:
+        if self.owner not in self.panels or not (self.owner.shown and self.audio in self.owner.tiles):
+            # e.g. after a start: the first shown group with that channel gets the sound
+            self.owner = next((pn for pn in self.panels if pn.shown and self.audio in pn.tiles), self.owner)
+        for pn in self.panels:
+            pn.apply_audio(self.audio if pn is self.owner else None)
+
+
+class VideoPanel(QWidget):
+    """One group's video tiles, one below the other.
+
+    A tile is created once per channel and kept: hiding the group only hides its tiles
+    (creating and destroying mpv players made every switch hang). The panel never changes
+    its parent – moving an OpenGL widget to another parent makes Qt recreate its context."""
+
+    changed = pyqtSignal()
+
+    def __init__(self, runner, config: dict, hub: AudioHub) -> None:
         super().__init__()
         self.config = config
         self.runner = runner
+        self.hub = hub
+        hub.panels.append(self)
         self.tiles: dict[str, VideoTile] = {}
-        self.audio: str | None = config.get("audio")
-        self.grid = QGridLayout(self)
-        self.grid.setContentsMargins(0, 0, 0, 0)
-        self.grid.setSpacing(6)
+        self.shown = False  # the group is on screen
+        self.lay = QVBoxLayout(self)
+        self.lay.setContentsMargins(0, 0, 0, 0)
+        self.lay.setSpacing(6)
         self._ok = bool(load_mpv())
-        self._used = (0, 0)  # rows, columns with stretch set
+        self.setMinimumWidth(320)
 
         if not self._ok:
             hint = QLabel(
@@ -345,19 +375,14 @@ class VideoPanel(QWidget):
             )
             hint.setWordWrap(True)
             hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            self.grid.addWidget(hint, 0, 0)
+            self.lay.addWidget(hint)
             return
 
         self.empty = QLabel(_("Enter channels on the left and click “Connect” –\nthe streams will then appear here."))
         self.empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.empty.setWordWrap(True)
         self.empty.setStyleSheet("color:#888")
-        self.grid.addWidget(self.empty, 0, 0)
-        # An OpenGL widget present from the start: adding the first one to a window that is
-        # already shown makes Qt rebuild the window's rendering – with mpv contexts around,
-        # that crashed (seen with the AppImage when a second group was added).
-        self._keeper = QOpenGLWidget(self)
-        self._keeper.setFixedSize(1, 1)
-        self.grid.addWidget(self._keeper, 99, 99)
+        self.lay.addWidget(self.empty, 1)
 
     @property
     def available(self) -> bool:
@@ -373,62 +398,49 @@ class VideoPanel(QWidget):
             tile = VideoTile(platform, NAMES[platform], BADGES[platform][0],
                              self._setting("quality", key, platform, DEFAULT_QUALITY), self.runner,
                              volume=self._setting("volume", key, platform, 100), key=key, channel=channel)
-            tile.setParent(self)
             tile.idle_stop = QTimer(tile, singleShot=True)
             tile.idle_stop.timeout.connect(tile.stop)
-            tile.audio_requested.connect(self.toggle_audio)
+            tile.audio_requested.connect(lambda t: self.hub.toggle(self, t.key))
             tile.quality_changed.connect(self._remember)
             self.tiles[key] = tile
+            self.lay.addWidget(tile, 1)
+            # same order as the channel rows (Twitch, Kick, YouTube) – moving within the
+            # layout keeps the parent
+            for i, t in enumerate(sorted(self.tiles.values(), key=lambda t: PLATFORMS.index(t.platform))):
+                if self.lay.indexOf(t) != i + 1:  # 0 is the "enter channels" hint
+                    self.lay.removeWidget(t)
+                    self.lay.insertWidget(i + 1, t, 1)
         return tile
 
-    def set_columns(self, columns) -> None:
-        """columns: one list of (key, platform, channel) per column. Tiles not listed are
-        stopped and hidden (kept for later)."""
+    def set_entries(self, entries, shown: bool = True) -> None:
+        """entries: [(key, platform, channel)] of the group's connected channels with video.
+        Tiles not listed – or all, while the group is not on screen – are hidden but keep
+        streaming muted: restarting a stream rebuilds mpv's video pipeline (~0.2 s per tile on
+        the UI thread), so switching back would stutter. They stop after HIDDEN_STOP."""
         if not self._ok:
             return
-        wanted: dict[str, tuple[int, int, str, str]] = {}
-        for c, entries in enumerate(columns):
-            r = 0
-            for key, platform, channel in entries:
-                if channel and key not in wanted:
-                    wanted[key] = (r, c, platform, channel)
-                    r += 1
+        self.shown = shown
+        wanted = {key: (platform, channel) for key, platform, channel in entries if channel} if shown else {}
         for key, tile in self.tiles.items():
-            if key not in wanted and tile.isVisible():
-                # Hidden, not stopped: restarting a stream rebuilds mpv's video pipeline (~0.2 s
-                # per tile on the UI thread), so switching back would stutter. Hidden tiles keep
-                # streaming muted and undrawn, and stop after HIDDEN_STOP to save bandwidth.
-                tile.hide()
-                tile.set_muted(True)
+            if key not in wanted and not tile.idle_stop.isActive() and tile.state != "idle":
                 tile.idle_stop.start(HIDDEN_STOP * 1000)
-        for key, (r, c, platform, channel) in wanted.items():
+            if key not in wanted:
+                tile.set_muted(True)
+                tile.hide()
+        for key, (platform, channel) in wanted.items():
             tile = self._tile(key, platform, channel)
             tile.idle_stop.stop()
-            pos = self.grid.getItemPosition(self.grid.indexOf(tile)) if self.grid.indexOf(tile) >= 0 else None
-            if not pos or pos[:2] != (r, c):
-                self.grid.addWidget(tile, r, c)  # same parent – only the position changes
             tile.show()
             tile.set_source(channel)
-        rows = max((r + 1 for r, _c, _p, _ch in wanted.values()), default=1)
-        cols = max(1, len(columns))
-        for i in range(max(rows, self._used[0])):
-            self.grid.setRowStretch(i, 1 if i < rows else 0)
-        for i in range(max(cols, self._used[1])):
-            self.grid.setColumnStretch(i, 1 if i < cols else 0)
-        self._used = (rows, cols)
         self.empty.setVisible(not wanted)
-        self._apply_audio()
-
-    def set_sources(self, entries) -> None:
-        """One column (tab mode): [(key, platform, channel)]."""
-        self.set_columns([list(entries)] if entries else [])
+        self.hub.apply()
 
     def forget(self, keep: set[str]) -> None:
-        """Removes tiles of channels that no group has any more."""
+        """Removes tiles of channels the group doesn't have any more."""
         for key in [k for k in self.tiles if k not in keep]:
             self._remember()
             tile = self.tiles.pop(key)
-            self.grid.removeWidget(tile)
+            self.lay.removeWidget(tile)
             tile.hide()
             tile.shutdown()
             tile.deleteLater()
@@ -443,14 +455,9 @@ class VideoPanel(QWidget):
             if key not in keep and tile.state != "idle":
                 tile.stop()
 
-    def toggle_audio(self, tile: VideoTile) -> None:
-        self.audio = None if self.audio == tile.key else tile.key
-        self._apply_audio()
-        self.changed.emit()
-
-    def _apply_audio(self) -> None:
+    def apply_audio(self, audio: str | None) -> None:
         for k, t in self.tiles.items():
-            t.set_muted(k != self.audio or t.isHidden())  # tiles of other groups stay silent
+            t.set_muted(k != audio or t.isHidden() or not self.shown)  # hidden groups stay silent
 
     def _remember(self) -> None:
         """Keeps quality and volume per channel, also for tiles that are removed later."""
@@ -474,8 +481,10 @@ class VideoPanel(QWidget):
         volume = dict(self.config.get("volume") or {})
         for key, t in self.tiles.items():
             quality[key], volume[key] = t.quality, t.volume
-        return {"quality": quality, "volume": volume, "audio": self.audio}
+        return {"quality": quality, "volume": volume}
 
     def shutdown(self) -> None:
+        if self in self.hub.panels:
+            self.hub.panels.remove(self)
         for tile in self.tiles.values():
             tile.shutdown()

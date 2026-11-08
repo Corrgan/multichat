@@ -3,19 +3,20 @@
 """Channel groups: one panel per group with its channel rows and its own chat view.
 
 A group bundles channels that belong together (e.g. one streamer on Twitch, Kick and
-YouTube). Each platform can have up to MAX_PER_PLATFORM channels per group; the "+"
-after a platform's first row adds another one below it.
+YouTube): one channel per platform. More channels of one platform go into more groups.
+Each group has its chat on the left and its own video tiles on the right, so side by side
+reads "chat 1 | videos 1 | chat 2 | videos 2".
 """
 from __future__ import annotations
 
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
-    QCheckBox, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton, QSizePolicy, QStyle, QToolButton,
+    QCheckBox, QHBoxLayout, QLabel, QLineEdit, QPushButton, QSizePolicy, QSplitter, QStyle, QToolButton,
     QVBoxLayout, QWidget,
 )
 
 from ..chat.models import kick_channel, source_key, twitch_channel
-from ..core.config import MAX_CHANNEL_LEN, MAX_PER_PLATFORM
+from ..core.config import MAX_CHANNEL_LEN
 from ..core.constants import BADGES, NAMES, PLATFORMS
 from ..core.i18n import _
 from . import icons
@@ -39,20 +40,17 @@ def default_group_name(index: int) -> str:
 
 
 class ChannelRow(QWidget):
-    """One channel: name field, status, video checkbox, connect button, +/−."""
+    """One channel: name field, status, video checkbox, connect button."""
 
     toggle_requested = pyqtSignal(object)  # self
-    add_requested = pyqtSignal(str)  # platform
-    remove_requested = pyqtSignal(object)  # self
     changed = pyqtSignal()
 
-    def __init__(self, platform: str, first: bool, value: str = "", video: bool = True) -> None:
+    def __init__(self, platform: str, value: str = "", video: bool = True) -> None:
         super().__init__()
         self.platform = platform
-        self.first = first
         lay = QHBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
-        self.label = QLabel(f"<b style='color:{BADGES[platform][0]}'>{NAMES[platform]}</b>" if first else "")
+        self.label = QLabel(f"<b style='color:{BADGES[platform][0]}'>{NAMES[platform]}</b>")
         self.label.setFixedWidth(64)
         self.edit = QLineEdit(value, placeholderText=_("@channel – or video URL") if platform == "youtube"
                               else _("Channel name"))
@@ -67,17 +65,7 @@ class ChannelRow(QWidget):
         self.button = QToolButton()
         self.button.setToolTip(_("Connect / disconnect this channel"))
         self.button.clicked.connect(lambda: self.toggle_requested.emit(self))
-        self.extra = QToolButton()
-        self.extra.setAutoRaise(True)
-        if first:
-            self.extra.setText("+")
-            self.extra.setToolTip(_("Add another {platform} channel").format(platform=NAMES[platform]))
-            self.extra.clicked.connect(lambda: self.add_requested.emit(platform))
-        else:
-            self.extra.setText("−")
-            self.extra.setToolTip(_("Remove this channel"))
-            self.extra.clicked.connect(lambda: self.remove_requested.emit(self))
-        for w in (self.label, self.edit, self.status, self.video, self.button, self.extra):
+        for w in (self.label, self.edit, self.status, self.video, self.button):
             lay.addWidget(w, 1 if w is self.edit else 0)
         self.edit.textChanged.connect(self.changed)
         self.video.toggled.connect(self.changed)
@@ -95,7 +83,8 @@ class ChannelRow(QWidget):
 
 
 class GroupPanel(QWidget):
-    """Header (name, connect, remove), the channel rows and the group's chat view."""
+    """Header (name, connect, remove), the channel rows and the group's chat view on the
+    left, the group's video tiles (if any) on the right."""
 
     toggle_row = pyqtSignal(object)  # ChannelRow
     connect_group = pyqtSignal(object)  # self
@@ -103,18 +92,17 @@ class GroupPanel(QWidget):
     remove_group = pyqtSignal(object)  # self
     renamed = pyqtSignal(object)  # self
     changed = pyqtSignal()  # settings to save
-    rows_changed = pyqtSignal(object)  # self – a row was added/removed or its text changed
+    rows_changed = pyqtSignal(object)  # self – a channel was edited or its video box toggled
 
-    def __init__(self, config: dict, index: int) -> None:
+    def __init__(self, config: dict, index: int, video: QWidget | None = None) -> None:
         super().__init__()
         self.index = index
         self.unread = 0
         self.mentions = 0
-        self.rows: dict[str, list[ChannelRow]] = {p: [] for p in PLATFORMS}
 
-        self.name = QLineEdit(config.get("name", ""), placeholderText=default_group_name(index))
+        self.name = QLineEdit(config.get("name", ""))
         self.name.setMaxLength(40)
-        self.name.setToolTip(_("Name of this group"))
+        self.name.setToolTip(_("Name of this group – empty: the first channel's name"))
         self.name.textChanged.connect(lambda: (self.renamed.emit(self), self.changed.emit()))
         self.fold = QToolButton()
         self.fold.setCheckable(True)
@@ -140,72 +128,57 @@ class GroupPanel(QWidget):
         head.addWidget(self.remove_btn)
 
         self.rows_box = QWidget()
-        self.rows_layout = QGridLayout(self.rows_box)
-        self.rows_layout.setContentsMargins(0, 0, 0, 0)
-        self.rows_layout.setVerticalSpacing(2)
-        entries = {p: [c for c in config.get("channels", []) if c["platform"] == p] for p in PLATFORMS}
+        rows_layout = QVBoxLayout(self.rows_box)
+        rows_layout.setContentsMargins(0, 0, 0, 0)
+        rows_layout.setSpacing(2)
+        self.rows: dict[str, ChannelRow] = {}
         for p in PLATFORMS:
-            for i, c in enumerate(entries[p] or [{"channel": "", "video": True}]):
-                self._make_row(p, c["channel"], c.get("video", True) if i == 0 else c.get("video", False))
-        self._relayout()
+            c = next((c for c in config.get("channels", []) if c["platform"] == p), {})
+            row = ChannelRow(p, c.get("channel", ""), c.get("video", True))
+            row.toggle_requested.connect(self.toggle_row)
+            row.changed.connect(self.changed)
+            row.changed.connect(self._row_changed)
+            row.edit.returnPressed.connect(lambda: self.connect_group.emit(self))
+            self.rows[p] = row
+            rows_layout.addWidget(row)
 
         self.view = ChatView()
-        lay = QVBoxLayout(self)
+        chat = QWidget()
+        chat.setMinimumWidth(320)
+        lay = QVBoxLayout(chat)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(4)
         lay.addLayout(head)
         lay.addWidget(self.rows_box)
         lay.addWidget(self.view, 1)
+
+        # chat | videos – the video panel stays in this splitter for good (moving an OpenGL
+        # widget to another parent makes Qt recreate its context)
+        self.video = video
+        self.split = QSplitter(Qt.Orientation.Horizontal)
+        self.split.setChildrenCollapsible(False)
+        self.split.addWidget(chat)
+        if video is not None:
+            self.split.addWidget(video)
+            self.split.setStretchFactor(0, 0)
+            self.split.setStretchFactor(1, 1)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.addWidget(self.split)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self._update_placeholder()
 
     # ---- rows ------------------------------------------------------------- #
-    def _make_row(self, platform: str, value: str = "", video: bool = False) -> ChannelRow:
-        row = ChannelRow(platform, not self.rows[platform], value, video)
-        row.toggle_requested.connect(self.toggle_row)
-        row.add_requested.connect(self.add_row)
-        row.remove_requested.connect(self.remove_row)
-        row.changed.connect(self.changed)
-        row.changed.connect(lambda: self.rows_changed.emit(self))
-        row.edit.returnPressed.connect(lambda: self.connect_group.emit(self))
-        self.rows[platform].append(row)
-        return row
-
-    def add_row(self, platform: str) -> ChannelRow | None:
-        if len(self.rows[platform]) >= MAX_PER_PLATFORM:
-            return None
-        row = self._make_row(platform)
-        self._relayout()
-        row.edit.setFocus()
-        self.changed.emit()
+    def _row_changed(self) -> None:
+        self._update_placeholder()
         self.rows_changed.emit(self)
-        return row
-
-    def remove_row(self, row: ChannelRow) -> None:
-        if row.first:
-            return
-        self.rows[row.platform].remove(row)
-        row.setParent(None)
-        row.deleteLater()
-        self._relayout()
-        self.changed.emit()
-        self.rows_changed.emit(self)
-
-    def _relayout(self) -> None:
-        while self.rows_layout.count():
-            self.rows_layout.takeAt(0)
-        n = 0
-        for p in PLATFORMS:
-            for row in self.rows[p]:
-                self.rows_layout.addWidget(row, n, 0)
-                n += 1
-            self.rows[p][0].extra.setEnabled(len(self.rows[p]) < MAX_PER_PLATFORM)
 
     def _fold(self, shown: bool) -> None:
         self.rows_box.setVisible(shown)
         self.fold.setArrowType(Qt.ArrowType.DownArrow if shown else Qt.ArrowType.RightArrow)
 
     def all_rows(self) -> list[ChannelRow]:
-        return [r for p in PLATFORMS for r in self.rows[p]]
+        return [self.rows[p] for p in PLATFORMS]
 
     def rows_for(self, key: str) -> list[ChannelRow]:
         return [r for r in self.all_rows() if r.key() == key]
@@ -214,12 +187,24 @@ class GroupPanel(QWidget):
         return {k for k in (r.key() for r in self.all_rows()) if k}
 
     # ---- name / config ------------------------------------------------------ #
+    def channel_name(self) -> str:
+        """The first channel entered (Twitch, then Kick, then YouTube) – the group's name
+        when none was typed in."""
+        for row in self.all_rows():
+            value = row.value()
+            if value:
+                return value if len(value) <= 28 else value[:27] + "…"
+        return ""
+
     def title(self) -> str:
-        return self.name.text().strip() or default_group_name(self.index)
+        return self.name.text().strip() or self.channel_name() or default_group_name(self.index)
+
+    def _update_placeholder(self) -> None:
+        self.name.setPlaceholderText(self.channel_name() or default_group_name(self.index))
 
     def set_index(self, index: int) -> None:
         self.index = index
-        self.name.setPlaceholderText(default_group_name(index))
+        self._update_placeholder()
 
     def to_config(self) -> dict:
         return {"name": self.name.text().strip(), "channels": [r.to_config() for r in self.all_rows() if r.edit.text().strip()]}
