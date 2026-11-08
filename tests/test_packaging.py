@@ -72,3 +72,10 @@ def test_appimage_build_inputs_are_pinned():
         assert re.search(rf'^{name}_SHA256="[0-9a-f]{{64}}"', script, re.M), name
     assert "--runtime-file" in script and "continuous" not in script.split("RUNTIME_URL=")[1].splitlines()[0]
     assert "--retry" in script
+
+
+def test_mpv_render_does_not_block():
+    from pathlib import Path
+
+    src = (Path(__file__).resolve().parents[1] / "multichat" / "video" / "player.py").read_text()
+    assert "block_for_target_time=False" in src  # three tiles share the UI thread

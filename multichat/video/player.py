@@ -77,6 +77,12 @@ def ytdl_wrapper() -> str:
     return _WRAPPER
 MPV_ERROR = ""
 
+FAST_SCALING = {
+    "scale": "bilinear", "dscale": "bilinear", "cscale": "bilinear",
+    "dither": "no", "correct_downscaling": False, "linear_downscaling": False,
+    "sigmoid_upscaling": False, "deband": False, "hdr_compute_peak": False,
+}
+
 
 def load_mpv():
     """Loads python-mpv; in the AppImage the bundled libmpv if present."""
@@ -165,6 +171,11 @@ class MpvWidget(QOpenGLWidget):
             mute=True,
             user_agent=DEFAULT_UA,
             loglevel="warn",
+            # Cheap scaling (like mpv's "fast" profile, set one by one so older mpv versions
+            # work too). mpv's default high-quality scalers cost ~17 ms per frame here even for
+            # small tiles; with three tiles on the UI thread the window stuttered. For video
+            # tiles the difference in picture is negligible. MULTICHAT_MPV_HQ=1 keeps mpv's defaults.
+            **({} if os.environ.get("MULTICHAT_MPV_HQ") else FAST_SCALING),
             **({"ytdl": False} | extra),
         )
         mlog.debug("libmpv %s", getattr(self.player, "mpv_version", "?"))
@@ -172,6 +183,7 @@ class MpvWidget(QOpenGLWidget):
         self._pending: tuple[str, dict] | None = None
         self._proc = mpv.MpvGlGetProcAddressFn(self._get_proc)
         self._frame.connect(self._on_frame, Qt.ConnectionType.QueuedConnection)
+        self.frameSwapped.connect(self._swapped)
         self.frames = 0  # drawn frames and time spent drawing them (performance log)
         self.paint_ms = 0.0
 
@@ -216,6 +228,14 @@ class MpvWidget(QOpenGLWidget):
         if self.isVisible() and not self.window().isMinimized():
             self.update()
 
+    def _swapped(self) -> None:
+        """Tells mpv when a frame actually reached the screen (for its frame timing)."""
+        if self.ctx:
+            try:
+                self.ctx.report_swap()
+            except Exception:  # noqa: BLE001 – timing info only
+                pass
+
     def paintGL(self) -> None:  # noqa: N802
         self.frames += 1
         t0 = time.perf_counter()
@@ -230,6 +250,11 @@ class MpvWidget(QOpenGLWidget):
             self.ctx.render(
                 flip_y=True,
                 opengl_fbo={"w": int(self.width() * r), "h": int(self.height() * r), "fbo": self.defaultFramebufferObject()},
+                # By default libmpv waits inside render() until the frame's display time. All tiles
+                # are drawn on the UI thread, so with three videos the window spent most of its
+                # time waiting there (25-33 ms per frame: stuttering mouse, ~15 fps). Qt's
+                # compositor already paces the frames.
+                block_for_target_time=False,
             )
 
     def mousePressEvent(self, event) -> None:  # noqa: N802
