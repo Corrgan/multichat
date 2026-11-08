@@ -19,13 +19,14 @@ from PyQt6.QtWidgets import QTextBrowser, QToolButton
 
 from ..chat import alerts
 from ..chat.models import ChatMessage, user_key
+from . import icons
 from ..core.constants import BADGES, BROWSER_UA, FAVICONS
 from ..core.i18n import _
 
 EMOTE_H = 22  # emote height at the default font size
 DEFAULT_FONT = 14
 FONT_RANGE = (9, 40)
-ROLE_ICONS = {"broadcaster": "🎥", "moderator": "🛡", "vip": "💎", "subscriber": "★", "verified": "✔"}
+ROLE_ORDER = ("broadcaster", "moderator", "vip", "subscriber", "verified")
 IMAGE_RES = QTextDocument.ResourceType.ImageResource.value
 MAX_IMAGE_BYTES = 4 * 1024 * 1024  # emotes are a few KB – anything bigger is not an emote
 MAX_CACHED = 1500  # distinct images kept in memory
@@ -52,6 +53,7 @@ class ChatView(QTextBrowser):
         self.emote_h = EMOTE_H
         self.selected: tuple[str, str] | None = None  # (platform, user key) of the selected user
         self.alerts_cfg: dict = dict(alerts.DEFAULT_ALERTS)  # which events are highlighted
+        self._icons: dict = {}
         self._apply_style()
         self.nam = QNetworkAccessManager(self)
         self.nam.setTransferTimeout(15000)
@@ -158,6 +160,16 @@ class ChatView(QTextBrowser):
         self._update_jump()
 
     def loadResource(self, rtype, url: QUrl):  # noqa: N802
+        if int(getattr(rtype, "value", rtype)) == IMAGE_RES and url.scheme() == "mcicon":
+            # drawn role/alert icons (emoji fonts can't be relied on)
+            name = url.path()
+            px = max(1, round(self.font_px * 1.1 * self.devicePixelRatioF()))
+            key = ("mcicon", name, px)
+            if key not in self._icons:
+                img = icons.image(name, px) if name in icons.NAMES else self.placeholder
+                img.setDevicePixelRatio(self.devicePixelRatioF())
+                self._icons[key] = img
+            return self._icons[key]
         if int(getattr(rtype, "value", rtype)) == IMAGE_RES and url.scheme() in ("http", "https"):
             key = url.toString()
             img = self.cache.get(key)
@@ -341,6 +353,10 @@ class ChatView(QTextBrowser):
             return f"<img src='{html.escape(value, quote=True)}' height='{self.emote_h}' align='middle'>"
         return html.escape(alt if kind == "emote" else value)
 
+    def icon_html(self, name: str) -> str:
+        h = round(self.font_px * 1.1)
+        return f"<img src='mcicon:{name}' width='{h}' height='{h}' align='middle'>"
+
     def message_html(self, m: ChatMessage) -> str:
         color, tag = BADGES[m.platform]
         name_color = html.escape(m.color or "#b9a3e3", quote=True)
@@ -354,8 +370,8 @@ class ChatView(QTextBrowser):
             if icon
             else f"<span style='background:{color};color:#000;font-size:11px'>&nbsp;{tag}&nbsp;</span>"
         )
-        roles = "".join(ROLE_ICONS[r] for r in m.badges if r in ROLE_ICONS)
-        roles = f"<span style='color:#aaa'>{roles}</span>&nbsp;" if roles else ""
+        roles = "".join(self.icon_html(r) for r in ROLE_ORDER if r in m.badges)
+        roles = f"{roles}&nbsp;" if roles else ""
         selected = self.selected == (m.platform, user_key(m))
         name_style = f"color:{name_color};font-weight:bold;text-decoration:none"
         if selected:
@@ -366,7 +382,7 @@ class ChatView(QTextBrowser):
             title = html.escape(alerts.headline(m))
             if alerts.is_alert(m, self.alerts_cfg):
                 title = (f"<span style='color:{alerts.COLORS[m.event][1]};font-weight:bold'>"
-                         f"{alerts.ICONS[m.event]} {title}</span>")
+                         f"{self.icon_html(m.event)} {title}</span>")
             else:
                 title = f"<span style='color:#aaa'>{title}</span>"
             # the name stays clickable (user card, moderation) through the link below or the headline

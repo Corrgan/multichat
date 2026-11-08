@@ -57,3 +57,15 @@ def test_only_https_is_loaded(app):
     assert chat_view._allowed_url(QUrl("https://cdn.example/a.png"))
     assert not chat_view._allowed_url(QUrl("http://192.168.1.1/a.png"))
     assert chat_view._allowed_url(QUrl("http://127.0.0.1:8000/a.png"))
+
+
+def test_drawn_icons_are_not_empty():
+    from PyQt6.QtWidgets import QApplication
+
+    from multichat.ui import icons
+
+    QApplication.instance() or QApplication([])
+    for name in icons.NAMES:
+        img = icons.image(name, 24)
+        assert any(img.pixelColor(x, y).alpha() for x in range(24) for y in range(24)), name
+    assert not icons.icon("user").isNull()

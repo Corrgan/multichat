@@ -21,7 +21,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import quote
 
-from PyQt6.QtCore import QObject, Qt, QTimer, QUrl, pyqtSignal
+from PyQt6.QtCore import QObject, QSize, Qt, QTimer, QUrl, pyqtSignal
 from PyQt6.QtGui import QDesktopServices
 from PyQt6.QtWidgets import (
     QDockWidget, QFormLayout, QHBoxLayout, QLabel, QMenu, QPlainTextEdit, QPushButton, QTextBrowser, QToolButton,
@@ -32,7 +32,7 @@ from ..chat.models import ChatMessage, user_key
 from ..core.config import write_private
 from ..core.constants import BADGES, NAMES
 from ..core.i18n import _
-from .chat_view import ROLE_ICONS
+from . import icons
 
 log = logging.getLogger("multichat.moderation")
 
@@ -295,11 +295,12 @@ class ModActions(QObject):
             QDesktopServices.openUrl(url)
 
 
-def _button(text: str, tip: str = "") -> QToolButton:
+def _button(icon_name: str, tip: str) -> QToolButton:
     b = QToolButton()
-    b.setText(text)
-    b.setToolTip(tip or text)
-    b.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
+    b.setIcon(icons.icon(icon_name))
+    b.setIconSize(QSize(18, 18))
+    b.setToolTip(tip)
+    b.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
     b.setAutoRaise(True)
     return b
 
@@ -313,20 +314,20 @@ class ActionBar(QWidget):
         self.label = QLabel()
         self.label.setTextFormat(Qt.TextFormat.RichText)
         self.label.setMinimumWidth(60)
-        self.card = _button("👤", _("Open user card"))
+        self.card = _button("user", _("Open user card"))
         self.card.clicked.connect(lambda: self.mod.selected and open_card(self.mod.selected))
-        self.mention = _button("@", _("Mention (@)"))
+        self.mention = _button("at", _("Mention (@)"))
         self.mention.clicked.connect(lambda: self.mod.selected and self.mod.win.mention(self.mod.selected))
-        self.delete = _button("🗑", _("Delete last message"))
+        self.delete = _button("trash", _("Delete last message"))
         self.delete.clicked.connect(self._delete_last)
-        self.timeout = _button("⏱", _("Timeout"))
+        self.timeout = _button("clock", _("Timeout"))
         self.timeout.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         self.timeout.setMenu(mod.timeout_menu(self, lambda: self.mod.selected))
-        self.ban = _button("⛔", _("Ban …"))
+        self.ban = _button("ban", _("Ban …"))
         self.ban.clicked.connect(lambda: self.mod.selected and self.mod.win.moderate(self.mod.selected, "ban"))
-        self.unban = _button("✅", _("Unban"))
+        self.unban = _button("unban", _("Unban"))
         self.unban.clicked.connect(lambda: self.mod.selected and self.mod.win.moderate(self.mod.selected, "unban"))
-        self.clear = _button("✕", _("Clear selection"))
+        self.clear = _button("close", _("Clear selection"))
         self.clear.clicked.connect(lambda: self.mod.select(None))
         self.mod_buttons = (self.delete, self.timeout, self.ban, self.unban)
 
@@ -383,7 +384,7 @@ class UserCard(QDockWidget):
         self.title = QLabel()
         self.title.setTextFormat(Qt.TextFormat.RichText)
         self.title.setWordWrap(True)
-        self.pin = _button("📌", _("Dock next to the chat / float as a window"))
+        self.pin = _button("pin", _("Dock next to the chat / float as a window"))
         self.pin.setCheckable(True)
         self.pin.toggled.connect(self._pin)
         head = QHBoxLayout()
@@ -413,6 +414,9 @@ class UserCard(QDockWidget):
         self.unban = QPushButton(_("Unban"))
         self.unban.clicked.connect(lambda: self.msg and self.mod.win.moderate(self.msg, "unban"))
         self.mod_buttons = (self.delete, self.timeout, self.ban, self.unban)
+        for b, name in ((self.mention, "at"), (self.profile, "user"), (self.delete, "trash"),
+                        (self.timeout, "clock"), (self.ban, "ban"), (self.unban, "unban")):
+            b.setIcon(icons.icon(name))
         self.hint = QLabel()
         self.hint.setStyleSheet("color:#888")
         row1, row2 = QHBoxLayout(), QHBoxLayout()
@@ -522,7 +526,7 @@ class UserCard(QDockWidget):
         if sel and (sel.platform, user_key(sel)) == (m.platform, user_key(m)):
             self.msg = m = sel  # newest message of this user
         msgs = self.mod.messages_of(m)
-        roles = [f"{ROLE_ICONS.get(r, '')} {role_label(r)}" for r in m.badges]
+        roles = [role_label(r) for r in m.badges]
         self.info_labels["roles"].setText(", ".join(roles) or "–")
         self.info_labels["seen"].setText(str(len(msgs)))
         rows = []

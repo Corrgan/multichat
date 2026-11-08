@@ -21,7 +21,6 @@ COLORS = {
     "sub": ("#2a1f45", "#bf94ff"), "gift": ("#2a1f45", "#bf94ff"), "member": ("#173322", "#5fd38d"),
     "raid": ("#3a2a10", "#ffb84d"), "bits": ("#381c3c", "#e88ef0"), "superchat": ("#3a2a10", "#ffcc4d"),
 }
-ICONS = {"sub": "⭐", "gift": "🎁", "member": "⭐", "raid": "🚀", "bits": "💎", "superchat": "💰"}
 _NUMBER_RE = re.compile(r"\d[\d.,\s]*")
 
 
