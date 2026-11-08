@@ -27,11 +27,17 @@ APPIMAGETOOL_URL="https://github.com/AppImage/appimagetool/releases/download/1.9
 APPIMAGETOOL_SHA256="ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0"
 LINUXDEPLOY_URL="https://github.com/linuxdeploy/linuxdeploy/releases/download/1-alpha-20251107-1/linuxdeploy-x86_64.AppImage"
 LINUXDEPLOY_SHA256="c20cd71e3a4e3b80c3483cef793cda3f4e990aca14014d23c544ca3ce1270b4d"
+# AppImage runtime (the small program at the start of the AppImage). Without --runtime-file,
+# appimagetool would download the moving "continuous" build unverified.
+RUNTIME_URL="https://github.com/AppImage/type2-runtime/releases/download/20251108/runtime-x86_64"
+RUNTIME_SHA256="2fca8b443c92510f1483a883f60061ad09b46b978b2631c807cd873a47ec260d"
+RUNTIME="$BUILD/runtime-$ARCH"
 
 # download <url> <sha256> <file>: (re)downloads unless the file has the expected checksum
 download() {
   if ! echo "$2  $3" | sha256sum -c --status 2>/dev/null; then
-    curl -fL -o "$3.part" "$1"
+    # GitHub's download servers sometimes answer 5xx for a while – retry instead of failing
+    curl -fL --retry 8 --retry-all-errors --retry-delay 15 --connect-timeout 30 -o "$3.part" "$1"
     echo "$2  $3.part" | sha256sum -c --quiet || { echo "ERROR: checksum mismatch for $1"; rm -f "$3.part"; exit 1; }
     mv "$3.part" "$3"
   fi
@@ -138,8 +144,9 @@ chmod +x "$APPDIR/AppRun"
 
 echo "==> appimagetool"
 download "$APPIMAGETOOL_URL" "$APPIMAGETOOL_SHA256" "$TOOL"
+download "$RUNTIME_URL" "$RUNTIME_SHA256" "$RUNTIME"
 # APPIMAGE_EXTRACT_AND_RUN: works without FUSE as well
-ARCH="$ARCH" APPIMAGE_EXTRACT_AND_RUN=1 "$TOOL" --no-appstream "$APPDIR" "$OUT"
+ARCH="$ARCH" APPIMAGE_EXTRACT_AND_RUN=1 "$TOOL" --no-appstream --runtime-file "$RUNTIME" "$APPDIR" "$OUT"
 
 echo
 echo "Done: $(pwd)/$OUT"

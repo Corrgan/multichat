@@ -59,3 +59,16 @@ def test_video_selftest():
     r = subprocess.run([sys.executable, "-m", "multichat", "--selftest-video", str(ROOT / "tests/data/testclip.webm")],
                        capture_output=True, text=True, timeout=60, cwd=ROOT)
     assert r.returncode == 0 and "OK      video decoded" in r.stdout, r.stdout + r.stderr
+
+
+def test_appimage_build_inputs_are_pinned():
+    import re
+    from pathlib import Path
+
+    script = (Path(__file__).resolve().parents[1] / "packaging" / "build-appimage.sh").read_text()
+    urls = re.findall(r"^(\w+)_URL=", script, re.M)
+    assert {"APPIMAGETOOL", "LINUXDEPLOY", "RUNTIME"} <= set(urls)
+    for name in urls:
+        assert re.search(rf'^{name}_SHA256="[0-9a-f]{{64}}"', script, re.M), name
+    assert "--runtime-file" in script and "continuous" not in script.split("RUNTIME_URL=")[1].splitlines()[0]
+    assert "--retry" in script
