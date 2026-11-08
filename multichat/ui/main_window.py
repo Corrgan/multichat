@@ -6,6 +6,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
 import sys
 import threading
 from collections import OrderedDict
@@ -728,10 +729,14 @@ class MainWindow(QMainWindow):
         except Exception as e:  # noqa: BLE001 – offline etc.: not worth bothering anyone
             log.info("Update check failed: %s", e)
             return
-        latest = str(data.get("tag_name") or "").lstrip("v")
+        latest = str(data.get("tag_name") or "").removeprefix("v")
+        if not re.fullmatch(r"[0-9]{1,4}(\.[0-9]{1,4}){1,3}", latest):
+            log.info("Update check: ignoring unexpected tag %r", latest[:40])
+            return
         if version_tuple(latest) > version_tuple(APP_VERSION):
             log.info("Update check: %s available (running %s)", latest, APP_VERSION)
-            self.bridge.update.emit(latest, str(data.get("html_url") or f"{REPO_URL}/releases/latest"))
+            # the link is built here – a response can never lead to another site
+            self.bridge.update.emit(latest, f"{REPO_URL}/releases/tag/v{latest}")
         else:
             log.info("Update check: %s is current", APP_VERSION)
 

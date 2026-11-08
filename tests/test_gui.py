@@ -190,3 +190,33 @@ def test_update_notice_and_login_link(window, app):
     copy.click()
     assert QApplication.clipboard().text() == "https://id.example/authorize?x=1"
     box.close()
+
+
+def test_update_check_builds_its_own_link(window, monkeypatch):
+    shown = []
+    window.bridge.update.connect(lambda v, url: shown.append((v, url)))
+
+    class Resp:
+        def __init__(self, data):
+            self.status, self.data = 200, data
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def json(self):
+            return self.data
+
+    def fake_get(data):
+        return lambda *a, **k: Resp(data)
+
+    async def run(data):
+        monkeypatch.setattr(window.session, "get", fake_get(data))
+        await window._check_update()
+
+    asyncio.run(run({"tag_name": "v9.90", "html_url": "https://evil.example/download"}))
+    asyncio.run(run({"tag_name": "v9.99<script>", "html_url": "https://evil.example/"}))
+    QApplication.processEvents()
+    assert shown == [("9.90", "https://github.com/Corrgan/multichat/releases/tag/v9.90")]
