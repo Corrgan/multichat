@@ -58,6 +58,9 @@ def load_config() -> dict:
         "language": "auto",
         "chat_font": 14,
         "usercard_docked": False,
+        "groups": clean_groups(None, {}),  # [{"name": str, "channels": [{"platform", "channel", "video"}]}]
+        "active_group": 0,
+        "side_by_side": False,
         "alerts": dict(DEFAULT_ALERTS),
         "video": {"enabled": True, "quality": {}, "volume": {}, "audio": None, "sizes": [440, 860]},
         "overlay": {"enabled": False, "port": OVERLAY_PORT},
@@ -89,6 +92,9 @@ def load_config() -> dict:
     for p in PLATFORMS:
         cfg["channels"][p] = pick((data.get("channels") or {}).get(p) if isinstance(data.get("channels"), dict) else None, cfg["channels"][p])
         cfg["show"][p] = pick((data.get("show") or {}).get(p) if isinstance(data.get("show"), dict) else None, True)
+    cfg["groups"] = clean_groups(data.get("groups"), cfg["channels"])
+    cfg["active_group"] = max(0, min(len(cfg["groups"]) - 1, pick(data.get("active_group"), 0)))
+    cfg["side_by_side"] = pick(data.get("side_by_side"), False)
     for key in ("on_top", "extra_emotes", "debug_log", "check_updates"):
         cfg[key] = pick(data.get(key), cfg[key])
     cfg["language"] = pick(data.get("language"), "auto") or "auto"
@@ -105,14 +111,56 @@ def load_config() -> dict:
     vid = data.get("video") if isinstance(data.get("video"), dict) else {}
     v = cfg["video"]
     v["enabled"] = pick(vid.get("enabled"), True)
-    v["quality"] = {k: q for k, q in pick(vid.get("quality"), {}).items() if k in PLATFORMS and isinstance(q, str)}
+    # per platform ("twitch") or per channel ("twitch:somechannel")
+    v["quality"] = {k: q for k, q in pick(vid.get("quality"), {}).items() if _video_key(k) and isinstance(q, str)}
     v["volume"] = {k: max(0, min(100, n)) for k, n in pick(vid.get("volume"), {}).items()
-                   if k in PLATFORMS and isinstance(n, int) and not isinstance(n, bool)}
-    v["audio"] = vid.get("audio") if vid.get("audio") in PLATFORMS else None
+                   if _video_key(k) and isinstance(n, int) and not isinstance(n, bool)}
+    v["audio"] = vid.get("audio") if _video_key(vid.get("audio")) else None
     sizes = vid.get("sizes")
     if isinstance(sizes, list) and len(sizes) == 2 and all(isinstance(n, int) and n >= 0 for n in sizes):
         v["sizes"] = sizes
     return cfg
+
+
+MAX_GROUPS = 10
+MAX_PER_PLATFORM = 5  # channels per platform in one group
+MAX_CHANNEL_LEN = 200  # YouTube video URLs are the longest entries
+
+
+def _video_key(k) -> bool:
+    if not isinstance(k, str):
+        return False
+    platform, _sep, channel = k.partition(":")
+    return platform in PLATFORMS and len(channel) <= MAX_CHANNEL_LEN and not any(c.isspace() for c in channel)
+
+
+def clean_groups(raw, old_channels: dict) -> list[dict]:
+    """Validated channel groups. Older settings had one channel per platform – they become
+    the first group. There is always at least one group."""
+    groups = []
+    for g in raw if isinstance(raw, list) else []:
+        if not isinstance(g, dict) or len(groups) >= MAX_GROUPS:
+            continue
+        name = g.get("name") if isinstance(g.get("name"), str) else ""
+        channels, count = [], {p: 0 for p in PLATFORMS}
+        for c in g.get("channels") if isinstance(g.get("channels"), list) else []:
+            if not isinstance(c, dict) or c.get("platform") not in PLATFORMS:
+                continue
+            value = c.get("channel") if isinstance(c.get("channel"), str) else ""
+            value = value.strip()[:MAX_CHANNEL_LEN]
+            if count[c["platform"]] >= MAX_PER_PLATFORM:
+                continue
+            count[c["platform"]] += 1
+            channels.append({"platform": c["platform"], "channel": value,
+                             "video": c.get("video") if isinstance(c.get("video"), bool) else True})
+        groups.append({"name": name.strip()[:40], "channels": channels})  # "" → "Group N" in the UI language
+    if not groups:  # first start or settings from before groups existed
+        groups.append({
+            "name": "",
+            "channels": [{"platform": p, "channel": (old_channels.get(p) or "").strip()[:MAX_CHANNEL_LEN], "video": True}
+                         for p in PLATFORMS],
+        })
+    return groups
 
 
 def save_config(cfg: dict) -> None:

@@ -89,7 +89,7 @@ class ModActions(QObject):
         old = self.win.view.selected
         self.selected = m
         new = self.history.key(m) if m else None
-        self.win.view.selected = new
+        self.win.set_selected_user(new)  # highlighted in every group
         if new != old:  # move the highlight: only the lines of the old and the new user change
             keys = {k for k in (old, new) if k}
             self.win.update_lines([x for x in self.win.messages.values() if self.history.key(x) in keys])

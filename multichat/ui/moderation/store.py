@@ -180,6 +180,8 @@ class UserHistory:
         hist = self.users.get((ev.platform, ev.user_id))
         changed = False
         for m in hist or ():
+            if ev.source and m.source and m.source != ev.source:
+                continue  # banned in another channel of the platform
             if not m.deleted:
                 m.deleted = changed = True
         return changed

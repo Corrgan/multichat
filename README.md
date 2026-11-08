@@ -132,6 +132,11 @@ docs/                 additional documentation
 - **Connect / Disconnect** starts or stops all chats and video tiles; the ▶/■ button next to each channel connects or disconnects just that one (chat and video).
 - **Show:** checkboxes hide or show platforms in the chat view.
 - Each message starts with the platform's icon (the website's favicon, as in a browser tab). If it can't be loaded, a coloured abbreviation (TW/KI/YT) is shown instead.
+- **Channel groups:** channels that belong together (e.g. one streamer on Twitch, Kick and YouTube) form a group. Each group has its own tab with its own chat; **+** next to the tabs (or **View → New channel group**) adds a group, the name field renames it. **View → Groups side by side** shows the groups as columns instead of tabs. Tabs of hidden groups count new messages – `(@3)` in orange means someone mentioned you.
+- **Several channels per platform:** the **+** after a platform's channel adds another one below (up to 5 per platform and group), **−** removes it. With several channels of one platform, the chat shows a small `#channel` tag before the name.
+- Every channel has its own connect button; **Connect** / **Disconnect** at the top of a group handle all its channels, **View → Connect all groups / Disconnect everything** all of them.
+- **Videos** follow the active group: the camera box of a channel decides whether it gets a tile (on for the first channel of each platform). Quality and volume are remembered per channel.
+- **Sending** goes to the active group: pick one of its channels or “All in this group”.
 - Symbols before a name show the user's role: 🎥 broadcaster, 🛡 moderator, 💎 VIP, ★ subscriber/member, ✔ verified.
 - **Click on a name** to select the user. The **action bar** above the chat then works on that user: user card, mention, delete their last message, timeout (1 min / 10 min / 1 h), ban, unban.
 - **Right-click a name** for the menu: user card, mention, copy text and the same moderation actions.

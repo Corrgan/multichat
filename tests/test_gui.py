@@ -11,7 +11,7 @@ from multichat.chat.kick import kick_parts
 from multichat.chat.models import ChatMessage, Deletion
 from multichat.chat.twitch import twitch_parts
 from multichat.core import i18n
-from multichat.core.config import load_config
+from multichat.core.config import clean_groups, load_config
 from multichat.ui import main_window
 from multichat.ui.dialogs import AboutDialog
 
@@ -34,6 +34,8 @@ def window(app, monkeypatch):
     cfg = load_config()
     cfg["video"]["enabled"] = False
     cfg["extra_emotes"] = False
+    cfg["groups"] = clean_groups(None, {})  # earlier tests saved their channels in the shared settings
+    cfg["active_group"], cfg["side_by_side"] = 0, False
     w = main_window.MainWindow(cfg)
     yield w
     w.close()
@@ -69,6 +71,8 @@ def test_chat_and_moderation_menu(window):
     assert any(t.startswith("Log in to Twitch") for t in shown[0])
     w.accounts["twitch"].store.update("twitch", access_token="x", expires_at=9e12, user_name="TestUser")
     w.refresh_accounts()
+    assert not w.input.isEnabled()  # logged in, but no Twitch channel in this group yet
+    w.panels[0].rows["twitch"][0].edit.setText("chan")
     assert w.input.isEnabled() and w.target.count() == 1
     w.on_name_context(QUrl(f"msg:{alice.uid}"))
     assert "Delete message" in shown[1] and "Ban …" in shown[1] and "Unban" in shown[1]
@@ -168,40 +172,149 @@ def test_font_size(window):
     assert w.view.font_px == 14 and w.view.emote_h == 22
 
 
+def rows(w, group=0):
+    return w.panels[group].rows
+
+
 def test_connect_disconnect(window, app):
     w = window
-    w.inputs["twitch"].setText("examplechan")
-    w.inputs["kick"].setText("")
-    w.inputs["youtube"].setText("")
+    rows(w)["twitch"][0].edit.setText("examplechan")
     w.connect_all()
+    status = rows(w)["twitch"][0].status
     for _ in range(50):
         app.processEvents()
-        if w.status_labels["twitch"].full.startswith("connected"):
+        if status.full.startswith("connected"):
             break
         asyncio.run(asyncio.sleep(0.02))
-    assert w.status_labels["twitch"].full == "connected (#examplechan)"
+    assert status.full == "connected (#examplechan)"
     w.disconnect_all()
     app.processEvents()
-    assert w.readers == {} and w.status_labels["twitch"].full == "disconnected"
+    assert w.readers == {} and status.full == "disconnected"
 
 
-def test_single_platform_connect_disconnect(window, app):
+def test_single_channel_connect_disconnect(window, app):
     w = window
-    w.inputs["twitch"].setText("examplechan")
-    w.inputs["kick"].setText("examplekick")
-    w.inputs["youtube"].setText("")
-    w.connect_all()
-    assert set(w.readers) == {"twitch", "kick"}
-    assert w.row_buttons["youtube"].isEnabled() is False  # nothing entered
-    w.toggle_platform("kick")  # disconnect only Kick
+    r = rows(w)
+    r["twitch"][0].edit.setText("examplechan")
+    r["kick"][0].edit.setText("examplekick")
+    panel = w.panels[0]
+    w.connect_group(panel)
+    assert set(w.readers) == {"twitch:examplechan", "kick:examplekick"}
+    assert r["youtube"][0].button.isEnabled() is False  # nothing entered
+    w.toggle_row(r["kick"][0])  # disconnect only Kick
     app.processEvents()
-    assert set(w.readers) == {"twitch"} and w.status_labels["kick"].full == "disconnected"
-    assert w.connect_btn.text() == "Reconnect" and w.disconnect_btn.isEnabled()
-    old_gen = w.conn_gen["kick"]
-    w.toggle_platform("kick")  # and back
-    assert set(w.readers) == {"twitch", "kick"} and w.conn_gen["kick"] == old_gen + 1
+    assert set(w.readers) == {"twitch:examplechan"} and r["kick"][0].status.full == "disconnected"
+    assert panel.connect_btn.text() == "Reconnect" and panel.disconnect_btn.isEnabled()
+    old_gen = w.conn_gen["kick:examplekick"]
+    w.toggle_row(r["kick"][0])  # and back
+    assert set(w.readers) == {"twitch:examplechan", "kick:examplekick"}
+    assert w.conn_gen["kick:examplekick"] == old_gen + 1
     w.disconnect_all()
-    assert w.readers == {} and not w.disconnect_btn.isEnabled()
+    assert w.readers == {} and not panel.disconnect_btn.isEnabled()
+
+
+def test_several_channels_and_groups(window, app):
+    w = window
+    first = w.panels[0]
+    first.rows["twitch"][0].edit.setText("chan_a")
+    second_row = first.add_row("twitch")
+    second_row.edit.setText("twitch.tv/Chan_B")
+    assert second_row.key() == "twitch:chan_b" and not second_row.first
+    for _ in range(3):
+        first.add_row("twitch")
+    assert len(first.rows["twitch"]) == 5 and first.add_row("twitch") is None  # at most 5
+    assert not first.rows["twitch"][0].extra.isEnabled()
+    for extra in first.rows["twitch"][2:]:
+        first.remove_row(extra)
+    assert len(first.rows["twitch"]) == 2
+
+    group_b = w.add_group()
+    group_b.name.setText("Other streamer")
+    group_b.rows["kick"][0].edit.setText("examplekick")
+    group_b.rows["twitch"][0].edit.setText("chan_a")  # also in the first group
+    assert [w.tabs.tabText(i) for i in range(w.tabs.count())] == ["Group 1", "Other streamer"]
+    w.connect_all()
+    assert set(w.readers) == {"twitch:chan_a", "twitch:chan_b", "kick:examplekick"}
+
+    # messages go to the groups that contain their channel
+    def msg(source, text, **kw):
+        platform, channel = source.split(":")
+        m = ChatMessage(platform, channel, "User", text, **kw)
+        w._emit(m, source)
+        return m
+
+    w.tabs.setCurrentWidget(first)
+    msg("twitch:chan_b", "only in first")
+    msg("kick:examplekick", "only in second @testuser")
+    msg("twitch:chan_a", "in both")
+    w.accounts["twitch"].store.update("twitch", access_token="x", expires_at=9e12, user_name="TestUser")
+    app.processEvents()
+    w._flush_messages()
+    w._render_timer.stop()
+    w._render_now()  # the channel tags queued a re-render
+    text_a, text_b = first.view.toPlainText(), group_b.view.toPlainText()
+    assert "#chan_a" in text_a and "#chan_b" in text_a and "#chan" not in text_b  # tags only where needed
+    assert "only in first" in text_a and "only in first" not in text_b
+    assert "only in second" in text_b and "only in second" not in text_a
+    assert "in both" in text_a and "in both" in text_b
+    assert group_b.unread == 2 and group_b.mentions == 1  # counter on the hidden tab
+    assert w.tabs.tabText(1) == "Other streamer (@2)"
+    w.tabs.setCurrentWidget(group_b)
+    assert group_b.unread == 0 and w.tabs.tabText(1) == "Other streamer"
+
+    # a ban in one Twitch channel leaves the other channel alone
+    a1 = msg("twitch:chan_a", "a", user_id="7", msg_id="m1")
+    b1 = msg("twitch:chan_b", "b", user_id="7", msg_id="m2")
+    app.processEvents()
+    w._flush_messages()
+    from multichat.chat.models import Deletion as D
+
+    w._emit(D("twitch", user_id="7"), "twitch:chan_a")
+    app.processEvents()
+    assert a1.deleted and not b1.deleted
+
+    # sending: the active group's channels you're logged in for
+    w.tabs.setCurrentWidget(first)
+    assert [w.target.itemText(i) for i in range(w.target.count())] == [
+        "All in this group", "Twitch · chan_a", "Twitch · chan_b"]
+    w.tabs.setCurrentWidget(group_b)
+    assert [w.target.itemText(i) for i in range(w.target.count())] == ["Twitch"]
+
+    # side by side and back
+    w.side_action.setChecked(True)
+    assert w.groups_stack.currentWidget() is w.side and w.side.count() == 2
+    w.side_action.setChecked(False)
+    assert w.tabs.count() == 2
+
+    # settings round trip
+    w.save_config()
+    groups = w.config["groups"]
+    assert groups[1]["name"] == "Other streamer"
+    assert [c["channel"] for c in groups[0]["channels"] if c["platform"] == "twitch"] == ["chan_a", "twitch.tv/Chan_B"]
+    assert groups[0]["channels"][1]["video"] is False  # extra rows: no video by default
+
+    # disconnecting a group keeps channels another group still shows
+    w.disconnect_group(group_b)
+    assert set(w.readers) == {"twitch:chan_a", "twitch:chan_b"}
+    w.remove_group(group_b) if not group_b.keys() else None
+    QMessageBox.question = lambda *a, **k: QMessageBox.StandardButton.Yes
+    w.remove_group(group_b)
+    assert len(w.panels) == 1 and w.tabs.count() == 1
+    w.disconnect_all()
+    w.logout("twitch")
+
+
+def test_old_settings_become_the_first_group(tmp_path):
+    from multichat.core.config import clean_groups
+
+    groups = clean_groups(None, {"twitch": "a", "kick": "", "youtube": "@b"})
+    assert groups == [{"name": "", "channels": [
+        {"platform": "twitch", "channel": "a", "video": True},
+        {"platform": "kick", "channel": "", "video": True},
+        {"platform": "youtube", "channel": "@b", "video": True}]}]
+    bad = clean_groups([{"name": 5, "channels": [{"platform": "twitch", "channel": f"c{i}"} for i in range(9)]
+                         + [{"platform": "nope"}, "junk"]}, "junk"], {})
+    assert len(bad) == 1 and len(bad[0]["channels"]) == 5 and bad[0]["name"] == ""
 
 
 @pytest.mark.parametrize("lang,view,help_", [("en", "View", "Help"), ("de", "Ansicht", "Hilfe"),
@@ -264,9 +377,10 @@ def test_channel_input_normalisation():
 def test_no_video_when_tiles_are_off(window, monkeypatch):
     started = []
     monkeypatch.setattr(window.video, "set_sources", lambda values: started.append(values))
-    window.inputs["kick"].setText("examplekick")
-    window.connect_platform("kick")
-    window.disconnect_platform("kick")
+    row = window.panels[0].rows["kick"][0]
+    row.edit.setText("examplekick")
+    window.toggle_row(row)
+    window.toggle_row(row)
     assert started == []  # video tiles are switched off in this window
 
 

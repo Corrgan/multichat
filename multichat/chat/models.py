@@ -36,6 +36,9 @@ class ChatMessage:
     event: str = ""
     event_value: float = 0  # months, gifted subs, raid viewers, bits, Super Chat amount
     event_text: str = ""  # tier, recipient, "€5.00", "Kicks" …
+    # which connection it came from: "platform:channel" as entered (set by the UI per reader,
+    # needed because one platform can have several channels – YouTube's channel is a video ID)
+    source: str = ""
 
     def __post_init__(self) -> None:
         if not self.parts and (self.text or not self.event):  # an event may come without a message
@@ -73,6 +76,12 @@ class Deletion:
     msg_id: str | None = None
     user_id: str | None = None
     clear_all: bool = False
+    source: str = ""  # like ChatMessage.source – a ban in one channel must not touch another
+
+
+def source_key(platform: str, channel: str) -> str:
+    """"twitch:somechannel" – identifies one connection."""
+    return f"{platform}:{channel}"
 
 
 Event = Union[ChatMessage, Deletion]

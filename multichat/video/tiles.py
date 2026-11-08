@@ -1,9 +1,10 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 Corrgan
-"""Video tiles: one tile per platform in the right-hand column."""
+"""Video tiles in the right-hand column: one per channel of the active group."""
 from __future__ import annotations
 
 import asyncio
+import html
 import logging
 import os
 import threading
@@ -14,6 +15,7 @@ from PyQt6.QtWidgets import (
     QComboBox, QFrame, QHBoxLayout, QLabel, QSizePolicy, QSlider, QStackedWidget, QStyle, QToolButton, QVBoxLayout, QWidget,
 )
 
+from ..core.constants import BADGES, NAMES
 from ..core.i18n import _
 from ..ui.widgets import CopyLabel
 from . import player
@@ -32,9 +34,11 @@ class VideoTile(QFrame):
     audio_requested = pyqtSignal(object)
     quality_changed = pyqtSignal()  # also emitted when the volume changes (→ settings are saved)
 
-    def __init__(self, platform: str, name: str, color: str, quality: str, runner, volume: int = 100) -> None:
+    def __init__(self, platform: str, name: str, color: str, quality: str, runner, volume: int = 100,
+                 key: str = "", channel: str = "") -> None:
         super().__init__()
         self.platform = platform
+        self.key = key or platform  # "twitch:somechannel"
         self.runner = runner
         self.value = ""
         self.quality = normalize_quality(quality)
@@ -51,6 +55,8 @@ class VideoTile(QFrame):
         self.icon_off = style.standardIcon(QStyle.StandardPixmap.SP_MediaVolumeMuted)
 
         title = QLabel(f"<b style='color:{color}'>{name}</b>")
+        if channel:
+            title.setText(f"<b style='color:{color}'>{name}</b> <span style='color:#aaa'>{html.escape(channel[:32])}</span>")
         self.status = CopyLabel("–")
         self.status.setStyleSheet("color:#888")
         self.status.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
@@ -305,20 +311,23 @@ class VideoTile(QFrame):
 
 
 class VideoPanel(QWidget):
-    """Right-hand column with one tile per platform."""
+    """Right-hand column. Tiles are created for the channels shown (the active group's
+    channels with the video box ticked) and removed again when no longer needed."""
 
     changed = pyqtSignal()
 
-    def __init__(self, platforms: list[tuple[str, str, str]], runner, config: dict) -> None:
+    def __init__(self, runner, config: dict) -> None:
         super().__init__()
         self.config = config
+        self.runner = runner
         self.tiles: dict[str, VideoTile] = {}
-        self.audio: str | None = None
-        lay = QVBoxLayout(self)
-        lay.setContentsMargins(0, 0, 0, 0)
-        lay.setSpacing(6)
+        self.audio: str | None = config.get("audio")
+        self.lay = QVBoxLayout(self)
+        self.lay.setContentsMargins(0, 0, 0, 0)
+        self.lay.setSpacing(6)
+        self._ok = bool(load_mpv())
 
-        if not load_mpv():
+        if not self._ok:
             hint = QLabel(
                 "<b>" + _("Videos need libmpv.") + "</b><br><br>"
                 "Ubuntu/Debian: <code>sudo apt install libmpv2</code><br>"
@@ -328,63 +337,90 @@ class VideoPanel(QWidget):
             )
             hint.setWordWrap(True)
             hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            lay.addWidget(hint)
+            self.lay.addWidget(hint)
             return
 
         self.empty = QLabel(_("Enter channels on the left and click “Connect” –\nthe streams will then appear here."))
         self.empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.empty.setStyleSheet("color:#888")
-        lay.addWidget(self.empty, 1)
-        for p, name, color in platforms:
-            tile = VideoTile(p, name, color, config.get("quality", {}).get(p, DEFAULT_QUALITY), runner,
-                             volume=(config.get("volume") or {}).get(p, 100))
-            tile.audio_requested.connect(self.toggle_audio)
-            tile.quality_changed.connect(self.changed)
-            tile.setVisible(False)
-            self.tiles[p] = tile
-            lay.addWidget(tile, 1)
-        self.audio = config.get("audio")
+        self.lay.addWidget(self.empty, 1)
 
     @property
     def available(self) -> bool:
-        return bool(self.tiles)
+        return self._ok
 
-    def set_sources(self, values: dict[str, str]) -> None:
-        for p, tile in self.tiles.items():
-            tile.set_source(values.get(p, ""))
-        if self.tiles:
-            self.empty.setVisible(not any(v.strip() for v in values.values()))
-            self._apply_audio()
+    def _setting(self, name: str, key: str, platform: str, default):
+        values = self.config.get(name) or {}
+        return values.get(key, values.get(platform, default))
+
+    def _tile(self, key: str, platform: str, channel: str) -> VideoTile:
+        tile = self.tiles.get(key)
+        if tile is None:
+            tile = VideoTile(platform, NAMES[platform], BADGES[platform][0],
+                             self._setting("quality", key, platform, DEFAULT_QUALITY), self.runner,
+                             volume=self._setting("volume", key, platform, 100), key=key, channel=channel)
+            tile.audio_requested.connect(self.toggle_audio)
+            tile.quality_changed.connect(self._remember)
+            self.tiles[key] = tile
+            self.lay.addWidget(tile, 1)
+        return tile
+
+    def set_sources(self, entries) -> None:
+        """entries: [(key, platform, channel)] – tiles for these, the others are removed."""
+        if not self._ok:
+            return
+        wanted = {key: (platform, channel) for key, platform, channel in entries if channel}
+        for key in [k for k in self.tiles if k not in wanted]:
+            self._remember()
+            tile = self.tiles.pop(key)
+            tile.shutdown()
+            tile.setParent(None)
+            tile.deleteLater()
+        for key, (platform, channel) in wanted.items():
+            self._tile(key, platform, channel).set_source(channel)
+        # keep the order of the entries
+        for i, key in enumerate(k for k, _p, _c in entries if k in self.tiles):
+            self.lay.removeWidget(self.tiles[key])
+            self.lay.insertWidget(1 + i, self.tiles[key], 1)
+        self.empty.setVisible(not self.tiles)
+        self._apply_audio()
 
     def stop_all(self) -> None:
         for tile in self.tiles.values():
             tile.stop()
 
     def toggle_audio(self, tile: VideoTile) -> None:
-        self.audio = None if self.audio == tile.platform else tile.platform
+        self.audio = None if self.audio == tile.key else tile.key
         self._apply_audio()
         self.changed.emit()
 
     def _apply_audio(self) -> None:
-        for p, t in self.tiles.items():
-            t.set_muted(p != self.audio)
+        for k, t in self.tiles.items():
+            t.set_muted(k != self.audio)
+
+    def _remember(self) -> None:
+        """Keeps quality and volume per channel, also for tiles that are removed later."""
+        for key, t in self.tiles.items():
+            self.config.setdefault("quality", {})[key] = t.quality
+            self.config.setdefault("volume", {})[key] = t.volume
+        self.changed.emit()
 
     def frame_counts(self) -> dict[str, tuple[int, float]]:
         """(frames drawn, ms spent drawing) per tile since the last call (performance log)."""
         out = {}
-        for p, t in self.tiles.items():
+        for k, t in self.tiles.items():
             video = getattr(t, "video", None)
             if video is not None and getattr(video, "frames", 0):
-                out[p] = (video.frames, video.paint_ms)
+                out[k] = (video.frames, video.paint_ms)
                 video.frames, video.paint_ms = 0, 0.0
         return out
 
     def state(self) -> dict:
-        return {
-            "quality": {p: t.quality for p, t in self.tiles.items()},
-            "volume": {p: t.volume for p, t in self.tiles.items()},
-            "audio": self.audio,
-        }
+        quality = dict(self.config.get("quality") or {})
+        volume = dict(self.config.get("volume") or {})
+        for key, t in self.tiles.items():
+            quality[key], volume[key] = t.quality, t.volume
+        return {"quality": quality, "volume": volume, "audio": self.audio}
 
     def shutdown(self) -> None:
         for tile in self.tiles.values():
