@@ -1,0 +1,51 @@
+# Weekly: are the Flatpak's self-built libraries (mpv, FFmpeg …) behind Flathub's mpv
+# package? Dependabot doesn't track these, so an issue is opened as a reminder.
+name: Flatpak libraries check
+
+on:
+  schedule:
+    - cron: "17 6 * * 1"  # Mondays
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Compare with Flathub's io.mpv.Mpv
+        id: check
+        run: |
+          if python3 packaging/flatpak/check-upstream.py > report.md; then
+            echo "behind=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "behind=true" >> "$GITHUB_OUTPUT"
+          fi
+          cat report.md
+
+      - name: Open a reminder issue
+        if: steps.check.outputs.behind == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TITLE: "Flatpak: native libraries behind Flathub's mpv"
+        run: |
+          if gh issue list --repo "$GITHUB_REPOSITORY" --state open --search "\"$TITLE\" in:title" --json number --jq length | grep -qx 0; then
+            {
+              echo "The weekly check found newer versions in Flathub's io.mpv.Mpv manifest:"
+              echo
+              cat report.md
+              echo
+              echo "Update the tags/commits (and sha256 for archives) in packaging/flatpak/io.github.Corrgan.MultiChat.yml,"
+              echo "then run the Build workflow. Security fixes in FFmpeg reach the Flatpak only this way."
+            } > body.md
+            gh issue create --repo "$GITHUB_REPOSITORY" --title "$TITLE" --body-file body.md
+          else
+            echo "An open reminder issue already exists."
+          fi

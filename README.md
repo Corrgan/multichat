@@ -30,7 +30,15 @@ sha256sum -c MultiChat-x86_64.AppImage.sha256   # optional: verify the download
 ./MultiChat-x86_64.AppImage
 ```
 
-`./MultiChat-x86_64.AppImage --selftest` checks that all components (Streamlink, yt-dlp, libmpv, translations, CA certificates …) can be loaded.
+`./MultiChat-x86_64.AppImage --selftest` checks that all components (Streamlink, yt-dlp, libmpv, translations, CA certificates …) can be loaded; `--selftest-net` makes one HTTPS request, `--selftest-video FILE` decodes a video with libmpv.
+
+### Verifying a download
+
+Every release file comes with a SHA256 checksum and a **build provenance attestation** signed by GitHub: it proves the file was built by this repository's workflow from a specific commit.
+
+```bash
+gh attestation verify MultiChat-x86_64.AppImage --repo Corrgan/multichat
+```
 
 The AppImage deliberately leaves system libraries (C++ runtime, GLib, fonts, X11/Wayland, OpenSSL …) to the host: the system's libmpv needs the system's versions of them, and the system's OpenSSL knows where the CA certificates are. Every desktop installation has these libraries; only the two packages below usually have to be installed.
 
@@ -90,7 +98,10 @@ The script creates its own Python environment in `build-appimage/` with the exac
 
 ### Automatic builds (GitHub Actions)
 
-The workflow [`.github/workflows/build.yml`](.github/workflows/build.yml) builds the AppImage in an Ubuntu 22.04 container and the Flatpak with `flatpak-builder` ([`packaging/flatpak/`](packaging/flatpak)); both are tested with `--selftest`:
+- [`tests.yml`](.github/workflows/tests.yml) runs the test suite on every push and pull request (including Dependabot's) and checks that the Flatpak's Python packages match the lock file.
+- [`build.yml`](.github/workflows/build.yml) builds the AppImage in an Ubuntu 22.04 container and the Flatpak with `flatpak-builder` ([`packaging/flatpak/`](packaging/flatpak)). Both run `--selftest`, `--selftest-net` (an HTTPS request) and `--selftest-video` (decodes a short clip with libmpv); the AppImage additionally in Fedora, Debian and Arch containers.
+- [`flatpak-upstream.yml`](.github/workflows/flatpak-upstream.yml) compares the Flatpak's self-built libraries (mpv, FFmpeg …) with Flathub's mpv package every week and opens an issue when they fall behind.
+
 
 - **Manual:** Actions → *Build* → *Run workflow* → AppImage and Flatpak are attached to the run as artifacts (14 days).
 - **Release:** bump `__version__` in `multichat/__init__.py` (and add the release to `packaging/io.github.Corrgan.MultiChat.metainfo.xml`), commit, then `git tag v<version> && git push origin v<version>` – the workflow creates the release with both files and checksums. If the tag doesn't match `__version__`, it stops with an error.
@@ -204,10 +215,12 @@ The overlay only answers requests from this computer (`127.0.0.1` / `localhost`)
 
 ## Notes
 
+- **Update check:** at start the app asks GitHub once whether a newer release exists (one request to `api.github.com`, nothing else is sent) and shows it in the menu bar. Switch it off under **Help → Check for new versions at start**.
+- **Settings file:** if `config.json` is damaged, it is kept as `config.json.bad-<time>` and the app starts with defaults instead of overwriting it; invalid single values are ignored.
 - **Twitch** chat is read via anonymous IRC; sending and moderating use the official Helix API.
 - **Kick** rotated the Pusher key for its chat in October 2026. The app therefore asks Kick for the current credentials when connecting (`web.kick.com/api/v1/realtime/connection`) and automatically tries the next key if one is rejected.
 - **Kick** chat is read via the unofficial website endpoints (chatroom ID from `kick.com/api/v2`, behind Cloudflare, hence `curl_cffi`). Sending and moderating use the official Kick API. If Kick changes its website, reading may break.
-- **YouTube** chat is read via `pytchat` (unofficial), sending and moderating use the official YouTube Data API.
+- **YouTube** chat is read directly from YouTube's web client API (like the chat in the browser, no API key or quota; also shows deleted messages and bans). If YouTube changes something and this fails, the app falls back to `pytchat` on its own; `MULTICHAT_YT_CHAT=pytchat` or `=innertube` forces one of them. Sending and moderating use the official YouTube Data API.
 - **YouTube video:** the app finds the running live stream via the channel page; mpv plays it via yt-dlp (mpv's `ytdl_hook`, which also handles separate video/audio tracks and DASH live streams). yt-dlp is included in the app – `MultiChat-x86_64.AppImage --yt-dlp …` behaves like the yt-dlp program. For YouTube, yt-dlp needs Node.js or Deno (included in the Flatpak).
 - Emotes: Twitch, Kick and YouTube emotes are shown as images, plus **7TV, BetterTTV and FrankerFaceZ** (menu **View → 7TV / BTTV / FFZ emotes**):
   - global sets apply to all three platforms

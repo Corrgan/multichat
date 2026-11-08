@@ -110,8 +110,48 @@ jobs:
           path: |
             MultiChat-x86_64.AppImage
             MultiChat-x86_64.AppImage.sha256
+            tests/data/testclip.webm
           if-no-files-found: error
           retention-days: 14
+
+  appimage-distros:
+    # The AppImage takes system libraries from the host – make sure it really works on
+    # other distributions than the build machine (TLS, libmpv, decoding a video).
+    name: AppImage on ${{ matrix.distro }}
+    needs: appimage
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - distro: fedora
+            image: fedora:latest
+            install: dnf install -y mpv-libs libxkbcommon fontconfig dbus-libs mesa-libEGL ca-certificates
+          - distro: debian
+            image: debian:stable
+            install: apt-get update && apt-get install -y --no-install-recommends libmpv2 libxkbcommon0 libfontconfig1 libdbus-1-3 libegl1 ca-certificates
+          - distro: arch
+            image: archlinux:latest
+            install: pacman -Syu --noconfirm mpv libxkbcommon fontconfig ca-certificates
+    container: ${{ matrix.image }}
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
+        with:
+          name: MultiChat-x86_64-AppImage  # contains tests/data/testclip.webm as well
+
+      - name: Install libmpv and desktop libraries
+        run: ${{ matrix.install }}
+
+      - name: Self-tests
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          chmod +x MultiChat-x86_64.AppImage
+          ./MultiChat-x86_64.AppImage --selftest
+          ./MultiChat-x86_64.AppImage --selftest-net
+          ./MultiChat-x86_64.AppImage --selftest-video tests/data/testclip.webm
 
   flatpak:
     name: Flatpak
@@ -158,6 +198,9 @@ jobs:
         run: |
           flatpak install --user -y --noninteractive MultiChat-x86_64.flatpak
           flatpak run --env=QT_QPA_PLATFORM=offscreen io.github.Corrgan.MultiChat --selftest
+          flatpak run --env=QT_QPA_PLATFORM=offscreen io.github.Corrgan.MultiChat --selftest-net
+          flatpak run --env=QT_QPA_PLATFORM=offscreen --filesystem="$PWD/tests/data:ro" \
+            io.github.Corrgan.MultiChat --selftest-video "$PWD/tests/data/testclip.webm"
 
       - name: Checksum
         run: sha256sum MultiChat-x86_64.flatpak | tee MultiChat-x86_64.flatpak.sha256
@@ -173,15 +216,23 @@ jobs:
 
   release:
     name: Release
-    needs: [appimage, flatpak]
+    needs: [appimage, appimage-distros, flatpak]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-24.04
     permissions:
       contents: write  # the only job with write access
+      id-token: write  # build provenance (signed by GitHub, verifiable with `gh attestation verify`)
+      attestations: write
     steps:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
         with:
           merge-multiple: true
+
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8  # v4.2.2
+        with:
+          subject-path: |
+            MultiChat-x86_64.AppImage
+            MultiChat-x86_64.flatpak
 
       - uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3  # v3.0.4
         with:
