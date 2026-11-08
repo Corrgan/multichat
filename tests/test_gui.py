@@ -583,3 +583,45 @@ def test_video_settings_stay_bounded():
     many = {f"twitch:chan{i}": "720p" for i in range(config.MAX_REMEMBERED + 50)}
     kept = config._newest(many)
     assert len(kept) == config.MAX_REMEMBERED and "twitch:chan149" in kept and "twitch:chan0" not in kept
+
+
+def test_busy_group_does_not_push_out_a_quiet_one(window, app, monkeypatch):
+    from multichat.ui import main_window as mw
+
+    monkeypatch.setattr(mw, "MAX_MESSAGES", 50)
+    monkeypatch.setattr(mw, "TRIM_STEP", 10)
+    w = window
+    w._trim_at = 50
+    w.panels[0].rows["twitch"].edit.setText("quietchan")
+    busy = w.add_group()
+    busy.rows["twitch"].edit.setText("busychan")
+
+    def msg(chan, text):
+        m = ChatMessage("twitch", chan, "User", text)
+        m.source = f"twitch:{chan}"
+        w.add_message(m)
+
+    for i in range(30):
+        msg("quietchan", f"quiet {i}")
+    for i in range(400):
+        msg("busychan", f"busy {i}")
+        if i % 25 == 0:
+            w._flush_messages()
+    w._flush_messages()
+    quiet = [m for m in w.messages.values() if m.channel == "quietchan"]
+    noisy = [m for m in w.messages.values() if m.channel == "busychan"]
+    assert len(quiet) == 30  # all kept – only the busy group is trimmed
+    assert 50 <= len(noisy) <= 60 and noisy[-1].text == "busy 399"
+
+
+def test_overlay_payloads_carry_source_and_groups(window):
+    from multichat.chat.models import Deletion as D
+    from multichat.overlay.server import deletion_payload, message_payload
+
+    m = ChatMessage("twitch", "examplechan", "User", "hi")
+    m.source = "twitch:examplechan"
+    p = message_payload(m, None, [2])
+    assert p["source"] == "twitch:examplechan" and p["groups"] == [2]
+    d = deletion_payload(D("twitch", user_id="7", source="twitch:examplechan"))
+    assert d["source"] == "twitch:examplechan" and d["user_id"] == "7"
+    assert window.overlay_url(2).endswith("&group=2") and "group" not in window.overlay_url()

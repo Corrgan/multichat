@@ -12,3 +12,15 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ["MULTICHAT_SECRETS"] = "file"  # never touch the real keyring from tests
 os.environ["MULTICHAT_NO_UPDATE_CHECK"] = "1"  # no requests to GitHub from tests
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+import pytest  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _fresh_shared_answers():
+    """Kick/YouTube answers are shared for a few seconds – not between tests."""
+    from multichat.chat import kick, youtube
+
+    kick._channel_cache.clear()
+    youtube.LIVE_CACHE.clear()
+    yield

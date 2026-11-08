@@ -10,6 +10,7 @@ URL parameters of the page:
   max=40            maximum number of visible messages
   size=22           font size in px
   platforms=twitch,kick   show only these platforms
+  group=2           show only the second channel group (tab order)
   badges=0          hide the platform badges
 """
 from __future__ import annotations
@@ -34,7 +35,8 @@ MAX_BACKLOG = 500  # messages queued for a slow client before it is disconnected
 
 
 
-def message_payload(m: ChatMessage, alerts_cfg: dict | None = None) -> dict:
+def message_payload(m: ChatMessage, alerts_cfg: dict | None = None, groups: list[int] | None = None) -> dict:
+    """groups: numbers (1 = first tab) of the channel groups that show the message."""
     return {
         "event": m.event,
         "headline": alerts.headline(m) if m.event else "",
@@ -45,12 +47,16 @@ def message_payload(m: ChatMessage, alerts_cfg: dict | None = None) -> dict:
         "color": m.color,
         "msg_id": m.msg_id,
         "user_id": m.user_id,
+        "source": m.source,
+        "groups": groups or [],
         "parts": [{"t": k, "v": v, "a": a} for k, v, a in m.parts],
     }
 
 
 def deletion_payload(e: Deletion) -> dict:
-    return {"type": "del", "platform": e.platform, "msg_id": e.msg_id, "user_id": e.user_id, "all": e.clear_all}
+    # source: a ban in one channel must not remove the user's messages of another channel
+    return {"type": "del", "platform": e.platform, "source": e.source, "msg_id": e.msg_id, "user_id": e.user_id,
+            "all": e.clear_all}
 
 
 class OverlayServer:

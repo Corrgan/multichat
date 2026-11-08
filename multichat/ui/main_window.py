@@ -45,6 +45,7 @@ from .window_groups import MAX_MESSAGES, GroupsMixin
 log = logging.getLogger("multichat")
 
 
+TRIM_STEP = 100  # new messages between two trims of the message list
 FLUSH_MS = 100  # incoming messages are shown in batches – busy chats send hundreds per second
 MAX_INPUT = 500  # longest message the platforms accept
 
@@ -100,6 +101,7 @@ class MainWindow(GroupsMixin, ConnectionsMixin, QMainWindow):
         self.panels: list[GroupPanel] = []
         self._route: dict[str, list[GroupPanel]] = {}  # source key → groups that show it
         self.messages: OrderedDict[int, ChatMessage] = OrderedDict()
+        self._trim_at = MAX_MESSAGES  # message count that triggers the next _trim_messages()
         self._incoming: list[ChatMessage] = []
         self._flush_timer = QTimer(self, singleShot=True, interval=FLUSH_MS)
         self._flush_timer.timeout.connect(self._flush_messages)
@@ -302,6 +304,8 @@ class MainWindow(GroupsMixin, ConnectionsMixin, QMainWindow):
         self.overlay_action.setCheckable(True)
         self.overlay_action.toggled.connect(self.toggle_overlay)
         ov.addAction(_("Copy overlay URL")).triggered.connect(self.copy_overlay_url)
+        ov.addAction(_("Copy overlay URL for the active group")).triggered.connect(
+            lambda: self.copy_overlay_url(self.panels.index(self.active_panel()) + 1))
 
         hlp = mb.addMenu(_("Help"))
         hlp.addAction(_("Copy log (last 300 lines)")).triggered.connect(self.copy_log)
@@ -427,10 +431,12 @@ class MainWindow(GroupsMixin, ConnectionsMixin, QMainWindow):
         self._msg_count += len(batch)
         for msg in batch:
             self.messages[msg.uid] = msg
-            self.overlay.publish(message_payload(msg, self.view.alerts_cfg))
+            if self.overlay.running:
+                groups = [i + 1 for i, pn in enumerate(self.panels) if pn in self.panels_for(msg)]
+                self.overlay.publish(message_payload(msg, self.view.alerts_cfg, groups))
             self.mod.observe(msg)
-        while len(self.messages) > MAX_MESSAGES * len(self.panels):
-            self.messages.popitem(last=False)
+        if len(self.messages) > self._trim_at:
+            self._trim_messages()
         visible = self._visible_panels()
         names = [re.escape(a.user_name) for a in self.accounts.values() if a.logged_in and a.user_name]
         own = re.compile(r"@(?:%s)\b" % "|".join(names), re.IGNORECASE) if names else None  # not "@me" in "@meow"
@@ -453,6 +459,30 @@ class MainWindow(GroupsMixin, ConnectionsMixin, QMainWindow):
             v.append_many(v.items(shown))  # scrolls along
         if any(p not in visible for p in self.panels):
             self._update_titles()
+
+    def _trim_messages(self) -> None:
+        """Each group keeps its last MAX_MESSAGES. With one shared limit, a busy group pushed
+        a quiet group's history out, and the next full re-render (filter, font size) showed
+        the quiet group with far fewer lines. Runs every TRIM_STEP new messages."""
+        counts: dict[int, int] = {}
+        for m in self.messages.values():
+            for pn in self.panels_for(m):
+                counts[id(pn)] = counts.get(id(pn), 0) + 1
+        over = {k for k, n in counts.items() if n > MAX_MESSAGES}
+        for uid, m in list(self.messages.items()):
+            if not over:
+                break
+            shown_in = self.panels_for(m)
+            if all(id(pn) in over for pn in shown_in):  # also messages no group shows any more
+                del self.messages[uid]
+                for pn in shown_in:
+                    counts[id(pn)] -= 1
+                    if counts[id(pn)] <= MAX_MESSAGES:
+                        over.discard(id(pn))
+        if len(self.messages) > MAX_MESSAGES * (len(self.panels) + 1):  # left-overs of removed channels
+            for uid in [u for u, m in self.messages.items() if not self.panels_for(m)]:
+                del self.messages[uid]
+        self._trim_at = len(self.messages) + TRIM_STEP
 
     def render_all(self) -> None:
         """Requests a full re-render (filters, deletions, failed images); coalesced."""
@@ -540,6 +570,7 @@ class MainWindow(GroupsMixin, ConnectionsMixin, QMainWindow):
     def clear_chat(self) -> None:
         self._incoming.clear()
         self.messages.clear()
+        self._trim_at = MAX_MESSAGES
         for v in self.views():
             v.rebuild([])
             v.scroll_to_bottom()
@@ -720,8 +751,10 @@ class MainWindow(GroupsMixin, ConnectionsMixin, QMainWindow):
             self.apps.replace_all(dlg.values())
 
     # ---- Overlay --------------------------------------------------------- #
-    def overlay_url(self) -> str:
-        return f"http://127.0.0.1:{self.config['overlay'].get('port', OVERLAY_PORT)}/?fade=0&size=20"
+    def overlay_url(self, group: int = 0) -> str:
+        """group: only that channel group (1 = first tab), 0 = all."""
+        url = f"http://127.0.0.1:{self.config['overlay'].get('port', OVERLAY_PORT)}/?fade=0&size=20"
+        return url + (f"&group={group}" if group else "")
 
     def toggle_overlay(self, on: bool) -> None:
         self.config["overlay"]["enabled"] = on
@@ -738,10 +771,11 @@ class MainWindow(GroupsMixin, ConnectionsMixin, QMainWindow):
         else:
             self.run(self.overlay.stop())
 
-    def copy_overlay_url(self) -> None:
-        QApplication.clipboard().setText(self.overlay_url())
+    def copy_overlay_url(self, group: int = 0) -> None:
+        url = self.overlay_url(group)
+        QApplication.clipboard().setText(url)
         hint = "" if self.overlay.running else " " + _("(overlay is still off – enable it under “Overlay”)")
-        self.statusBar().showMessage(_("Copied: {url}").format(url=self.overlay_url()) + hint, 8000)
+        self.statusBar().showMessage(_("Copied: {url}").format(url=url) + hint, 8000)
 
     # ---- Shutdown -------------------------------------------------------- #
     def closeEvent(self, event) -> None:  # noqa: N802

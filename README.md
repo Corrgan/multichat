@@ -202,12 +202,15 @@ The URL can be customised:
 | `size` | font size in px | `size=24` |
 | `max` | maximum number of messages | `max=20` |
 | `platforms` | only these platforms | `platforms=twitch,kick` |
+| `group` | only this channel group (1 = first tab) – **Overlay → Copy overlay URL for the active group** | `group=2` |
 | `badges` | hide platform icons | `badges=0` |
 | `alerts` | no highlight for alerts (subs, bits, raids …) | `alerts=0` |
 
 Example: `http://127.0.0.1:17564/?fade=30&size=24&platforms=twitch,youtube`
 
-Deleted messages and banned users disappear from the overlay as well.
+Deleted messages and banned users disappear from the overlay as well – only in the channel where they were deleted or banned.
+
+With several channel groups, the overlay shows all of them; add one browser source per group with `group=` to keep them apart. The number is the group's position in the tabs, so it changes when a group in front of it is removed.
 
 The overlay only answers requests from this computer (`127.0.0.1` / `localhost`); other websites open in your browser cannot read the chat through it. Use the URL as copied – addresses such as the machine's LAN IP are rejected.
 

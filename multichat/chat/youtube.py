@@ -14,7 +14,7 @@ import os
 import re
 import time
 
-from .models import Backoff, ChatMessage, Emit, Part, Status, roles, with_extra_emotes as _extra
+from .models import Backoff, ChatMessage, Emit, Part, Status, TTLCache, roles, with_extra_emotes as _extra
 from .youtube_innertube import ChatEnded, InnertubeChat, InnertubeError
 
 log = logging.getLogger("multichat.chat")
@@ -66,8 +66,16 @@ def parse_live_page(page: str) -> tuple[str, str] | None:
     return m.group(1), html.unescape(t.group(1)) if t else ""
 
 
+# "is the channel live?" – chat and video tile check every minute; one answer serves both
+LIVE_CACHE = TTLCache(30)
+
+
 async def find_live_video(channel_url: str) -> tuple[str, str] | None:
     import aiohttp
+
+    fresh, live = LIVE_CACHE.get(channel_url)
+    if fresh:
+        return live
 
     async with aiohttp.ClientSession(
         trust_env=True, cookies=YT_COOKIES, headers=YT_HEADERS, timeout=aiohttp.ClientTimeout(total=20)
@@ -79,7 +87,9 @@ async def find_live_video(channel_url: str) -> tuple[str, str] | None:
             if "consent." in (r.url.host or ""):
                 raise RuntimeError("YouTube cookie consent page blocks the lookup")
             page = await r.text()
-    return parse_live_page(page)
+    live = parse_live_page(page)
+    LIVE_CACHE.put(channel_url, live)
+    return live
 
 
 def _yt_parts(c) -> list[Part]:

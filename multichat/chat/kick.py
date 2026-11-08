@@ -10,7 +10,7 @@ import re
 
 import websockets
 
-from .models import Backoff, ChatMessage, Deletion, Emit, Part, Status, kick_channel, roles, with_extra_emotes as _extra
+from .models import Backoff, ChatMessage, Deletion, Emit, Part, Status, TTLCache, kick_channel, roles, with_extra_emotes as _extra
 
 log = logging.getLogger("multichat.chat")
 
@@ -116,8 +116,17 @@ def _fetch_kick_channel(slug: str) -> tuple[int, str]:
 
 def fetch_kick_json(slug: str) -> dict:
     """Channel info from the Kick website API (also contains `livestream` and `playback_url`).
-    Kick sits behind Cloudflare, hence curl_cffi (browser fingerprint)."""
-    return _kick_get(f"https://kick.com/api/v2/channels/{kick_channel(slug)}", slug)
+    Kick sits behind Cloudflare, hence curl_cffi (browser fingerprint). Answers are shared
+    for a few seconds (chat and video tile ask together)."""
+    slug = kick_channel(slug)
+    fresh, data = _channel_cache.get(slug)
+    if not fresh:
+        data = _kick_get(f"https://kick.com/api/v2/channels/{slug}", slug)
+        _channel_cache.put(slug, data)
+    return data
+
+
+_channel_cache = TTLCache(20)
 
 
 _KICK_USER_RE = re.compile(r"[A-Za-z0-9_-]{1,64}")

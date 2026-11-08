@@ -65,6 +65,37 @@ def roles(names) -> tuple:
     return tuple(sorted(out))
 
 
+class TTLCache:
+    """Thread-safe answers for a few seconds. Chat and video tile of one channel ask the
+    platform the same question at nearly the same time (Kick channel info, "is the YouTube
+    channel live?") – one request instead of two, fewer chances to be rate-limited."""
+
+    def __init__(self, ttl: float, size: int = 64) -> None:
+        import threading
+
+        self.ttl, self.size = ttl, size
+        self._data: dict = {}
+        self._lock = threading.Lock()
+
+    def get(self, key):
+        """(True, value) if fresh, else (False, None)."""
+        with self._lock:
+            hit = self._data.get(key)
+            if hit and hit[0] > time.monotonic():
+                return True, hit[1]
+            return False, None
+
+    def clear(self) -> None:
+        with self._lock:
+            self._data.clear()
+
+    def put(self, key, value) -> None:
+        with self._lock:
+            self._data[key] = (time.monotonic() + self.ttl, value)
+            while len(self._data) > self.size:
+                self._data.pop(next(iter(self._data)))
+
+
 def user_key(m: "ChatMessage") -> str:
     """Stable key for a chatter: platform user ID, else the lower-case name."""
     return m.user_id or m.user.lower()

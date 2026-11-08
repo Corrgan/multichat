@@ -23,6 +23,7 @@ const q=new URLSearchParams(location.search);
 const fade=+q.get("fade")||0, max=+q.get("max")||40;
 const show=(q.get("platforms")||"twitch,kick,youtube").split(",");
 const badges=q.get("badges")!=="0";
+const group=parseInt(q.get("group"),10)||0;
 const highlight=q.get("alerts")!=="0";
 const AC={sub:"#bf94ff",gift:"#bf94ff",member:"#5fd38d",raid:"#ffb84d",bits:"#e88ef0",superchat:"#ffcc4d"};
 const AI={sub:"⭐",gift:"🎁",member:"⭐",raid:"🚀",bits:"💎",superchat:"💰"};
@@ -41,8 +42,9 @@ function badge(p){
 const chat=document.getElementById("chat");
 function add(m){
   if(!show.includes(m.platform))return;
+  if(group&&!(m.groups||[]).includes(group))return;
   const d=document.createElement("div");d.className="m";
-  d.dataset.p=m.platform;d.dataset.mid=m.msg_id||"";d.dataset.uid=m.user_id||"";
+  d.dataset.p=m.platform;d.dataset.src=m.source||"";d.dataset.mid=m.msg_id||"";d.dataset.uid=m.user_id||"";
   if(badges){d.append(badge(m.platform));}
   if(m.headline){
     const h=document.createElement("span");h.className="h";
@@ -69,6 +71,7 @@ function add2(d){
 function del(e){
   for(const d of [...chat.children]){
     if(d.dataset.p!==e.platform)continue;
+    if(e.source&&d.dataset.src&&d.dataset.src!==e.source)continue;
     if(e.all||(e.msg_id&&d.dataset.mid===e.msg_id)||(e.user_id&&d.dataset.uid===e.user_id))d.remove();
   }
 }
