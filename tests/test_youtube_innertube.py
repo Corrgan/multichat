@@ -1,0 +1,126 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+"""Own YouTube chat reader against a fake YouTube, and the fallback to pytchat."""
+import asyncio
+import json
+import sys
+import types
+
+from aiohttp import web
+
+from multichat.chat import youtube, youtube_innertube as it
+from multichat.chat.models import ChatMessage, Deletion
+
+PORT = 18994
+
+
+def text_msg(mid, author, runs, channel="UCa"):
+    return {"addChatItemAction": {"item": {"liveChatTextMessageRenderer": {
+        "id": mid, "authorName": {"simpleText": author}, "authorExternalChannelId": channel,
+        "message": {"runs": runs}}}}}
+
+
+INITIAL = {
+    "contents": {"liveChatRenderer": {
+        "continuations": [{"invalidationContinuationData": {"continuation": "TOP", "timeoutMs": 10000}}],
+        "header": {"liveChatHeaderRenderer": {"viewSelector": {"sortFilterSubMenuRenderer": {"subMenuItems": [
+            {"title": "Top chat", "continuation": {"reloadContinuationData": {"continuation": "TOP"}}},
+            {"title": "Live chat", "continuation": {"reloadContinuationData": {"continuation": "ALL"}}},
+        ]}}}},
+        "actions": [text_msg("m1", "Alice", [{"text": "hello "}, {"emoji": {
+            "emojiId": "UCx/abc", "shortcuts": [":wave:"], "isCustomEmoji": True,
+            "image": {"thumbnails": [{"url": "https://yt3.example/e1=w24"}, {"url": "https://yt3.example/e1=w48"}]}}}])],
+    }}
+}
+PAGE = ('<html><script>ytcfg.set({"INNERTUBE_API_KEY":"KEY","INNERTUBE_CLIENT_VERSION":"2.20261101.00.00",'
+        '"VISITOR_DATA":"VD"});</script><script>window["ytInitialData"] = ' + json.dumps(INITIAL) + ';</script></html>')
+
+
+def test_parse_page_prefers_live_chat():
+    context, token, actions = it.parse_page(PAGE)
+    assert token == "ALL" and context["client"]["clientVersion"] == "2.20261101.00.00"
+    assert context["client"]["visitorData"] == "VD" and len(actions) == 1
+
+
+def test_parse_actions():
+    actions = [
+        text_msg("m2", "Bob", [{"text": "hi "}, {"emoji": {"emojiId": "😀", "shortcuts": [":grin:"]}}]),
+        {"addChatItemAction": {"item": {"liveChatPaidMessageRenderer": {
+            "id": "p1", "authorName": {"simpleText": "Rich"}, "authorExternalChannelId": "UCr",
+            "purchaseAmountText": {"simpleText": "€5.00"}, "message": {"runs": [{"text": "gg"}]}}}}},
+        {"markChatItemAsDeletedAction": {"targetItemId": "m2"}},
+        {"markChatItemsByAuthorAsDeletedAction": {"externalChannelId": "UCbad"}},
+        {"addChatItemAction": {"item": {"liveChatViewerEngagementMessageRenderer": {"id": "x"}}}},
+        {"addLiveChatTickerItemAction": {}},
+    ]
+    ev = it.parse_actions(actions, "vid")
+    assert isinstance(ev[0], ChatMessage) and ev[0].text == "hi 😀" and ev[0].user_id == "UCa"
+    assert ev[1].parts[0] == ("text", "[💰 €5.00] ", "") and ev[1].user == "Rich"
+    assert isinstance(ev[2], Deletion) and ev[2].msg_id == "m2"
+    assert isinstance(ev[3], Deletion) and ev[3].user_id == "UCbad"
+    assert len(ev) == 4
+
+
+def test_reader_against_fake_youtube(monkeypatch):
+    polls = []
+
+    async def page(req):
+        assert req.query["v"] == "vid12345678"
+        return web.Response(text=PAGE, content_type="text/html")
+
+    async def get_live_chat(req):
+        body = await req.json()
+        polls.append(body["continuation"])
+        if len(polls) == 1:
+            return web.json_response({"continuationContents": {"liveChatContinuation": {
+                "continuations": [{"timedContinuationData": {"continuation": "NEXT", "timeoutMs": 100}}],
+                "actions": [text_msg("m1", "Alice", [{"text": "dup"}]),  # already seen → skipped
+                            text_msg("m3", "Carol", [{"text": "new"}])]}}})
+        return web.json_response({"responseContext": {}})  # no continuation → stream ended
+
+    async def run():
+        app = web.Application()
+        app.router.add_get("/live_chat", page)
+        app.router.add_post("/get_live_chat", get_live_chat)
+        runner = web.AppRunner(app)
+        await runner.setup()
+        await web.TCPSite(runner, "127.0.0.1", PORT).start()
+        monkeypatch.setattr(it, "LIVE_CHAT_URL", f"http://127.0.0.1:{PORT}/live_chat")
+        monkeypatch.setattr(it, "GET_LIVE_CHAT_URL", f"http://127.0.0.1:{PORT}/get_live_chat")
+        got, connected = [], []
+        try:
+            await youtube._read_chat("vid12345678", got.append, None, lambda: connected.append(1))
+        finally:
+            await runner.cleanup()
+        return got, connected
+
+    got, connected = asyncio.run(run())
+    assert connected == [1] and polls == ["ALL", "NEXT"]
+    assert [m.user for m in got] == ["Alice", "Carol"]
+    assert got[0].parts[1] == ("emote", "https://yt3.example/e1=w48", ":wave:")
+
+
+def test_falls_back_to_pytchat(monkeypatch):
+    async def broken(self, emit, on_connected=None, emotes_apply=None):
+        raise it.InnertubeError("ytInitialData not found on the live chat page")
+
+    used = []
+
+    class FakeChat:
+        def is_alive(self):
+            return not used
+
+        def get(self):
+            used.append(1)
+            item = types.SimpleNamespace(author=types.SimpleNamespace(name="Viewer", channelId="UC1"),
+                                         message="via pytchat", messageEx=["via pytchat"], id="p", type="textMessage")
+            return types.SimpleNamespace(sync_items=lambda: [item])
+
+        def terminate(self):
+            pass
+
+    monkeypatch.delenv("MULTICHAT_YT_CHAT", raising=False)
+    monkeypatch.setattr(it.InnertubeChat, "run", broken)
+    monkeypatch.setitem(sys.modules, "pytchat", types.SimpleNamespace(create=lambda **kw: FakeChat()))
+    got = []
+    asyncio.run(youtube._read_chat("vid12345678", got.append, None, lambda: None))
+    assert [m.text for m in got] == ["via pytchat"]

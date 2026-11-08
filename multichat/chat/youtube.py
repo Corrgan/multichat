@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 Corrgan
-"""YouTube chat via pytchat (live chat without an API key).
+"""YouTube chat without an API key: our own InnerTube reader, pytchat as fallback.
 
 Input: channel (@handle, channel URL, UC… ID) → the current live stream is found
 automatically. Alternatively a video URL/ID.
@@ -10,10 +10,12 @@ from __future__ import annotations
 import asyncio
 import html
 import logging
+import os
 import re
 import time
 
 from .models import Backoff, ChatMessage, Emit, Part, Status, with_extra_emotes as _extra
+from .youtube_innertube import ChatEnded, InnertubeChat, InnertubeError
 
 log = logging.getLogger("multichat.chat")
 
@@ -95,13 +97,66 @@ def _yt_parts(c) -> list[Part]:
     return out
 
 
-async def run_youtube(value: str, emit: Emit, status: Status, emotes=None) -> None:
+def chat_reader_mode() -> str:
+    """MULTICHAT_YT_CHAT=innertube|pytchat forces a reader; default: InnerTube, pytchat as fallback."""
+    mode = os.environ.get("MULTICHAT_YT_CHAT", "auto").lower()
+    return mode if mode in ("innertube", "pytchat") else "auto"
+
+
+async def _read_pytchat(vid: str, emit: Emit, emotes) -> None:
+    """Reads the chat with pytchat until the stream ends."""
     import pytchat  # type: ignore
 
+    chat = await asyncio.to_thread(pytchat.create, video_id=vid, interruptable=False)
+    try:
+        while chat.is_alive():
+            items = await asyncio.to_thread(lambda: list(chat.get().sync_items()))
+            for c in items:
+                emit(
+                    ChatMessage(
+                        platform="youtube",
+                        channel=vid,
+                        user=c.author.name,
+                        text=c.message,
+                        parts=_extra(emotes, "youtube", vid, _yt_parts(c)),
+                        msg_id=getattr(c, "id", None),
+                        user_id=getattr(c.author, "channelId", None),
+                    )
+                )
+            await asyncio.sleep(1)
+    finally:
+        try:  # stops pytchat's background fetching (also on disconnect)
+            chat.terminate()
+        except Exception:  # noqa: BLE001
+            pass
+
+
+async def _read_chat(vid: str, emit: Emit, emotes, connected) -> None:
+    """Own InnerTube reader; if YouTube's format no longer matches it, pytchat takes over."""
+    mode = chat_reader_mode()
+    if mode != "pytchat":
+        def with_emotes(ev):
+            if isinstance(ev, ChatMessage):
+                ev.parts = _extra(emotes, "youtube", vid, ev.parts)
+            return ev
+
+        try:
+            await InnertubeChat(vid, YT_HEADERS, YT_COOKIES).run(emit, connected, with_emotes)
+            return
+        except ChatEnded:
+            return
+        except InnertubeError as e:
+            if mode == "innertube":
+                raise
+            log.warning("YouTube: own chat reader failed (%s) – falling back to pytchat", e)
+    connected()
+    await _read_pytchat(vid, emit, emotes)
+
+
+async def run_youtube(value: str, emit: Emit, status: Status, emotes=None) -> None:
     kind, target = youtube_target(value)
     backoff = Backoff(first=15)
     while True:
-        chat = None
         try:
             if kind == "video":
                 vid, title = target, ""
@@ -115,27 +170,15 @@ async def run_youtube(value: str, emit: Emit, status: Status, emotes=None) -> No
                     continue
                 vid, title = found
             status("youtube", "connecting …")
-            chat = await asyncio.to_thread(pytchat.create, video_id=vid, interruptable=False)
-            if title:
-                status("youtube", "live: {title}", title=title)
-            else:
-                status("youtube", "connected ({channel})", channel=vid)
-            backoff.connected()
-            while chat.is_alive():
-                items = await asyncio.to_thread(lambda: list(chat.get().sync_items()))
-                for c in items:
-                    emit(
-                        ChatMessage(
-                            platform="youtube",
-                            channel=vid,
-                            user=c.author.name,
-                            text=c.message,
-                            parts=_extra(emotes, "youtube", vid, _yt_parts(c)),
-                            msg_id=getattr(c, "id", None),
-                            user_id=getattr(c.author, "channelId", None),
-                        )
-                    )
-                await asyncio.sleep(1)
+
+            def connected(title=title, vid=vid) -> None:
+                if title:
+                    status("youtube", "live: {title}", title=title)
+                else:
+                    status("youtube", "connected ({channel})", channel=vid)
+                backoff.connected()
+
+            await _read_chat(vid, emit, emotes, connected)
             if kind == "video":
                 status("youtube", "stream ended or chat unreachable – retrying in {seconds} s", seconds=15)
             else:
@@ -148,9 +191,3 @@ async def run_youtube(value: str, emit: Emit, status: Status, emotes=None) -> No
             delay = backoff.next()
             status("youtube", "error: {error} – retrying in {seconds} s", error=e, seconds=delay)
             await asyncio.sleep(delay)
-        finally:
-            if chat is not None:  # stops pytchat's background fetching (also on disconnect)
-                try:
-                    chat.terminate()
-                except Exception:  # noqa: BLE001
-                    pass
