@@ -17,11 +17,14 @@ from PyQt6.QtGui import QImage, QImageReader, QMovie, QTextBlockFormat, QTextCha
 from PyQt6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
 from PyQt6.QtWidgets import QTextBrowser
 
-from ..chat.models import ChatMessage
+from ..chat.models import ChatMessage, user_key
 from ..core.constants import BADGES, BROWSER_UA, FAVICONS
 from ..core.i18n import _
 
-EMOTE_H = 22
+EMOTE_H = 22  # emote height at the default font size
+DEFAULT_FONT = 14
+FONT_RANGE = (9, 40)
+ROLE_ICONS = {"broadcaster": "🎥", "moderator": "🛡", "vip": "💎", "subscriber": "★", "verified": "✔"}
 IMAGE_RES = QTextDocument.ResourceType.ImageResource.value
 MAX_IMAGE_BYTES = 4 * 1024 * 1024  # emotes are a few KB – anything bigger is not an emote
 MAX_CACHED = 1500  # distinct images kept in memory
@@ -38,18 +41,22 @@ class ChatView(QTextBrowser):
     """Chat view that loads emote images asynchronously."""
 
     rerender_needed = pyqtSignal()
+    name_context = pyqtSignal(QUrl)  # right-click on a user name
 
     def __init__(self) -> None:
         super().__init__()
         self.setOpenLinks(False)
-        self.setStyleSheet("QTextBrowser { background:#18181b; color:#efeff1; font-size:14px; border:none; }")
+        self.font_px = DEFAULT_FONT
+        self.emote_h = EMOTE_H
+        self.selected: tuple[str, str] | None = None  # (platform, user key) of the selected user
+        self._apply_style()
         self.nam = QNetworkAccessManager(self)
         self.nam.setTransferTimeout(15000)
         self.cache: OrderedDict[str, QImage] = OrderedDict()  # LRU: least recently shown first
         self.movies: dict[str, tuple[QMovie, QBuffer]] = {}
         self.pending: set[str] = set()
         self.failed: set[str] = set()
-        self.placeholder = QImage(EMOTE_H, EMOTE_H, QImage.Format.Format_ARGB32)
+        self.placeholder = QImage(EMOTE_H, EMOTE_H, QImage.Format.Format_ARGB32)  # resized in set_font_px
         self.placeholder.fill(Qt.GlobalColor.transparent)
         self._relayout = QTimer(self, singleShot=True, interval=120)  # new images change line widths
         self._relayout.timeout.connect(self._do_relayout)
@@ -77,7 +84,7 @@ class ChatView(QTextBrowser):
     # ---- Images ---------------------------------------------------------- #
     def _target_size(self, size: QSize) -> QSize:
         """Size in device pixels for the line height (keeps the aspect ratio)."""
-        h = max(1, round(EMOTE_H * self.devicePixelRatioF()))
+        h = max(1, round(self.emote_h * self.devicePixelRatioF()))
         w = max(1, round(size.width() * h / max(1, size.height())))
         return QSize(min(w, h * 6), h)
 
@@ -182,12 +189,43 @@ class ChatView(QTextBrowser):
             cur.insertHtml(h)
         cur.endEditBlock()
 
+    # ---- Font size and selection ----------------------------------------- #
+    def _apply_style(self) -> None:
+        self.setStyleSheet(
+            f"QTextBrowser {{ background:#18181b; color:#efeff1; font-size:{self.font_px}px; border:none; }}"
+        )
+
+    def set_font_px(self, px: int) -> None:
+        """Chat text size; emotes scale with it. Cached images are rescaled by loading them again."""
+        px = max(FONT_RANGE[0], min(FONT_RANGE[1], int(px)))
+        if px == self.font_px:
+            return
+        self.font_px = px
+        self.emote_h = round(EMOTE_H * px / DEFAULT_FONT)
+        self.placeholder = QImage(self.emote_h, self.emote_h, QImage.Format.Format_ARGB32)
+        self.placeholder.fill(Qt.GlobalColor.transparent)
+        for movie, _buf in self.movies.values():
+            movie.stop()
+            movie.deleteLater()
+        self.movies.clear()
+        self.cache.clear()
+        self.document().clear()  # also drops the document's image resources
+        self._apply_style()
+        self.rerender_needed.emit()
+
+    def contextMenuEvent(self, event) -> None:  # noqa: N802
+        anchor = self.anchorAt(event.pos())
+        if anchor.startswith("msg:"):
+            self.name_context.emit(QUrl(anchor))
+            return
+        super().contextMenuEvent(event)
+
     # ---- Rendering ------------------------------------------------------- #
     def _part_html(self, part) -> str:
         kind, value, alt = part
         if kind == "emote" and value not in self.failed:
             self.touch(value)
-            return f"<img src='{html.escape(value, quote=True)}' height='{EMOTE_H}' align='middle'>"
+            return f"<img src='{html.escape(value, quote=True)}' height='{self.emote_h}' align='middle'>"
         return html.escape(alt if kind == "emote" else value)
 
     def message_html(self, m: ChatMessage) -> str:
@@ -203,9 +241,15 @@ class ChatView(QTextBrowser):
             if icon
             else f"<span style='background:{color};color:#000;font-size:11px'>&nbsp;{tag}&nbsp;</span>"
         )
+        roles = "".join(ROLE_ICONS[r] for r in m.badges if r in ROLE_ICONS)
+        roles = f"<span style='color:#aaa'>{roles}</span>&nbsp;" if roles else ""
+        selected = self.selected == (m.platform, user_key(m))
+        name_style = f"color:{name_color};font-weight:bold;text-decoration:none"
+        if selected:
+            name_style += ";background:#3a3a55"
         return (
             f"<span style='color:#888'>{ts}</span> "
-            f"{badge} "
-            f"<a href='msg:{m.uid}' style='color:{name_color};font-weight:bold;text-decoration:none'>"
+            f"{badge} {roles}"
+            f"<a href='msg:{m.uid}' style='{name_style}'>"
             f"{html.escape(m.user)}</a>: {body}"
         )

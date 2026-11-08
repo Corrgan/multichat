@@ -15,7 +15,7 @@ from pathlib import Path
 import aiohttp
 
 from PyQt6.QtCore import QObject, QProcess, Qt, QTimer, QUrl, pyqtSignal
-from PyQt6.QtGui import QAction, QActionGroup, QCursor, QDesktopServices, QImageReader
+from PyQt6.QtGui import QAction, QActionGroup, QCursor, QDesktopServices, QImageReader, QKeySequence
 from PyQt6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDialog, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMenu, QMessageBox, QPushButton, QSplitter, QStyle, QToolButton,
     QVBoxLayout, QWidget,
@@ -35,6 +35,7 @@ from ..overlay.server import OverlayServer, deletion_payload, message_payload
 from ..video.tiles import VideoPanel
 from .chat_view import ChatView
 from .dialogs import AboutDialog, AppsDialog
+from .moderation import ActionBar, ModActions, ModNotes, UserCard
 from .widgets import CopyLabel
 
 log = logging.getLogger("multichat")
@@ -99,6 +100,7 @@ class MainWindow(QMainWindow):
         self._render_timer = QTimer(self, singleShot=True, interval=150)  # coalesces full re-renders
         self._render_timer.timeout.connect(self._render_now)
 
+        self.mod = ModActions(self, ModNotes(CONF_DIR / "modnotes.json"))
         self._build_ui()
         self._build_menus()
         self.apply_config()
@@ -140,6 +142,7 @@ class MainWindow(QMainWindow):
         self.emote_action.setChecked(self.config["extra_emotes"])  # "on" loads the global sets
         self.emotes.enabled = self.config["extra_emotes"]
         self.debug_action.setChecked(self.config["debug_log"])
+        self.view.set_font_px(self.config["chat_font"])
         video_on = bool(self.config["video"].get("enabled", True))
         self.video_action.setChecked(video_on)
         self.video.setVisible(video_on)
@@ -208,6 +211,9 @@ class MainWindow(QMainWindow):
         self.view.document().setMaximumBlockCount(MAX_MESSAGES)
         self.view.anchorClicked.connect(self.on_anchor)
         self.view.rerender_needed.connect(self.render_all)
+        self.view.name_context.connect(self.on_name_context)
+        self.action_bar = ActionBar(self.mod, self.open_card)
+        self.card: UserCard | None = None
 
         send = QHBoxLayout()
         self.target = QComboBox()
@@ -225,6 +231,7 @@ class MainWindow(QMainWindow):
         root.addLayout(grid)
         root.addLayout(conn_row)
         root.addLayout(filters)
+        root.addWidget(self.action_bar)
         root.addWidget(self.view, 1)
         root.addLayout(send)
         chat = QWidget()
@@ -245,7 +252,7 @@ class MainWindow(QMainWindow):
         self.splitter.setChildrenCollapsible(False)
         self.splitter.setContentsMargins(9, 9, 9, 0)
         self.setCentralWidget(self.splitter)
-        self.statusBar().showMessage(_("Tip: click a name to open the moderation menu."), 8000)
+        self.statusBar().showMessage(_("Tip: click a name to select the user, right-click it for the menu."), 8000)
 
     def _build_menus(self) -> None:
         mb = self.menuBar()
@@ -260,6 +267,12 @@ class MainWindow(QMainWindow):
         self.video_action = view.addAction(_("Video tiles"))
         self.video_action.setCheckable(True)
         self.video_action.toggled.connect(self.toggle_video)
+        font = view.addMenu(_("Chat font size"))
+        for label, keys, step in ((_("Larger"), ("Ctrl++", "Ctrl+="), 2), (_("Smaller"), ("Ctrl+-",), -2),
+                                  (_("Default size"), ("Ctrl+0",), 0)):
+            a = font.addAction(label)
+            a.setShortcuts([QKeySequence(k) for k in keys])
+            a.triggered.connect(lambda _checked=False, s=step: self.change_font(s))
 
         view.addSeparator()
         lang_menu = view.addMenu(_("Language"))
@@ -350,6 +363,13 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(
             _("Log copied (tokens/secrets redacted) – file: {path}").format(path=LOG_FILE), 10000
         )
+
+    def change_font(self, step: int) -> None:
+        from .chat_view import DEFAULT_FONT  # noqa: PLC0415
+
+        self.view.set_font_px(self.view.font_px + step if step else DEFAULT_FONT)
+        self.config["chat_font"] = self.view.font_px
+        self.statusBar().showMessage(_("Chat font size: {px} px").format(px=self.view.font_px), 3000)
 
     def toggle_debug(self, on: bool) -> None:
         set_debug(on)
@@ -521,6 +541,7 @@ class MainWindow(QMainWindow):
         for msg in batch:
             self.messages[msg.uid] = msg
             self.overlay.publish(message_payload(msg))
+            self.mod.observe(msg)
         while len(self.messages) > MAX_MESSAGES:
             self.messages.popitem(last=False)
         if self._render_timer.isActive():
@@ -557,6 +578,7 @@ class MainWindow(QMainWindow):
         self.overlay.publish(deletion_payload(ev))
         if changed:
             self.render_all()
+            self.mod.history_changed.emit()
 
     def clear_chat(self) -> None:
         self._incoming.clear()
@@ -565,26 +587,58 @@ class MainWindow(QMainWindow):
 
     # ---- Moderation ------------------------------------------------------ #
     def on_anchor(self, url: QUrl) -> None:
-        if url.scheme() == "msg":
-            try:
-                self.message_menu(int(url.path()))
-            except ValueError:
-                pass
+        """Left click on a name: select the user (the action bar and user card follow)."""
+        msg = self._anchor_msg(url)
+        if msg:
+            self.mod.select(msg)
+            if self.card and self.card.isVisible():
+                self.card.show_user(self.mod.selected)
+
+    def on_name_context(self, url: QUrl) -> None:
+        msg = self._anchor_msg(url)
+        if msg:
+            self.mod.select(msg)
+            self.message_menu(msg.uid)
+
+    def _anchor_msg(self, url: QUrl) -> ChatMessage | None:
+        if url.scheme() != "msg":
+            return None
+        try:
+            return self.messages.get(int(url.path()))
+        except ValueError:
+            return None
+
+    def open_card(self, msg: ChatMessage) -> None:
+        if self.card is None:
+            self.card = UserCard(self.mod, self)
+            docked = bool(self.config.get("usercard_docked"))
+            self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.card)
+            self.card.setFloating(not docked)
+            self.card.pin.setChecked(docked)
+            self.card.docked_changed.connect(self._card_docked)
+            if not docked:
+                self.card.move(self.geometry().center() - self.card.rect().center())
+        self.card.show_user(msg)
+
+    def _card_docked(self, docked: bool) -> None:
+        self.config["usercard_docked"] = docked
 
     def message_menu(self, uid: int) -> None:
         msg = self.messages.get(uid)
         if not msg:
             return
-        acc = self.accounts[msg.platform]
         menu = QMenu(self)
         menu.addSection(f"{msg.user} · {NAMES[msg.platform]}")
+        menu.addAction(_("Open user card")).triggered.connect(lambda: self.open_card(msg))
         menu.addAction(_("Mention (@)")).triggered.connect(lambda: self.mention(msg))
         menu.addAction(_("Copy text")).triggered.connect(lambda: QApplication.clipboard().setText(msg.text))
         menu.addSeparator()
-        if not acc.logged_in:
+        if not self.accounts[msg.platform].logged_in:
             menu.addAction(_("Log in to {platform} to moderate …").format(platform=NAMES[msg.platform])).triggered.connect(
                 lambda: self.login(msg.platform)
             )
+        elif not self.mod.can_moderate(msg):
+            menu.addAction(_("You are not a moderator in this channel")).setEnabled(False)
         else:
             a = menu.addAction(_("Delete message"))
             a.setEnabled(bool(msg.msg_id) and not msg.deleted)
@@ -596,18 +650,28 @@ class MainWindow(QMainWindow):
             a = menu.addAction(_("Ban …"))
             a.setEnabled(bool(msg.user_id))
             a.triggered.connect(lambda: self.moderate(msg, "ban"))
+            a = menu.addAction(_("Unban"))
+            a.setEnabled(bool(msg.user_id))
+            a.triggered.connect(lambda: self.moderate(msg, "unban"))
         menu.exec(QCursor.pos())
 
     def moderate(self, msg: ChatMessage, action: str, seconds: int = 0) -> None:
         acc = self.accounts[msg.platform]
+        ev = None
         if action == "delete":
             coro = acc.delete(msg)
             ev = Deletion(msg.platform, msg_id=msg.msg_id)
             label = _("Message deleted")
+            entry = f"delete: {msg.text[:80]}"
         elif action == "timeout":
             coro = acc.timeout(msg, seconds)
             ev = Deletion(msg.platform, user_id=msg.user_id)
             label = _("Timeout for {user} ({minutes} min)").format(user=msg.user, minutes=seconds // 60)
+            entry = f"timeout {seconds // 60} min"
+        elif action == "unban":
+            coro = acc.unban(msg)
+            label = _("{user} unbanned").format(user=msg.user)
+            entry = "unban"
         else:
             answer = QMessageBox.question(
                 self,
@@ -619,7 +683,14 @@ class MainWindow(QMainWindow):
             coro = acc.ban(msg)
             ev = Deletion(msg.platform, user_id=msg.user_id)
             label = _("{user} banned").format(user=msg.user)
-        self.run(coro, then=lambda _result: self.apply_deletion(ev), label=label)
+            entry = "ban"
+
+        def done(_result) -> None:
+            self.mod.record(msg, entry)
+            if ev:
+                self.apply_deletion(ev)
+
+        self.run(coro, then=done, label=label)
 
     def mention(self, msg: ChatMessage) -> None:
         if self.target.isEnabled():
@@ -700,7 +771,7 @@ class MainWindow(QMainWindow):
         )
         self.run(
             self.accounts[platform].login(),
-            then=lambda who: self.refresh_accounts(),
+            then=lambda who: (self.refresh_accounts(), self.mod.account_changed(platform)),
             label=_("Logged in to {platform}").format(platform=NAMES[platform]),
         )
 
@@ -754,6 +825,7 @@ class MainWindow(QMainWindow):
     def logout(self, platform: str) -> None:
         self.accounts[platform].logout()
         self.refresh_accounts()
+        self.mod.account_changed(platform)
         self.statusBar().showMessage(_("Logged out of {platform}").format(platform=NAMES[platform]), 5000)
 
     def edit_apps(self) -> None:
@@ -788,6 +860,7 @@ class MainWindow(QMainWindow):
     # ---- Shutdown -------------------------------------------------------- #
     def closeEvent(self, event) -> None:  # noqa: N802
         self.save_config()
+        self.mod.notes.save()
         for t in self.readers.values():
             t.cancel()
         self.video.shutdown()

@@ -54,3 +54,26 @@ class KickAccount(Account):
         await self.request(
             "POST", f"{self.API}/moderation/bans", json={"broadcaster_user_id": bid, "user_id": int(msg.user_id)}
         )
+
+    async def unban(self, msg: ChatMessage) -> None:
+        bid = await self.broadcaster_id(msg.channel)
+        await self.request(
+            "DELETE", f"{self.API}/moderation/bans", json={"broadcaster_user_id": bid, "user_id": int(msg.user_id)}
+        )
+
+    async def user_info(self, msg: ChatMessage) -> dict:
+        import asyncio
+
+        from ..chat.kick import fetch_kick_user
+
+        data = await asyncio.to_thread(fetch_kick_user, msg.channel, msg.user)
+        return {
+            "following_since": data.get("following_since") or "",
+            "subscribed_months": data.get("subscribed_for") or 0,
+            "banned": bool(data.get("banned")),
+        }
+
+    async def is_moderator(self, channel: str) -> bool | None:
+        # the public API can't list moderators – own channel only; otherwise the badges
+        # on your own chat messages tell (see the moderation panel)
+        return True if kick_channel(channel) == self.user_name.lower() else None

@@ -9,7 +9,7 @@ import logging
 
 import websockets
 
-from .models import Backoff, ChatMessage, Deletion, Emit, Part, Status, twitch_channel, with_extra_emotes as _extra
+from .models import Backoff, ChatMessage, Deletion, Emit, Part, Status, roles, twitch_channel, with_extra_emotes as _extra
 
 log = logging.getLogger("multichat.chat")
 
@@ -110,6 +110,7 @@ async def run_twitch(channel: str, emit: Emit, status: Status, emotes=None) -> N
                                     color=tags.get("color") or None,
                                     msg_id=tags.get("id"),
                                     user_id=tags.get("user-id"),
+                                    badges=roles(b.split("/")[0] for b in (tags.get("badges") or "").split(",") if b),
                                 )
                             )
                         elif cmd == "CLEARMSG":

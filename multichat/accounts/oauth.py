@@ -269,3 +269,14 @@ class Account:
 
     async def ban(self, msg: ChatMessage) -> None:
         raise NotImplementedError
+
+    async def unban(self, msg: ChatMessage) -> None:
+        raise NotImplementedError
+
+    async def is_moderator(self, channel: str) -> bool | None:
+        """True/False if known for this channel, None if the platform can't tell us."""
+        return None
+
+    async def user_info(self, msg: ChatMessage) -> dict:
+        """Extra facts for the user card, e.g. {"created": iso, "following_since": iso}."""
+        return {}

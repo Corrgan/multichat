@@ -10,7 +10,7 @@ import re
 
 import websockets
 
-from .models import Backoff, ChatMessage, Deletion, Emit, Part, Status, kick_channel, with_extra_emotes as _extra
+from .models import Backoff, ChatMessage, Deletion, Emit, Part, Status, kick_channel, roles, with_extra_emotes as _extra
 
 log = logging.getLogger("multichat.chat")
 
@@ -117,7 +117,21 @@ def _fetch_kick_channel(slug: str) -> tuple[int, str]:
 def fetch_kick_json(slug: str) -> dict:
     """Channel info from the Kick website API (also contains `livestream` and `playback_url`).
     Kick sits behind Cloudflare, hence curl_cffi (browser fingerprint)."""
-    url = f"https://kick.com/api/v2/channels/{kick_channel(slug)}"
+    return _kick_get(f"https://kick.com/api/v2/channels/{kick_channel(slug)}", slug)
+
+
+_KICK_USER_RE = re.compile(r"[A-Za-z0-9_-]{1,64}")
+
+
+def fetch_kick_user(slug: str, username: str) -> dict:
+    """A chatter as seen in a channel (unofficial website endpoint, no login needed):
+    following_since, subscribed_for (months), badges, banned …"""
+    if not _KICK_USER_RE.fullmatch(username):
+        raise ValueError(f"invalid Kick user name: {username!r}")
+    return _kick_get(f"https://kick.com/api/v2/channels/{kick_channel(slug)}/users/{username.lower()}", slug)
+
+
+def _kick_get(url: str, slug: str) -> dict:
     try:
         from curl_cffi import requests as cf  # type: ignore
 
@@ -156,6 +170,7 @@ def _handle_event(name: str, data: dict, slug: str, emit: Emit, emotes) -> None:
                 text=_KICK_EMOTE_RE.sub(r"\2", content),
                 parts=_extra(emotes, "kick", slug, kick_parts(content)),
                 color=(sender.get("identity") or {}).get("color"),
+                badges=roles(b.get("type", "") for b in (sender.get("identity") or {}).get("badges") or [] if isinstance(b, dict)),
                 msg_id=str(data.get("id") or "") or None,
                 user_id=str(sender.get("id") or "") or None,
             )

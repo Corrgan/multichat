@@ -47,7 +47,13 @@ Reload the developer console once after enabling it.
 
 You don't configure **permissions** (scopes) in the Twitch app; MultiChat requests them at login:
 `user:write:chat` (send), `moderator:manage:chat_messages` (delete messages),
-`moderator:manage:banned_users` (timeout/ban).
+`moderator:manage:banned_users` (timeout/ban/unban), `moderator:read:followers` (followage in the
+user card) and `user:read:moderated_channels` (which channels you moderate – mod actions are
+hidden elsewhere).
+
+> **Logged in with a version before 0.50?** Log out and in again once (**Accounts → Twitch – log
+> out**, then log in) so Twitch grants the two new permissions. Until then everything else keeps
+> working; only followage and the moderator check are missing.
 
 📖 Docs: [Twitch – Register Your App](https://dev.twitch.tv/docs/authentication/register-app) ·
 [Authentication & token flows](https://dev.twitch.tv/docs/authentication/) ·

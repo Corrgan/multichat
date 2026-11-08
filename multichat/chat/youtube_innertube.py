@@ -19,7 +19,7 @@ from collections import OrderedDict
 
 import aiohttp
 
-from .models import ChatMessage, Deletion, Emit, Part
+from .models import ChatMessage, Deletion, Emit, Part, roles
 
 log = logging.getLogger("multichat.chat")
 
@@ -117,6 +117,15 @@ def runs_to_parts(runs: list) -> list[Part]:
     return parts
 
 
+def _badges(r: dict) -> tuple:
+    names = []
+    for b in r.get("authorBadges") or []:
+        badge = b.get("liveChatAuthorBadgeRenderer") or {}
+        icon = (badge.get("icon") or {}).get("iconType")
+        names.append(icon if icon else ("member" if badge.get("customThumbnail") else ""))
+    return roles(names)
+
+
 def parse_actions(actions: list, video_id: str) -> list:
     """InnerTube actions → ChatMessage/Deletion events (unknown kinds are skipped)."""
     events: list = []
@@ -144,6 +153,7 @@ def parse_actions(actions: list, video_id: str) -> list:
                 parts=parts,
                 msg_id=r["id"],
                 user_id=r.get("authorExternalChannelId"),
+                badges=_badges(r),
             ))
         elif "markChatItemAsDeletedAction" in a:
             mid = a["markChatItemAsDeletedAction"].get("targetItemId")

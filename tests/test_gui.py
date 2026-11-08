@@ -65,16 +65,106 @@ def test_chat_and_moderation_menu(window):
 
     shown = []
     QMenu.exec = lambda self, *a: shown.append([x.text() for x in self.actions()])
-    w.on_anchor(QUrl(f"msg:{alice.uid}"))
+    w.on_name_context(QUrl(f"msg:{alice.uid}"))  # right click: menu
     assert any(t.startswith("Log in to Twitch") for t in shown[0])
     w.accounts["twitch"].store.update("twitch", access_token="x", expires_at=9e12, user_name="TestUser")
     w.refresh_accounts()
     assert w.input.isEnabled() and w.target.count() == 1
-    w.on_anchor(QUrl(f"msg:{alice.uid}"))
-    assert "Delete message" in shown[1] and "Ban …" in shown[1]
+    w.on_name_context(QUrl(f"msg:{alice.uid}"))
+    assert "Delete message" in shown[1] and "Ban …" in shown[1] and "Unban" in shown[1]
     w.mention(bob)
     assert w.input.text().startswith("@Bob")
     w.logout("twitch")
+
+
+def test_selection_action_bar_and_user_card(window, app, monkeypatch):
+    w = window
+    answers = {"chan": False, "ownchan": None}
+
+    async def is_mod(channel):
+        return answers[channel]
+
+    async def info(msg):
+        return {"created": "2020-01-01T00:00:00Z", "following_since": ""}
+
+    acc = w.accounts["twitch"]
+    monkeypatch.setattr(acc, "is_moderator", is_mod)
+    monkeypatch.setattr(acc, "user_info", info)
+    acc.store.update("twitch", access_token="x", expires_at=9e12, user_name="Me", user_id="42")
+    w.refresh_accounts()
+
+    def settle():
+        for _ in range(30):
+            app.processEvents()
+            asyncio.run(asyncio.sleep(0.01))
+
+    first = ChatMessage("twitch", "chan", "Alice", "first", msg_id="a1", user_id="1")
+    w.add_message(first)
+    w.add_message(ChatMessage("twitch", "chan", "Bob", "other", msg_id="b1", user_id="2"))
+    w._flush_messages()
+    settle()
+    bar = w.action_bar
+    assert not bar.card.isEnabled()  # nothing selected yet
+    w.on_anchor(QUrl(f"msg:{first.uid}"))  # left click selects
+    assert w.mod.selected is first and bar.card.isEnabled()
+    # Twitch said: not a moderator in #chan → mod buttons hidden, menu says so
+    assert w.mod.is_mod(first) is False and bar.ban.isHidden() and bar.delete.isHidden()
+    shown = []
+    QMenu.exec = lambda self, *a: shown.append([x.text() for x in self.actions()])
+    w.on_name_context(QUrl(f"msg:{first.uid}"))
+    assert "You are not a moderator in this channel" in shown[0] and "Ban …" not in shown[0]
+    # your own message with a moderator badge wins over the API answer
+    w.add_message(ChatMessage("twitch", "chan", "Me", "hi", user_id="42", badges=("moderator",)))
+    w._flush_messages()
+    settle()
+    assert w.mod.is_mod(first) is True and not bar.ban.isHidden() and bar.ban.isEnabled()
+
+    # newer message of the selected user → actions use it
+    second = ChatMessage("twitch", "chan", "Alice", "second", msg_id="a2", user_id="1")
+    w.add_message(second)
+    w._flush_messages()
+    assert w.mod.selected is second and w.mod.last_deletable(first) is second
+    assert "background:#3a3a55" in w.view.message_html(second)  # selected name is highlighted
+
+    done = []
+
+    async def fake_delete(msg):
+        done.append(msg.msg_id)
+
+    monkeypatch.setattr(acc, "delete", fake_delete)
+    bar.delete.click()
+    settle()
+    assert done == ["a2"] and second.deleted
+    w.open_card(second)
+    settle()
+    card = w.card
+    assert card.isVisible() and card.info_labels["seen"].text() == "2"
+    assert card.info_labels["created"].text().startswith("2020-01-01")
+    assert card.info_labels["following"].text() == "not following"
+    assert "delete: second" in card.actions.text()
+    card.notes.setPlainText("watch this one")
+    w.mod.notes.save()
+    from multichat.ui.moderation import ModNotes
+    again = ModNotes(w.mod.notes.path)
+    assert again.get(second)["note"] == "watch this one"
+    assert again.get(second)["actions"][-1]["a"].startswith("delete")
+    bar.clear.click()
+    assert w.mod.selected is None and w.view.selected is None
+    w.logout("twitch")
+
+
+def test_font_size(window):
+    w = window
+    w.add_message(ChatMessage("twitch", "chan", "Alice", "hello"))
+    w._flush_messages()
+    w.change_font(2)
+    assert w.view.font_px == 16 and w.config["chat_font"] == 16 and "font-size:16px" in w.view.styleSheet()
+    assert w.view.emote_h > 22
+    for _ in range(100):
+        w.change_font(2)
+    assert w.view.font_px == 40
+    w.change_font(0)
+    assert w.view.font_px == 14 and w.view.emote_h == 22
 
 
 def test_connect_disconnect(window, app):
@@ -124,7 +214,7 @@ def test_languages_and_about(app, monkeypatch, lang, view, help_):
     try:
         menus = [a.text() for a in w.menuBar().actions()]
         assert menus[0] == view and menus[-1] == help_
-        langmenu = next(a.menu() for a in w.menuBar().actions()[0].menu().actions() if a.menu())
+        langmenu = [a.menu() for a in w.menuBar().actions()[0].menu().actions() if a.menu()][-1]  # last submenu
         assert sum(a.isChecked() for a in langmenu.actions()) == 1 and sum(a.isCheckable() for a in langmenu.actions()) == 7
         asked, restarted = [], []
         monkeypatch.setattr(QMessageBox, "question", staticmethod(lambda *a, **k: (asked.append(a[2]), QMessageBox.StandardButton.No)[1]))

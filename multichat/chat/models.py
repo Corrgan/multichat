@@ -30,6 +30,8 @@ class ChatMessage:
     timestamp: float = field(default_factory=time.time)
     uid: int = field(default_factory=lambda: next(_uid))  # local ID
     deleted: bool = False
+    # normalised roles: "broadcaster", "moderator", "vip", "subscriber" (also YouTube members), "verified"
+    badges: tuple = ()
 
     def __post_init__(self) -> None:
         if not self.parts:
@@ -37,6 +39,28 @@ class ChatMessage:
         # name colours come from the platforms; only accept #RRGGBB (ends up in HTML/CSS)
         if self.color and not _COLOR_RE.fullmatch(self.color):
             self.color = None
+
+
+ROLE_NAMES = {
+    # Twitch badge set names, Kick badge types, YouTube icon types
+    "broadcaster": "broadcaster", "owner": "broadcaster",
+    "moderator": "moderator", "lead_moderator": "moderator",
+    "vip": "vip",
+    "subscriber": "subscriber", "founder": "subscriber", "sub_gifter": None, "member": "subscriber",
+    "verified": "verified", "partner": "verified",
+}
+
+
+def roles(names) -> tuple:
+    """Platform badge names → sorted, de-duplicated roles (unknown badges are dropped)."""
+    out = {ROLE_NAMES.get(str(n).lower()) for n in names}
+    out.discard(None)
+    return tuple(sorted(out))
+
+
+def user_key(m: "ChatMessage") -> str:
+    """Stable key for a chatter: platform user ID, else the lower-case name."""
+    return m.user_id or m.user.lower()
 
 
 @dataclass

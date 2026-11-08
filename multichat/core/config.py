@@ -50,6 +50,8 @@ def load_config() -> dict:
         "debug_log": False,
         "check_updates": True,
         "language": "auto",
+        "chat_font": 14,
+        "usercard_docked": False,
         "video": {"enabled": True, "quality": {}, "volume": {}, "audio": None, "sizes": [440, 860]},
         "overlay": {"enabled": False, "port": OVERLAY_PORT},
         "_warnings": [],
@@ -83,6 +85,8 @@ def load_config() -> dict:
     for key in ("on_top", "extra_emotes", "debug_log", "check_updates"):
         cfg[key] = pick(data.get(key), cfg[key])
     cfg["language"] = pick(data.get("language"), "auto") or "auto"
+    cfg["chat_font"] = max(9, min(40, pick(data.get("chat_font"), 14)))
+    cfg["usercard_docked"] = pick(data.get("usercard_docked"), False)
     ov = data.get("overlay") if isinstance(data.get("overlay"), dict) else {}
     cfg["overlay"]["enabled"] = pick(ov.get("enabled"), False)
     port = pick(ov.get("port"), OVERLAY_PORT)

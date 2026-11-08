@@ -65,3 +65,22 @@ def test_name_colors_are_validated():
     assert ChatMessage("kick", "c", "u", "t", color="#A1b2C3").color == "#A1b2C3"
     for bad in ("red;background:url(http://x.invalid/a.png)", "#12345", "'><script>", "javascript:x"):
         assert ChatMessage("kick", "c", "u", "t", color=bad).color is None
+
+
+def test_roles_and_badges():
+    from multichat.chat.models import roles
+
+    assert roles(["moderator", "subscriber", "glhf-pledge"]) == ("moderator", "subscriber")
+    assert roles(["owner", "member", "sub_gifter"]) == ("broadcaster", "subscriber")
+
+
+def test_since_text():
+    from datetime import datetime, timezone
+
+    from multichat.ui.moderation import since_text
+
+    now = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    assert since_text("2025-12-02T10:00:00Z", now).endswith("(29 days)")
+    assert since_text("2025-01-01T00:00:00Z", now).endswith("(12 months)")
+    assert since_text("2020-01-01T00:00:00Z", now).endswith("(6 years)")
+    assert since_text("", now) == "" and since_text("garbage", now) == ""

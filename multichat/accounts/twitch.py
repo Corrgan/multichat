@@ -17,7 +17,12 @@ class TwitchAccount(Account):
     name = "Twitch"
     auth_url = "https://id.twitch.tv/oauth2/authorize"
     token_url = "https://id.twitch.tv/oauth2/token"
-    scopes = "user:write:chat moderator:manage:banned_users moderator:manage:chat_messages"
+    # moderator:read:followers → followage on the user card,
+    # user:read:moderated_channels → where you are a moderator (older logins lack both)
+    scopes = (
+        "user:write:chat moderator:manage:banned_users moderator:manage:chat_messages "
+        "moderator:read:followers user:read:moderated_channels"
+    )
     pkce = False
     API = "https://api.twitch.tv/helix"
 
@@ -67,3 +72,46 @@ class TwitchAccount(Account):
         await self.request(
             "POST", f"{self.API}/moderation/bans", params=self._mod_params(bid), json={"data": {"user_id": msg.user_id}}
         )
+
+    async def unban(self, msg: ChatMessage) -> None:
+        bid = await self.broadcaster_id(msg.channel)
+        await self.request("DELETE", f"{self.API}/moderation/bans", params={**self._mod_params(bid), "user_id": msg.user_id})
+
+    async def is_moderator(self, channel: str) -> bool | None:
+        login = twitch_channel(channel)
+        if login == self.user_name.lower():
+            return True
+        key = ("moderated", self.user_id)
+        if key not in self._cache:
+            channels, cursor = set(), None
+            try:
+                for _page in range(10):  # 100 per page
+                    params = {"user_id": self.user_id, "first": "100", **({"after": cursor} if cursor else {})}
+                    res = await self.request("GET", f"{self.API}/moderation/channels", params=params)
+                    channels |= {c["broadcaster_login"] for c in res.get("data", [])}
+                    cursor = (res.get("pagination") or {}).get("cursor")
+                    if not cursor:
+                        break
+            except ApiError as e:
+                if e.status in (401, 403):  # login from before this scope existed
+                    log.info("Twitch: can't list moderated channels (%s) – log in again to enable", e)
+                    return None
+                raise
+            self._cache[key] = channels
+        return login in self._cache[key]
+
+    async def user_info(self, msg: ChatMessage) -> dict:
+        info: dict = {}
+        if not msg.user_id:
+            return info
+        users = (await self.request("GET", f"{self.API}/users", params={"id": msg.user_id}))["data"]
+        if users:
+            info["created"] = users[0].get("created_at")
+        try:
+            bid = await self.broadcaster_id(msg.channel)
+            res = await self.request("GET", f"{self.API}/channels/followers",
+                                     params={"broadcaster_id": bid, "user_id": msg.user_id})
+            info["following_since"] = (res.get("data") or [{}])[0].get("followed_at") or ""
+        except ApiError as e:  # not a moderator there, or login without the scope
+            log.debug("Twitch followage unavailable: %s", e)
+        return info

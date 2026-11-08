@@ -14,7 +14,7 @@ import os
 import re
 import time
 
-from .models import Backoff, ChatMessage, Emit, Part, Status, with_extra_emotes as _extra
+from .models import Backoff, ChatMessage, Emit, Part, Status, roles, with_extra_emotes as _extra
 from .youtube_innertube import ChatEnded, InnertubeChat, InnertubeError
 
 log = logging.getLogger("multichat.chat")
@@ -121,6 +121,12 @@ async def _read_pytchat(vid: str, emit: Emit, emotes) -> None:
                         parts=_extra(emotes, "youtube", vid, _yt_parts(c)),
                         msg_id=getattr(c, "id", None),
                         user_id=getattr(c.author, "channelId", None),
+                        badges=roles(
+                            n for n, on in (("owner", getattr(c.author, "isChatOwner", False)),
+                                            ("moderator", getattr(c.author, "isChatModerator", False)),
+                                            ("member", getattr(c.author, "isChatSponsor", False)),
+                                            ("verified", getattr(c.author, "isVerified", False))) if on
+                        ),
                     )
                 )
             await asyncio.sleep(1)

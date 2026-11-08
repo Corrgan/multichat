@@ -132,7 +132,12 @@ docs/                 additional documentation
 - **Connect / Disconnect** starts or stops all chats and video tiles; the ▶/■ button next to each channel connects or disconnects just that one (chat and video).
 - **Show:** checkboxes hide or show platforms in the chat view.
 - Each message starts with the platform's icon (the website's favicon, as in a browser tab). If it can't be loaded, a coloured abbreviation (TW/KI/YT) is shown instead.
-- **Click on a name** to open the menu: mention, copy text, delete message, timeout (1 min / 10 min / 1 h), ban.
+- Symbols before a name show the user's role: 🎥 broadcaster, 🛡 moderator, 💎 VIP, ★ subscriber/member, ✔ verified.
+- **Click on a name** to select the user. The **action bar** above the chat then works on that user: user card, mention, delete their last message, timeout (1 min / 10 min / 1 h), ban, unban.
+- **Right-click a name** for the menu: user card, mention, copy text and the same moderation actions.
+- **User card** (👤): roles, account age, followage (Twitch, Kick), subscription months (Kick), ban status (Kick), the user's recent messages, your moderation actions and your own notes. It opens as a window; the 📌 button docks it next to the chat (remembered). Notes and the action log are stored only on this computer in `~/.config/multichat/modnotes.json`.
+- **Moderator check:** MultiChat asks Twitch which channels you moderate; on Kick and YouTube it knows your own channel. In addition, the badge on your own chat messages counts. Where you are known **not** to be a moderator, the moderation actions are hidden.
+- **View → Chat font size** (Ctrl + / Ctrl − / Ctrl 0) makes the chat text and emotes larger, e.g. to read it from further away. Only the chat changes, not the rest of the window.
 - **Input line at the bottom:** send to one platform or to all you're logged in to.
 - Settings: `~/.config/multichat/config.json` (readable only by you).
 - Logins and the client secrets of your developer apps are stored in the system keyring (KWallet, GNOME Keyring, KeePassXC … via the Secret Service API). Without one, they go to `tokens.json` / `apps.json` next to the settings, readable only by you. `MULTICHAT_SECRETS=file` forces the files; the log and `--selftest` show which storage is used. Data from older versions is moved into the keyring automatically.

@@ -84,10 +84,34 @@ class YouTubeAccount(Account):
         }
         if seconds:
             snippet["banDurationSeconds"] = seconds
-        await self.request("POST", f"{self.API}/liveChat/bans", params={"part": "snippet"}, json={"snippet": snippet})
+        res = await self.request("POST", f"{self.API}/liveChat/bans", params={"part": "snippet"}, json={"snippet": snippet})
+        if res and res.get("id"):
+            self._cache[("ban", msg.channel, msg.user_id)] = res["id"]
 
     async def timeout(self, msg: ChatMessage, seconds: int) -> None:
         await self._ban(msg, seconds)
+
+    async def unban(self, msg: ChatMessage) -> None:
+        # YouTube can only lift a ban by its ID, which only the ban request returns
+        ban_id = self._cache.get(("ban", msg.channel, msg.user_id))
+        if not ban_id:
+            raise ApiError(_("YouTube can only lift bans made in MultiChat during this session"))
+        await self.request("DELETE", f"{self.API}/liveChat/bans", params={"id": ban_id})
+        self._cache.pop(("ban", msg.channel, msg.user_id), None)
+
+    async def is_moderator(self, channel: str) -> bool | None:
+        vid = await self.current_video(channel)
+        items = (await self.request("GET", f"{self.API}/videos", params={"part": "snippet", "id": vid})).get("items") or []
+        if items and items[0]["snippet"].get("channelId") == self.user_id:
+            return True  # your own stream
+        return None  # moderators of other channels aren't visible via the API
+
+    async def user_info(self, msg: ChatMessage) -> dict:
+        if not msg.user_id:
+            return {}
+        items = (await self.request("GET", f"{self.API}/channels", params={"part": "snippet", "id": msg.user_id})).get(
+            "items") or []
+        return {"created": items[0]["snippet"].get("publishedAt")} if items else {}
 
     async def ban(self, msg: ChatMessage) -> None:
         await self._ban(msg, None)
