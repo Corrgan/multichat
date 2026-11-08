@@ -405,3 +405,22 @@ def test_watchdog_reports_stalls(window, caplog):
         wd._tick()
     text = caplog.text
     assert "Window was busy for" in text and "Last minute: 1 stalls" in text
+
+
+def test_about_dialog_fits_its_text(window, app):
+    from PyQt6.QtGui import QFont
+
+    from multichat.ui.dialogs import AboutDialog
+
+    old = app.font()
+    try:
+        big = QFont(old)
+        big.setPointSizeF(18)
+        app.setFont(big)
+        dlg = AboutDialog(window)
+        dlg.show()
+        app.processEvents()
+        assert dlg.height() >= dlg.layout().totalHeightForWidth(dlg.width()) - 1  # nothing cut off
+        dlg.close()
+    finally:
+        app.setFont(old)

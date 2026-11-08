@@ -9,7 +9,7 @@ from PyQt6.QtCore import QT_VERSION_STR, Qt
 from PyQt6.QtGui import QPixmap
 from PyQt6.QtWidgets import (
     QApplication, QCheckBox, QDialog, QDialogButtonBox, QFormLayout, QGridLayout, QGroupBox,
-    QHBoxLayout, QLabel, QLineEdit, QSpinBox, QVBoxLayout, QWidget,
+    QHBoxLayout, QLabel, QLayout, QLineEdit, QSpinBox, QVBoxLayout, QWidget,
 )
 
 from .. import __version__ as APP_VERSION
@@ -125,8 +125,11 @@ class AboutDialog(QDialog):
     def __init__(self, parent: QWidget) -> None:
         super().__init__(parent)
         self.setWindowTitle(_("About MultiChat"))
-        self.setMinimumWidth(460)
         lay = QVBoxLayout(self)
+        lay.setSpacing(10)
+        # The dialog takes exactly the size its text needs at this width – word-wrapped labels
+        # otherwise got cut off at the bottom (large fonts, display scaling).
+        lay.setSizeConstraint(QLayout.SizeConstraint.SetFixedSize)
         head = QHBoxLayout()
         icon = QLabel()
         pix = QPixmap(str(app_icon_path()))
@@ -143,19 +146,22 @@ class AboutDialog(QDialog):
         license_link = f"<a href='{REPO_URL}/blob/main/LICENSE'>GNU GPL v3.0 or later</a>"
         notices_link = f"<a href='{REPO_URL}/blob/main/THIRD_PARTY_NOTICES.md'>THIRD_PARTY_NOTICES</a>"
         repo_text = REPO_URL.removeprefix("https://")
-        body = QLabel(
-            f"<p><a href='{REPO_URL}'>{repo_text}</a></p>"
-            "<p>" + _("Free software under the {license}.").format(license=license_link) + "<br>"
-            + _("Uses third-party libraries under their own licenses – see {notices}.").format(notices=notices_link)
-            + "</p>"
-            "<p>" + _("Not affiliated with Twitch, Kick, YouTube/Google, 7TV, BetterTTV or FrankerFaceZ.") + "</p>"
-            f"<p style='color:#888'>Qt {QT_VERSION_STR} · Python {py_platform.python_version()} · "
-            f"{QApplication.platformName()}</p>"
-        )
-        body.setWordWrap(True)
-        body.setOpenExternalLinks(True)
-        body.setTextInteractionFlags(Qt.TextInteractionFlag.TextBrowserInteraction)
-        lay.addWidget(body)
+        paragraphs = [
+            f"<a href='{REPO_URL}'>{repo_text}</a>",
+            _("Made by Corrgan – written together with Claude by Anthropic."),
+            _("Free software under the {license}.").format(license=license_link) + "<br>"
+            + _("Uses third-party libraries under their own licenses – see {notices}.").format(notices=notices_link),
+            _("Not affiliated with Twitch, Kick, YouTube/Google, 7TV, BetterTTV or FrankerFaceZ."),
+            f"<span style='color:#888'>Qt {QT_VERSION_STR} · Python {py_platform.python_version()} · "
+            f"{QApplication.platformName()}</span>",
+        ]
+        for text in paragraphs:
+            label = QLabel(text)
+            label.setWordWrap(True)
+            label.setMinimumWidth(420)
+            label.setOpenExternalLinks(True)
+            label.setTextInteractionFlags(Qt.TextInteractionFlag.TextBrowserInteraction)
+            lay.addWidget(label)
         bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
         bb.rejected.connect(self.reject)
         bb.accepted.connect(self.accept)
