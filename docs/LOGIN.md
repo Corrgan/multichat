@@ -92,61 +92,115 @@ If a scope is missing from the app, the login or the respective action fails lat
 
 ## YouTube (Google Cloud)
 
-Google needs three parts: a **project** with the YouTube API enabled, the **consent screen**
-(called "Google Auth Platform" in today's console) and the **OAuth client**.
-The console may be shown in your language; the sections are named equivalently.
+Google is the most involved of the three. You set up a small "app" in the Google Cloud Console
+once; it costs nothing and needs no credit card. Plan about 10 minutes.
 
-### 1. Project and API
+> **Use one Google account for everything** if you can: the account that owns the YouTube channel
+> (or moderates it) creates the project, is added as test user and logs in in MultiChat.
+> If you use different accounts, the account you log in with **must** be a test user (step 3).
 
-1. Open the [Google Cloud Console](https://console.cloud.google.com/) and create a **new project** via the project picker at the top (name e.g. `multichat`).
-2. Open the [API library → YouTube Data API v3](https://console.cloud.google.com/apis/library/youtube.googleapis.com) and click **Enable**.
-   Billing is not required for this.
+The console may be shown in your language; the menu items are named equivalently.
 
-### 2. Consent screen (Google Auth Platform)
+### Step 1 – Create a project
 
-Menu **☰ → Google Auth Platform** (or "APIs & Services → OAuth consent screen") → **Get started**:
+1. Open the [Google Cloud Console](https://console.cloud.google.com/).
+2. Click the project picker at the top left (next to "Google Cloud") → **New project** →
+   name e.g. `multichat` → **Create**.
+3. Make sure the new project is **selected** in the project picker before you continue –
+   everything below happens inside it.
 
-| Step | Value |
+### Step 2 – Enable the YouTube API
+
+1. Open [YouTube Data API v3](https://console.cloud.google.com/apis/library/youtube.googleapis.com)
+   (check at the top that your project is selected).
+2. Click **Enable**. If the button says **Manage**, it is already enabled.
+
+> Without this, the login works, but sending and moderating fail with
+> *"YouTube Data API v3 has not been used in project … or it is disabled"*.
+
+### Step 3 – Consent screen ("Google Auth Platform")
+
+Menu **☰ → Google Auth Platform** (older name: *APIs & Services → OAuth consent screen*).
+If you see **Get started**, click it and fill in:
+
+| Page | What to enter |
 |---|---|
-| **App information** | app name e.g. `MultiChat`, support email: your address |
-| **Audience** | **External** (with a personal Google account this is the only option) |
+| **App information** | App name `MultiChat`, user support email: your address |
+| **Audience** | **External** (the only option for personal Google accounts) |
 | **Contact information** | your email address |
-| **Finish** | accept the "Google API Services: User Data Policy" → **Create** |
+| **Finish** | tick the agreement → **Continue** → **Create** |
 
-Then:
+Then, still in Google Auth Platform:
 
-- **Audience → Test users → Add users:** add the Google account you'll use to log in to YouTube in MultiChat (the account that owns the YouTube channel or is a moderator there). **Without this entry Google refuses the login.**
-- **Data Access → Add or remove scopes:** add `https://www.googleapis.com/auth/youtube.force-ssl` and save. (Recommended – this way the console shows which permission the app uses.)
+1. **Audience** (left) → section **Test users** → **+ Add users** → enter the Google account you
+   will log in with in MultiChat → **Save**.
+   > This is the most common mistake. Without this entry Google shows
+   > **"Access blocked: MultiChat has not completed the Google verification process"**
+   > (Error 403: access_denied) – even for the account that created the project.
+2. **Data Access** (left) → **Add or remove scopes** → in the box *Manually add scopes* paste
+   `https://www.googleapis.com/auth/youtube.force-ssl` → **Add to table** → **Update** → **Save**.
+   (Optional, but then the console shows which permission the app uses.)
 
-### 3. OAuth client
+Leave the **publishing status** on **Testing** for now (see "Good to know" for the 7-day limit).
 
-**Google Auth Platform → Clients → Create client**:
+### Step 4 – Create the OAuth client (client ID + secret)
+
+**Google Auth Platform → Clients** (left) → **+ Create client**:
 
 | Field | Value |
 |---|---|
-| **Application type** | **Web application** |
+| **Application type** | **Web application** – *not* "Desktop app" |
 | **Name** | anything, e.g. `MultiChat` |
 | **Authorized JavaScript origins** | leave empty |
-| **Authorized redirect URIs** | **Add URI** → `http://localhost:17563/callback` |
+| **Authorized redirect URIs** | **+ Add URI** → `http://localhost:17563/callback` |
 
-Click **Create**. Now copy the **client ID** and **client secret** – Google shows the full secret
-only at this moment (you can create a new one later).
+> Type the redirect URI exactly like this: `http` (not https), `localhost` (not 127.0.0.1), port
+> `17563`, path `/callback`, no slash at the end. A typo leads to **Error 400: redirect_uri_mismatch**.
+
+Click **Create**. A window shows the **client ID** and the **client secret** – copy both now (or
+download the JSON). The secret is only shown in full at this moment; if you missed it, open the
+client and use **Add secret**.
+
+### Step 5 – Enter it in MultiChat and log in
+
+1. MultiChat → **Accounts → Set up developer apps …** → paste client ID and secret into the
+   YouTube fields → **OK**.
+2. **Accounts → Log in to YouTube …** – your browser opens Google's login.
+3. Choose the account you added as test user.
+4. Google warns **"Google hasn't verified this app"**. That is expected for your own app:
+   click **Continue** – or, if there is no such button, the small link **Advanced** (bottom left)
+   → **Go to MultiChat (unsafe)**.
+5. Allow access ("Manage your YouTube account"). The browser shows **Logged in ✓** – back to
+   MultiChat. The status bar says *Logged in to YouTube*.
 
 ### Good to know
 
-- **Login expires after 7 days:** while the app's publishing status is **Testing**, Google only
-  issues logins that expire after 7 days. Just log in again in MultiChat then.
-  If you don't want that, switch to **Publish app / In production** under **Audience**.
-  Because `youtube.force-ssl` is a sensitive scope, Google then shows "Google hasn't verified this
-  app" at login – for your own use, confirm via **Advanced → Go to …**.
-  A verification by Google isn't needed for personal use.
-- **Quota:** sending and moderating via the YouTube API consumes quota
-  (default: 10,000 units per day and project). That's enough for normal moderation; reading the
-  chat and the video don't use the API and cost nothing.
+- **Login expires after 7 days** while the publishing status is *Testing* – Google's rule for
+  test apps. Just log in again. To avoid it: **Audience → Publish app** (status *In production*).
+  No verification by Google is needed for personal use; you'll keep seeing the
+  "hasn't verified this app" warning at login, confirm it as in step 5.
+- **Which account?** You can only send in chats of live streams, and moderate (delete, timeout,
+  ban) only in channels where the logged-in account is the **owner or a moderator**.
+- **Quota:** sending and moderating use the YouTube API quota (10,000 units per day and project –
+  plenty for normal moderation). Reading the chat and the video don't use the API.
+
+### YouTube troubleshooting
+
+| What you see | Cause and fix |
+|---|---|
+| **Access blocked: … has not completed the Google verification process** / Error 403: access_denied | The account isn't a test user → step 3.1. Check it's the account you chose in the browser. |
+| **Error 400: redirect_uri_mismatch** | Redirect URI not exactly `http://localhost:17563/callback`, or the client type isn't *Web application* → step 4. Changes can take a few minutes to apply. |
+| **Error 401: invalid_client** / "The OAuth client was not found" | Client ID or secret mistyped (spaces?) or from another project → copy them again (step 4) and re-enter (step 5.1). |
+| "Google hasn't verified this app" without a continue button | Click **Advanced** (small link bottom left) → **Go to MultiChat (unsafe)**. |
+| Login works, sending/moderating fails with *"… has not been used in project … or it is disabled"* | The YouTube Data API isn't enabled in this project → step 2. |
+| Sending fails with *"forbidden"* / *"The caller does not have permission"* | The account isn't owner/moderator of the channel, or the chat is restricted (members only, slow mode). |
+| *No active live chat for this video* | The channel isn't live, or the stream has its chat turned off. |
+| Worked before, now *"session expired – please log in again"* | 7-day limit of test apps → log in again, or publish the app (Good to know). |
+| *Port 17563 in use* | Another login is still waiting – close that browser tab, wait a minute, try again. |
 
 📖 Docs: [YouTube Data API – OAuth 2.0 for web server apps](https://developers.google.com/youtube/v3/guides/auth/server-side-web-apps) ·
-[Configure the consent screen](https://developers.google.com/workspace/admin/reports/v1/guides/authorizing) ·
-[Testing vs. production, test users](https://developers.google.com/identity/protocols/oauth2/production-readiness/overview)
+[Manage the OAuth consent screen / test users](https://support.google.com/cloud/answer/15549945) ·
+[Testing vs. production](https://developers.google.com/identity/protocols/oauth2/production-readiness/overview)
 
 ---
 
