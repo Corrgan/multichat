@@ -247,6 +247,10 @@ The overlay only answers requests from this computer (`127.0.0.1` / `localhost`)
   - if Qt lacks the WebP plugin (some distribution packages), the app uses PNG/GIF; otherwise install `qt6-image-formats-plugins` or use the pip package
 - On Wayland, **Always on top** may be ignored depending on the compositor. The video tiles work on X11 and Wayland.
 
+## Authors
+
+See [`AUTHORS.md`](AUTHORS.md).
+
 ## License
 
 MultiChat is free software under the **GNU General Public License v3.0 or later** (GPL-3.0-or-later), see [`LICENSE`](LICENSE).

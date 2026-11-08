@@ -89,7 +89,7 @@ ln -sf "$APP_ID.png" "$APPDIR/.DirIcon"
 echo "==> License texts"
 DOC="$APPDIR/usr/share/doc/multichat"
 mkdir -p "$DOC/licenses"
-cp LICENSE THIRD_PARTY_NOTICES.md README.md docs/LOGIN.md "$DOC/"
+cp LICENSE THIRD_PARTY_NOTICES.md README.md AUTHORS.md docs/LOGIN.md "$DOC/"
 # License files of all bundled Python packages (MIT/BSD/Apache require shipping them)
 python3 - "$DOC/licenses" <<'PYEOF'
 import re, shutil, sys
