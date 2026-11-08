@@ -43,6 +43,14 @@ CA_BUNDLES = (
 )
 
 
+def openssl_info() -> str:
+    try:
+        import ssl
+    except ImportError as e:
+        return f"unavailable ({e})"
+    return f"{ssl.OPENSSL_VERSION} – {os.environ.get('MULTICHAT_OPENSSL', 'from the system')}"
+
+
 def ensure_ca_certificates() -> str:
     """Makes sure TLS finds the system's CA certificates; returns where they come from.
 
@@ -101,8 +109,13 @@ def selftest() -> None:
     ok = ok and not missing
     print(f"MISSING locales: {', '.join(missing)}" if missing else f"OK      locales ({len(i18n.LANGUAGES)} languages)")
     print("OK      icon" if app_icon_path().is_file() else "MISSING app icon")
+    try:
+        import ssl
+    except ImportError as e:
+        print(f"MISSING OpenSSL: {e}")
+        sys.exit(1)
+    print(f"OK      OpenSSL: {openssl_info()}")
     source = ensure_ca_certificates()
-    import ssl
 
     ctx = ssl.create_default_context()
     paths = ssl.get_default_verify_paths()
@@ -195,6 +208,7 @@ def main() -> None:
     install_qt_handler()
     log_system_info()
     log.info("TLS certificates: %s", ensure_ca_certificates())
+    log.info("OpenSSL: %s", openssl_info())
     for warning in config.get("_warnings", []):
         log.warning("Settings: %s", warning)
     log.info("Language: %s (setting: %s)", lang, config["language"])

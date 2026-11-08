@@ -30,12 +30,20 @@ KEEP = [
     r"libxcb-(cursor|icccm|image|keysyms|render-util|util)",  # xcb-util: not always installed
     r"libxkbcommon-x11",
 ]
+# Kept aside instead of deleted: used only if the host has no libssl.so.3 (e.g. Fedora 45 ships
+# OpenSSL 4 as libssl.so.4). packaging/entry.py preloads them in that case.
+FALLBACK = ["libssl.so.3", "libcrypto.so.3"]
+FALLBACK_DIR = "fallback-libs"
 PLUGINS = ["PyQt6/Qt6/plugins/platformthemes/libqgtk3.so"]
 
 
 def main(root: Path) -> None:
     keep = re.compile(r"^(%s)\.so(\.[0-9.]+)?$" % "|".join(KEEP))
     removed = []
+    (root / FALLBACK_DIR).mkdir(exist_ok=True)
+    for name in FALLBACK:
+        if (root / name).is_file():
+            (root / name).replace(root / FALLBACK_DIR / name)
     for f in sorted(root.iterdir()):
         is_lib = (
             f.is_file() and not f.is_symlink()  # symlinks point into the bundle (Qt) – keep them
