@@ -20,7 +20,9 @@ ARCH="$(uname -m)"
 BUILD="build-appimage"
 APPDIR="$BUILD/MultiChat.AppDir"
 OUT="MultiChat-$ARCH.AppImage"
-TOOL="$BUILD/appimagetool-$ARCH.AppImage"
+# downloaded build tools live apart from the build output, so CI can cache them
+TOOLS="${TOOLS_DIR:-$BUILD/tools}"
+TOOL="$TOOLS/appimagetool-$ARCH.AppImage"
 
 # Build tools: fixed releases, verified by checksum (x86_64)
 APPIMAGETOOL_URL="https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage"
@@ -31,7 +33,7 @@ LINUXDEPLOY_SHA256="c20cd71e3a4e3b80c3483cef793cda3f4e990aca14014d23c544ca3ce127
 # appimagetool would download the moving "continuous" build unverified.
 RUNTIME_URL="https://github.com/AppImage/type2-runtime/releases/download/20251108/runtime-x86_64"
 RUNTIME_SHA256="2fca8b443c92510f1483a883f60061ad09b46b978b2631c807cd873a47ec260d"
-RUNTIME="$BUILD/runtime-$ARCH"
+RUNTIME="$TOOLS/runtime-$ARCH"
 
 # download <url> <sha256> <file>: (re)downloads unless the file has the expected checksum
 download() {
@@ -45,7 +47,7 @@ download() {
 }
 
 echo "==> Python environment"
-mkdir -p "$BUILD"
+mkdir -p "$BUILD" "$TOOLS"
 # PYTHON=python3.12 packaging/build-appimage.sh uses a specific interpreter (e.g. in CI)
 [ -d "$BUILD/venv" ] || "${PYTHON:-python3}" -m venv "$BUILD/venv"
 # shellcheck disable=SC1091
@@ -122,7 +124,7 @@ else
   echo "==> libmpv: using the system library (MPV_BUNDLE=1 to bundle it)"
 fi
 if [ -n "$LIBMPV" ]; then
-  LDTOOL="$BUILD/linuxdeploy-$ARCH.AppImage"
+  LDTOOL="$TOOLS/linuxdeploy-$ARCH.AppImage"
   download "$LINUXDEPLOY_URL" "$LINUXDEPLOY_SHA256" "$LDTOOL"
   # Use a separate AppDir so linuxdeploy doesn't touch the PyInstaller files
   MPVDIR="$BUILD/mpv.AppDir"

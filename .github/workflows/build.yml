@@ -110,8 +110,30 @@ jobs:
             exit 1
           fi
 
+      # appimagetool, linuxdeploy and the AppImage runtime come from GitHub releases, which
+      # sometimes fail for a while (HTTP 504). Cached here; the build script still checks each
+      # file's SHA256 and downloads it again if it doesn't match.
+      - name: Key for the build tool cache
+        id: tools
+        run: echo "key=appimage-tools-$(grep -E '^[A-Z]+_(URL|SHA256)=' packaging/build-appimage.sh | sha256sum | cut -c1-16)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore build tools
+        id: tools-cache
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25  # v5.1.0
+        with:
+          path: build-tools
+          key: ${{ steps.tools.outputs.key }}
+          restore-keys: appimage-tools-
+
       - name: Build AppImage
-        run: PYTHON=python3.12 packaging/build-appimage.sh
+        run: PYTHON=python3.12 TOOLS_DIR=build-tools packaging/build-appimage.sh
+
+      - name: Save build tools
+        if: steps.tools-cache.outputs.cache-hit != 'true'  # only after a successful build: all tools are there
+        uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25  # v5.1.0
+        with:
+          path: build-tools
+          key: ${{ steps.tools.outputs.key }}
 
       - name: Tests
         run: |
