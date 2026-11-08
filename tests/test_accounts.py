@@ -126,3 +126,85 @@ def test_new_login_replaces_a_stuck_one(tmp_path, monkeypatch):
         await session.close()
 
     asyncio.run(run())
+
+
+def test_logout_during_refresh_stays_logged_out(tmp_path):
+    """The refresh answer arrives after the logout – it must not write tokens back."""
+    from multichat.accounts import TwitchAccount
+
+    async def run():
+        gate = asyncio.Event()
+        store = SecretStore("tokens", FileBackend(tmp_path))
+        acc = TwitchAccount(store, lambda p: ("CID", "SECRET"), lambda: None)
+        store.replace("twitch", {"access_token": "OLD", "refresh_token": "RT", "expires_at": 0, "user_name": "Me"})
+
+        async def slow_token_request(data):
+            await gate.wait()
+            return {"access_token": "NEW", "refresh_token": "RT2", "expires_at": time.time() + 3600}
+
+        acc._token_request = slow_token_request
+        refresh = asyncio.ensure_future(acc._refresh("OLD"))
+        await asyncio.sleep(0.05)
+        acc.logout()
+        gate.set()
+        try:
+            await refresh
+        except Exception:  # noqa: BLE001 – "session expired" is fine
+            pass
+        assert not acc.logged_in and store.get("twitch") == {}
+        assert SecretStore("tokens", FileBackend(tmp_path)).get("twitch") == {}  # also on disk
+
+    asyncio.run(run())
+
+
+class _FlakyKeyring:
+    """Keyring that works, then fails to save (wallet closed) – entries stay readable."""
+
+    def __init__(self):
+        self.items, self.broken = {}, False
+
+    def load(self, key):
+        raw = self.items.get(key)
+        return json.loads(raw) if raw else None
+
+    def save(self, key, data):
+        if self.broken:
+            raise RuntimeError("wallet closed")
+        self.items[key] = json.dumps(data)
+
+    def delete(self, key):
+        if self.broken:
+            raise RuntimeError("wallet closed")
+        self.items.pop(key, None)
+
+    name = "keyring (test)"
+    strict = False
+
+
+def test_logout_while_keyring_fails_is_not_undone(tmp_path):
+    kr = _FlakyKeyring()
+    store = SecretStore("tokens", kr, FileBackend(tmp_path))
+    store.update("twitch", access_token="AT", user_name="Me")
+    kr.broken = True
+    store.delete("twitch")  # logout: lands in the file, the keyring still has the old entry
+    assert kr.load("tokens") == {"twitch": {"access_token": "AT", "user_name": "Me"}}
+    kr.broken = False  # next start: keyring works again
+    again = SecretStore("tokens", kr, FileBackend(tmp_path))
+    assert again.get("twitch") == {}  # the newer file wins – still logged out
+    assert kr.load("tokens") == {} and not (tmp_path / "tokens.json").exists()
+
+
+def test_keyring_only_mode_never_writes_files(tmp_path, monkeypatch):
+    from multichat.accounts import store as st
+
+    monkeypatch.setenv("MULTICHAT_SECRETS", "keyring")
+    monkeypatch.setattr(st, "system_keyring", lambda: None)
+    backend, files = st.choose_backend(tmp_path)
+    s = SecretStore("tokens", backend, files)
+    s.update("twitch", access_token="AT")
+    assert s.get("twitch") == {"access_token": "AT"} and not list(tmp_path.iterdir())
+    kr = _FlakyKeyring()
+    kr.strict, kr.broken = True, True
+    s2 = SecretStore("tokens", kr, FileBackend(tmp_path))
+    s2.update("twitch", access_token="AT")  # keyring fails: not saved, but no file either
+    assert not list(tmp_path.iterdir())

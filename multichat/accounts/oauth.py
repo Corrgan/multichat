@@ -95,6 +95,9 @@ class Account:
         self._session = session
         self._cache: dict = {}
         self._refresh_lock: asyncio.Lock | None = None
+        # bumped on every logout/login: a token response that arrives afterwards belongs to
+        # the old session and must not write tokens back (logged in again by accident)
+        self.session_gen = 0
         # called with the login URL if no browser could be opened (set by the UI)
         self.show_url: Callable[[str], None] | None = None
 
@@ -120,6 +123,7 @@ class Account:
         return str(self.tokens.get("user_id", ""))
 
     def logout(self) -> None:
+        self.session_gen += 1
         self.store.delete(self.platform)
         self._cache.clear()
 
@@ -192,7 +196,9 @@ class Account:
         }
         if verifier:
             data["code_verifier"] = verifier
-        self.store.replace(self.platform, await self._token_request(data))
+        tokens = await self._token_request(data)
+        self.session_gen += 1  # a refresh of an earlier session still under way must not overwrite these
+        self.store.replace(self.platform, tokens)
         self._cache.clear()
         try:
             who = await self.whoami()
@@ -235,16 +241,22 @@ class Account:
             if not rt:
                 raise expired
             cid, secret = self.creds(self.platform)
+            gen = self.session_gen
             try:
                 new = await self._token_request(
                     {"grant_type": "refresh_token", "refresh_token": rt, "client_id": cid, "client_secret": secret}
                 )
             except ApiError as e:
+                if gen != self.session_gen:
+                    raise expired from e  # logged out (or in again) meanwhile – nothing to clean up
                 if e.status in (400, 401):  # refresh token revoked or expired → log out cleanly
                     log.warning("%s: refresh token rejected – logging out", self.name)
                     self.logout()
                     raise expired from e
                 raise
+            if gen != self.session_gen or self.tokens.get("refresh_token") != rt:
+                log.info("%s: logged out during a token refresh – discarding the new token", self.name)
+                raise expired
             self.store.update(self.platform, **new)
 
     async def request(self, method: str, url: str, *, _retry: bool = True, **kw):

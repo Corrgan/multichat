@@ -137,6 +137,7 @@ docs/                 additional documentation
 - **Videos** belong to their group: the camera box of a channel decides whether it gets a tile. Only one tile in the whole window plays sound – click a tile to give it the sound. Quality and volume are remembered per channel.
 - **Sending** goes to the active group: pick one of its channels or “All in this group”.
 - Symbols before a name show the user's role: 🎥 broadcaster, 🛡 moderator, 💎 VIP, ★ subscriber/member, ✔ verified.
+- **Mentions:** lines that name the account you are logged in with on that platform – with or without @, as a whole word – are highlighted in red; your own messages are not.
 - **Click on a name** to select the user. The **action bar** above that group's chat then works on that user: user card, mention, delete their last message, timeout (1 min / 10 min / 1 h), ban, unban.
 - **Right-click a name** for the menu: user card, mention, copy text and the same moderation actions.
 - **User card** (👤): roles, account age, followage (Twitch, Kick), subscription months (Kick), ban status (Kick), the user's recent messages, your moderation actions and your own notes. It opens as a window; the 📌 button docks it next to the chat (remembered). Notes and the action log are stored only on this computer in `~/.config/multichat/modnotes.json`.

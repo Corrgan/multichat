@@ -238,13 +238,17 @@ class VideoTile(QFrame):
     def _resolved(self, gen: int, res) -> None:
         kind, data = res
         if gen != self.gen:  # restarted in the meantime → discard the result
-            if kind == "ok" and data.closer:
-                data.closer()
-                if data.pipe_fd is not None:
-                    try:
-                        os.close(data.pipe_fd)
-                    except OSError:
-                        pass
+            if kind == "ok" and (data.closer or data.pipe_fd is not None):
+                # Closing Streamlink waits for its download threads – not on the UI thread
+                # (quick channel changes would make the window hang).
+                def discard(closer=data.closer, fd=data.pipe_fd) -> None:
+                    for f in (closer, lambda: fd is not None and os.close(fd)):
+                        try:
+                            f and f()
+                        except Exception:  # noqa: BLE001
+                            pass
+
+                threading.Thread(target=discard, name=f"discard-{self.platform}", daemon=True).start()
             return
         log.info("Video %s: %s%s", self.platform, kind, f" – {data}" if kind == "error" else "")
         if kind == "ok":

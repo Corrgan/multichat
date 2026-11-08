@@ -54,8 +54,8 @@ class GroupsMixin:
         panel.split.splitterMoved.connect(lambda _pos, _i, pn=panel: self._split_moved(pn))
         v = panel.view
         v.document().setMaximumBlockCount(MAX_MESSAGES)
-        v.anchorClicked.connect(self.on_anchor)
-        v.rerender_needed.connect(self.render_all)
+        v.name_clicked.connect(self.on_anchor)
+        v.rerender_needed.connect(lambda pn=panel: self.render_all(pn))  # e.g. its font size changed
         v.image_failed.connect(self._image_failed)
         v.name_context.connect(self.on_name_context)
         v.follow_changed.connect(lambda following, pn=panel: self._follow_changed(pn, following))
@@ -64,6 +64,7 @@ class GroupsMixin:
             v.set_font_px(self.panels[0].view.font_px)
             v.alerts_cfg = self.panels[0].view.alerts_cfg
             v.selected = self.panels[0].view.selected
+            v.own = self.panels[0].view.own
         panel.toggle_row.connect(self.toggle_row)
         panel.connect_group.connect(self.connect_group)
         panel.disconnect_group.connect(self.disconnect_group)
@@ -91,6 +92,7 @@ class GroupsMixin:
         panel.view.set_font_px(first.font_px)  # may have changed meanwhile
         panel.view.alerts_cfg = first.alerts_cfg
         panel.view.selected = first.selected
+        panel.view.own = first.own
         if panel.video is not None:
             panel.video.setVisible(self.video_action.isChecked())
         self.panels.append(panel)
@@ -222,12 +224,12 @@ class GroupsMixin:
         for panel in self.panels:
             for key in panel.keys():
                 self._route.setdefault(key, []).append(panel)
+            if panel.video is not None:
+                panel.video.forget(panel.keys())  # tiles of channels the group doesn't have any more
         for key in [k for k in self.readers if k not in self._route]:
             # the channel was changed or its group removed: its chat would run on unseen
             self._stop_reader(key)
             log.info("%s: connection closed (no group shows it any more)", key)
-            if panel.video is not None:
-                panel.video.forget(panel.keys())  # tiles of channels the group doesn't have any more
         self._update_titles()  # an unnamed group is named after its first channel
         for panel in self.panels:
             if panel.action_bar is not None:

@@ -117,3 +117,23 @@ def test_kick_channel_info_is_shared(monkeypatch):
     for t in both:
         t.join()
     assert len(calls) == 1  # three callers at once, one request
+
+
+def test_discarded_stream_result_is_closed_in_the_background():
+    """A result for a channel that was already changed again: Streamlink's close waits for
+    its threads – that must not happen on the UI thread."""
+    import threading
+    import time as _time
+
+    from multichat.video.tiles import VideoTile
+
+    closed = threading.Event()
+
+    def slow_close():
+        _time.sleep(0.5)
+        closed.set()
+
+    tile = types.SimpleNamespace(gen=2, platform="twitch")
+    t0 = _time.perf_counter()
+    VideoTile._resolved(tile, 1, ("ok", streams.Stream("fdclose://-1", closer=slow_close)))
+    assert _time.perf_counter() - t0 < 0.1 and closed.wait(2)

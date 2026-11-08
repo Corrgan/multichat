@@ -163,12 +163,12 @@ class ModActions(QObject):
         ev = None
         if action == "delete":
             coro = acc.delete(msg)
-            ev = Deletion(msg.platform, msg_id=msg.msg_id)
+            ev = Deletion(msg.platform, msg_id=msg.msg_id, source=msg.source)
             label = _("Message deleted")
             entry = f"delete: {msg.text[:80]}"
         elif action == "timeout":
             coro = acc.timeout(msg, seconds)
-            ev = Deletion(msg.platform, user_id=msg.user_id)
+            ev = Deletion(msg.platform, user_id=msg.user_id, source=msg.source)  # only this channel
             label = _("Timeout for {user} ({minutes} min)").format(user=msg.user, minutes=seconds // 60)
             entry = f"timeout {seconds // 60} min"
         elif action == "unban":
@@ -184,7 +184,7 @@ class ModActions(QObject):
             if answer != QMessageBox.StandardButton.Yes:
                 return
             coro = acc.ban(msg)
-            ev = Deletion(msg.platform, user_id=msg.user_id)
+            ev = Deletion(msg.platform, user_id=msg.user_id, source=msg.source)  # only this channel
             label = _("{user} banned").format(user=msg.user)
             entry = "ban"
         else:

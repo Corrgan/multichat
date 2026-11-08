@@ -9,6 +9,7 @@ re-layouts are coalesced with timers, so busy chats stay smooth.
 from __future__ import annotations
 
 import html
+import re
 import time
 from collections import OrderedDict
 
@@ -30,6 +31,17 @@ ROLE_ORDER = ("broadcaster", "moderator", "vip", "subscriber", "verified")
 IMAGE_RES = QTextDocument.ResourceType.ImageResource.value
 MAX_IMAGE_BYTES = 4 * 1024 * 1024  # emotes are a few KB – anything bigger is not an emote
 MAX_CACHED = 1500  # distinct images kept in memory
+# Qt's HTML import creates a new image object + text format for every <img> (platform icon,
+# role icons, emotes) and only a clear() releases them – ~2-3 KB per chat line that stayed
+# in memory even after the line scrolled out. After this many inserted lines the view is
+# rebuilt once (needs_compaction), which empties that list.
+COMPACT_AFTER = 8000
+MENTION_BG = "#4d1b26"  # lines that name you (the account you are logged in with)
+
+
+def own_pattern(name: str):
+    """Your name as a whole word, with or without @ ("@Me", "me" – not "meow", not "some")."""
+    return re.compile(r"(?<!\w)@?" + re.escape(name) + r"(?!\w)", re.IGNORECASE)
 MAX_ANIMATED = 64  # animations that play at the same time (the most recently shown ones)
 FRAME_MS = 50  # repaint rate for animations (20 fps)
 RELAYOUT_SCAN = 400  # lines checked for a newly loaded image
@@ -45,7 +57,8 @@ class ChatView(QTextBrowser):
 
     rerender_needed = pyqtSignal()
     image_failed = pyqtSignal(str)  # an emote that couldn't be loaded – its lines show the name instead
-    name_context = pyqtSignal(QUrl)  # right-click on a user name
+    name_context = pyqtSignal(QUrl)  # right-click on a user name ("msg:<uid>")
+    name_clicked = pyqtSignal(QUrl)  # left click on a user name ("msg:<uid>")
     follow_changed = pyqtSignal(bool)  # True: sticks to the newest message
 
     def __init__(self) -> None:
@@ -55,6 +68,8 @@ class ChatView(QTextBrowser):
         self.emote_h = EMOTE_H
         self.selected: tuple[str, str] | None = None  # (platform, user key) of the selected user
         self.alerts_cfg: dict = dict(alerts.DEFAULT_ALERTS)  # which events are highlighted
+        # platform → (pattern, user ID, lower-case name) of the account you are logged in with
+        self.own: dict[str, tuple] = {}
         self._icons: dict = {}
         self._apply_style()
         self.nam = QNetworkAccessManager(self)
@@ -79,6 +94,7 @@ class ChatView(QTextBrowser):
         # position check would then wrongly count that as "scrolled up".
         self.follow = True
         self.unseen = 0
+        self.inserted = 0  # lines inserted since the last clear() (see COMPACT_AFTER)
         self._programmatic = 0
         bar = self.verticalScrollBar()
         bar.valueChanged.connect(self._on_scroll)
@@ -132,6 +148,7 @@ class ChatView(QTextBrowser):
         self._programmatic += 1
         try:
             self.clear()
+            self.inserted = 0
             self.append_many(htmls)
             if not self.follow:
                 bar.setValue(value)
@@ -255,6 +272,9 @@ class ChatView(QTextBrowser):
         self.document().addResource(IMAGE_RES, QUrl(key), img)
         while len(self.cache) > MAX_CACHED:
             old, _img = self.cache.popitem(last=False)
+            # the document keeps its own reference – drop it as well, or the limit only applies
+            # to this dict (an invalid value makes the document ask loadResource() again)
+            self.document().addResource(IMAGE_RES, QUrl(old), None)
             entry = self.movies.pop(old, None)
             if entry:
                 entry[0].stop()
@@ -352,6 +372,7 @@ class ChatView(QTextBrowser):
         cur = QTextCursor(doc)
         cur.movePosition(QTextCursor.MoveOperation.End)
         cur.beginEditBlock()
+        self.inserted += len(items)
         for item in items:
             uid, h, bg = item if isinstance(item, tuple) else (-1, item, None)
             if not doc.isEmpty():
@@ -360,6 +381,10 @@ class ChatView(QTextBrowser):
             cur.setBlockFormat(self._block_format(bg))
             cur.block().setUserState(uid)
         cur.endEditBlock()
+
+    @property
+    def needs_compaction(self) -> bool:
+        return self.inserted > COMPACT_AFTER
 
     def update_messages(self, items: list) -> int:
         """Re-renders only the lines of these messages (deleted, selection changed …) instead of
@@ -385,6 +410,7 @@ class ChatView(QTextBrowser):
                     cur.insertHtml(hit[0])
                     cur.setBlockFormat(self._block_format(hit[1]))
                     done += 1
+                    self.inserted += 1
                 block = block.previous()
         finally:
             cur.endEditBlock()
@@ -393,11 +419,24 @@ class ChatView(QTextBrowser):
             self.scroll_to_bottom()
         return done
 
+    def mentions_me(self, m: ChatMessage) -> bool:
+        """The message names the account you are logged in with on its platform (your own
+        messages don't count)."""
+        own = self.own.get(m.platform)
+        if not own or not m.text:
+            return False
+        pattern, user_id, name = own
+        if (user_id and m.user_id == user_id) or m.user.lower() == name:
+            return False
+        return bool(pattern.search(m.text))
+
     def items(self, msgs) -> list:
         """Messages → (uid, html, background) for append_many/rebuild/update_messages."""
         out = []
         for m in msgs:
             bg = alerts.COLORS[m.event][0] if m.event and alerts.is_alert(m, self.alerts_cfg) else None
+            if bg is None and self.mentions_me(m):
+                bg = MENTION_BG
             out.append((m.uid, self.message_html(m), bg))
         return out
 
@@ -429,10 +468,26 @@ class ChatView(QTextBrowser):
         self._apply_style()
         self.rerender_needed.emit()
 
+    # The name links are all just "msg:" – the line itself knows its message (block user
+    # state). A unique link per message ("msg:<uid>") made Qt keep one text format per
+    # message in the document: memory grew with every message until a full re-render.
+    def message_at(self, pos) -> QUrl | None:
+        """"msg:<uid>" of the name/headline link at this viewport position, else None."""
+        if self.anchorAt(pos) != "msg:":
+            return None
+        uid = self.cursorForPosition(pos).block().userState()
+        return QUrl(f"msg:{uid}") if uid > 0 else None
+
+    def mouseReleaseEvent(self, event) -> None:  # noqa: N802
+        target = self.message_at(event.position().toPoint()) if event.button() == Qt.MouseButton.LeftButton else None
+        super().mouseReleaseEvent(event)  # ends a selection drag; its anchorClicked isn't used
+        if target is not None:
+            self.name_clicked.emit(target)
+
     def contextMenuEvent(self, event) -> None:  # noqa: N802
-        anchor = self.anchorAt(event.pos())
-        if anchor.startswith("msg:"):
-            self.name_context.emit(QUrl(anchor))
+        target = self.message_at(event.pos())
+        if target is not None:
+            self.name_context.emit(target)
             return
         super().contextMenuEvent(event)
 
@@ -467,7 +522,7 @@ class ChatView(QTextBrowser):
         name_style = f"color:{name_color};font-weight:bold;text-decoration:none"
         if selected:
             name_style += ";background:#3a3a55"
-        name = f"<a href='msg:{m.uid}' style='{name_style}'>{html.escape(m.user)}</a>"
+        name = f"<a href='msg:' style='{name_style}'>{html.escape(m.user)}</a>"  # see message_at()
         head = f"<span style='color:#888'>{ts}</span> {badge} "
         if m.event:
             title = html.escape(alerts.headline(m))
@@ -478,6 +533,6 @@ class ChatView(QTextBrowser):
                 title = f"<span style='color:#aaa'>{title}</span>"
             # the name stays clickable (user card, moderation) through the link below or the headline
             if not m.parts:
-                return f"{head}<a href='msg:{m.uid}' style='text-decoration:none'>{title}</a>"
+                return f"{head}<a href='msg:' style='text-decoration:none'>{title}</a>"
             return f"{head}{title}<br>{roles}{name}: {body}"
         return f"{head}{roles}{name}: {body}"

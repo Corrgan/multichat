@@ -69,3 +69,76 @@ def test_drawn_icons_are_not_empty():
         img = icons.image(name, 24)
         assert any(img.pixelColor(x, y).alpha() for x in range(24) for y in range(24)), name
     assert not icons.icon("user").isNull()
+
+
+def test_evicted_images_leave_the_document(app, monkeypatch):
+    """The image limit covers the document's copies too, not only the dict."""
+    from PyQt6.QtCore import QUrl
+    from PyQt6.QtGui import QImage, QTextDocument
+
+    from multichat.ui import chat_view
+
+    monkeypatch.setattr(chat_view, "MAX_CACHED", 3)
+    v = chat_view.ChatView()
+    T = QTextDocument.ResourceType.ImageResource.value
+    big = QImage(400, 400, QImage.Format.Format_ARGB32)
+    for i in range(5):
+        v._store(f"https://example.invalid/{i}.png", big)
+    assert len(v.cache) == 3
+    first = v.document().resource(T, QUrl("https://example.invalid/0.png"))  # asks loadResource again
+    assert first.size() == v.placeholder.size()
+    assert v.document().resource(T, QUrl("https://example.invalid/4.png")).size() == big.size()
+
+
+
+def test_name_links_find_their_message_without_unique_urls(app):
+    """One text format per message (unique "msg:<uid>" links) made memory grow with every
+    message – the links are all "msg:" now and the clicked line tells the message."""
+    from PyQt6.QtGui import QTextCursor
+
+    from multichat.chat.models import ChatMessage
+
+    v = ChatView()
+    v.resize(600, 400)
+    v.document().setMaximumBlockCount(50)
+    msgs = [ChatMessage("twitch", "c", f"user{i}", f"text {i}") for i in range(500)]
+    for k in range(0, 500, 25):
+        v.append_many(v.items(msgs[k:k + 25]))
+    # text formats don't grow with the number of messages (images do – see COMPACT_AFTER)
+    assert len([f for f in v.document().allFormats() if not f.isImageFormat()]) < 40
+    v.show()
+    app.processEvents()
+    block = v.document().lastBlock()
+    cur = QTextCursor(block)
+    cur.setPosition(block.position() + block.text().index("user499") + 2)
+    pos = v.cursorRect(cur).center()
+    assert v.message_at(pos).toString() == f"msg:{msgs[-1].uid}"
+    hits = []
+    v.name_clicked.connect(lambda url: hits.append(url.toString()))
+    from PyQt6.QtCore import QPointF, Qt
+    from PyQt6.QtGui import QMouseEvent
+    from PyQt6.QtCore import QEvent
+
+    for kind in (QEvent.Type.MouseButtonPress, QEvent.Type.MouseButtonRelease):
+        ev = QMouseEvent(kind, QPointF(pos), QPointF(v.viewport().mapToGlobal(pos)), Qt.MouseButton.LeftButton,
+                         Qt.MouseButton.LeftButton if kind == QEvent.Type.MouseButtonPress else Qt.MouseButton.NoButton,
+                         Qt.KeyboardModifier.NoModifier)
+        QApplication.sendEvent(v.viewport(), ev)
+    assert hits == [f"msg:{msgs[-1].uid}"]
+
+
+def test_view_is_compacted_after_many_lines(app, monkeypatch):
+    """Qt keeps one format per inserted image until clear() – the view asks for a rebuild."""
+    from multichat.chat.models import ChatMessage
+
+    monkeypatch.setattr(chat_view, "COMPACT_AFTER", 100)
+    v = ChatView()
+    v.document().setMaximumBlockCount(50)
+    msgs = [ChatMessage("twitch", "c", f"user{i}", f"text {i}") for i in range(150)]
+    v.append_many(v.items(msgs[:100]))
+    assert not v.needs_compaction
+    v.append_many(v.items(msgs[100:]))
+    grown = len(v.document().allFormats())
+    assert v.needs_compaction and grown > 100
+    v.rebuild(v.items(msgs[-50:]))
+    assert not v.needs_compaction and len(v.document().allFormats()) < grown / 2

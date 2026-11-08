@@ -252,13 +252,16 @@ def test_several_channels_and_groups(window, app):
     w.tabs.setCurrentIndex(0)
     assert first.isVisibleTo(w) and not group_b.isVisibleTo(w)  # tabs: only the active group
     msg("twitch:chan_b", "only in third")
-    msg("kick:examplekick", "only in second @testuser")
+    msg("kick:examplekick", "only in second @testuser")  # Kick: you're logged in there as TestUser too
     msg("twitch:chan_a", "in both")
     w.accounts["twitch"].store.update("twitch", access_token="x", expires_at=9e12, user_name="TestUser")
+    w.accounts["kick"].store.update("kick", access_token="x", expires_at=9e12, user_name="TestUser")
+    w.refresh_accounts()
     app.processEvents()
     w._flush_messages()
     w._render_timer.stop()
     w._render_now()
+    w.logout("kick")
     text_a, text_b, text_c = first.view.toPlainText(), group_b.view.toPlainText(), group_c.view.toPlainText()
     assert "only in third" in text_c and "only in third" not in text_a + text_b
     assert "only in second" in text_b and "only in second" not in text_a
@@ -477,7 +480,7 @@ def test_alert_highlight_and_settings(window, monkeypatch):
     items = w.view.items([sub, small, raid])
     assert items[0][2] and "resubscribed (12 months)" in items[0][1]
     assert items[1][2] is None and "cheered 5 bits" in items[1][1]  # below the minimum: no highlight
-    assert items[2][2] and f"msg:{raid.uid}" in items[2][1]  # name stays clickable
+    assert items[2][2] and "href='msg:'" in items[2][1]  # name stays clickable (the line knows its message)
     w.view.rebuild(items)
     assert "Carol is raiding with 42 viewers" in w.view.toPlainText()
     p = message_payload(sub, w.view.alerts_cfg)
@@ -565,15 +568,16 @@ def test_changed_channel_stops_its_old_chat(window, app):
 def test_mention_counter_matches_whole_names(window, app):
     w = window
     w.accounts["twitch"].store.update("twitch", access_token="x", expires_at=9e12, user_name="Me")
+    w.refresh_accounts()
     second = w.add_group()
     second.rows["twitch"].edit.setText("examplechan")
     w.tabs.setCurrentIndex(0)
-    for text in ("hi @meow", "hey @Me!", "@me"):
+    for text in ("hi @meow", "hey @Me!", "@me", "me too", "some memes"):
         m = ChatMessage("twitch", "examplechan", "User", text)
         m.source = "twitch:examplechan"
         w.add_message(m)
     w._flush_messages()
-    assert second.unread == 3 and second.mentions == 2
+    assert second.unread == 5 and second.mentions == 3  # with or without @, whole word only
     w.logout("twitch")
 
 
@@ -642,3 +646,118 @@ def test_removed_group_is_reused_empty(window, app):
     assert again is g  # the same widgets – its video players are not destroyed and rebuilt
     assert again.title() == "Group 2" and not again.keys() and again.view.toPlainText() == ""
     assert w.tabs.count() == 2 and w.side.widget(w.side.count() - 1) is again
+
+
+def test_tiles_are_cleaned_up_in_every_group(window, monkeypatch):
+    from multichat.video.tiles import VideoPanel
+
+    calls = []
+    monkeypatch.setattr(VideoPanel, "forget", lambda self, keep: calls.append((self, frozenset(keep))))
+    w = window
+    w.add_group()
+    calls.clear()
+    w.panels[0].rows["kick"].edit.setText("examplekick")
+    panels_seen = {pn for pn, _keep in calls}
+    if all(pn.video is not None for pn in w.panels):
+        assert panels_seen == {pn.video for pn in w.panels}  # not just the last group
+
+
+def test_overlapping_groups_keep_each_groups_newest(window, monkeypatch):
+    """Group A: shared + busy channel, group B: only the shared one. A keeps its newest 50,
+    B its shared lines – no newer lines of A make room for older shared ones."""
+    from multichat.ui import main_window as mw
+
+    monkeypatch.setattr(mw, "MAX_MESSAGES", 50)
+    monkeypatch.setattr(mw, "TRIM_STEP", 10)
+    w = window
+    w._trim_at = 50
+    a = w.panels[0]
+    a.rows["twitch"].edit.setText("sharedchan")
+    a.rows["kick"].edit.setText("busykick")
+    b = w.add_group()
+    b.rows["twitch"].edit.setText("sharedchan")
+
+    def msg(platform, chan, text):
+        m = ChatMessage(platform, chan, "User", text)
+        m.source = f"{platform}:{chan}"
+        w.add_message(m)
+
+    for i in range(30):
+        msg("twitch", "sharedchan", f"shared {i}")
+    for i in range(400):
+        msg("kick", "busykick", f"busy {i}")
+        if i % 20 == 0:
+            w._flush_messages()
+    w._flush_messages()
+    in_a = [m.text for m in w.messages.values() if a in w.panels_for(m)]
+    assert in_a[-50:] == [f"busy {i}" for i in range(350, 400)]  # A's newest 50 are all there
+    assert [m.text for m in w.messages.values() if b in w.panels_for(m)] == [f"shared {i}" for i in range(30)]
+
+
+def test_reused_group_follows_new_messages(window, app):
+    from PyQt6.QtWidgets import QMessageBox
+
+    w = window
+    g = w.add_group()
+    g.view._set_follow(False)  # scrolled up in the old group
+    g.view.note_unseen(7)
+    QMessageBox.question = lambda *a, **k: QMessageBox.StandardButton.Yes
+    w.remove_group(g)
+    again = w.add_group()
+    assert again is g and again.view.follow and again.view.unseen == 0 and again.view.jump.isHidden()
+
+
+def test_local_moderation_only_touches_its_channel(window, app, monkeypatch):
+    w = window
+    a = ChatMessage("twitch", "chan_a", "Troll", "in a", msg_id="1", user_id="7")
+    b = ChatMessage("twitch", "chan_b", "Troll", "in b", msg_id="2", user_id="7")
+    a.source, b.source = "twitch:chan_a", "twitch:chan_b"
+    for m in (a, b):
+        w.add_message(m)
+    w._flush_messages()
+    acc = w.accounts["twitch"]
+
+    async def ok(*_a):
+        return None
+
+    monkeypatch.setattr(acc, "timeout", ok)
+    w.run = lambda coro, then=None, **kw: (coro.close(), then and then(None))
+    w.mod.moderate(a, "timeout", 60)
+    assert a.deleted and not b.deleted
+
+
+def test_mentions_are_highlighted(window):
+    from multichat.ui.chat_view import MENTION_BG
+
+    w = window
+    w.accounts["twitch"].store.update("twitch", access_token="x", expires_at=9e12, user_name="Me", user_id="42")
+    w.refresh_accounts()
+    v = w.view
+
+    def bg(text, user="Someone", uid="1", platform="twitch"):
+        return v.items([ChatMessage(platform, "c", user, text, user_id=uid)])[0][2]
+
+    assert bg("hey @me") == MENTION_BG and bg("me too") == MENTION_BG
+    assert bg("some memes") is None and bg("@meow") is None
+    assert bg("talking about me", user="Me", uid="42") is None  # your own message
+    assert bg("hi me", platform="kick") is None  # not logged in to Kick as "Me"
+    w.logout("twitch")
+    assert bg("hey @me") is None
+
+
+def test_back_at_the_bottom_rebuilds_only_that_group(window):
+    w = window
+    other = w.add_group()
+    rebuilt = []
+    for pn in w.panels:
+        pn.view.rebuild = lambda items, pn=pn: rebuilt.append(pn)
+    w._render_timer.stop()
+    first = w.panels[0]
+    first.view.held = True
+    w._follow_changed(first, True)
+    w._render_now()
+    assert rebuilt == [first]
+    rebuilt.clear()
+    w.render_all()  # e.g. a filter: all groups
+    w._render_now()
+    assert rebuilt == [first, other]

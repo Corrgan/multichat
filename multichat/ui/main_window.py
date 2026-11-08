@@ -34,7 +34,7 @@ from ..core.logsetup import LOG_DIR, LOG_FILE, asyncio_exception_handler, set_de
 from ..overlay.server import OverlayServer, deletion_payload, message_payload
 from ..video.player import load_mpv
 from ..video.tiles import AudioHub
-from .chat_view import DEFAULT_FONT
+from .chat_view import DEFAULT_FONT, own_pattern
 from .groups import GroupPanel
 from .dialogs import AboutDialog, AlertsDialog, AppsDialog
 from .moderation import ModActions, ModNotes
@@ -108,6 +108,7 @@ class MainWindow(GroupsMixin, ConnectionsMixin, QMainWindow):
         self._flush_timer.timeout.connect(self._flush_messages)
         self._render_timer = QTimer(self, singleShot=True, interval=150)  # coalesces full re-renders
         self._render_timer.timeout.connect(self._render_now)
+        self._rerender: set | None = set()  # groups waiting for a full re-render; None = all of them
 
         self.mod = ModActions(self, ModNotes(CONF_DIR / "modnotes.json"))
         self._build_ui()
@@ -187,7 +188,7 @@ class MainWindow(GroupsMixin, ConnectionsMixin, QMainWindow):
         for p in PLATFORMS:
             cb = QCheckBox(NAMES[p])
             cb.setChecked(True)
-            cb.toggled.connect(self.render_all)
+            cb.toggled.connect(lambda _on: self.render_all())
             self.filters[p] = cb
             filters.addWidget(cb)
         filters.addStretch(1)
@@ -439,15 +440,13 @@ class MainWindow(GroupsMixin, ConnectionsMixin, QMainWindow):
         if len(self.messages) > self._trim_at:
             self._trim_messages()
         visible = self._visible_panels()
-        names = [re.escape(a.user_name) for a in self.accounts.values() if a.logged_in and a.user_name]
-        own = re.compile(r"@(?:%s)\b" % "|".join(names), re.IGNORECASE) if names else None  # not "@me" in "@meow"
         for panel in self.panels:
             shown = [m for m in batch if self.filters[m.platform].isChecked() and panel in self.panels_for(m)]
             if not shown:
                 continue
             if panel not in visible:  # counter on the tab
                 panel.unread += len(shown)
-                panel.mentions += sum(bool(own.search(m.text)) for m in shown) if own else 0
+                panel.mentions += sum(panel.view.mentions_me(m) for m in shown)
             v = panel.view
             if not v.follow:
                 # scrolled up: the view stays as it is (appending would also drop lines at the top and
@@ -455,48 +454,56 @@ class MainWindow(GroupsMixin, ConnectionsMixin, QMainWindow):
                 v.note_unseen(len(shown))
                 v.held = True
                 continue
-            if self._render_timer.isActive():
+            if self._rerender_due(panel):
                 continue  # a full re-render is due anyway
             v.append_many(v.items(shown))  # scrolls along
+            if v.needs_compaction:
+                self.render_all(panel)  # empties Qt's per-image format list (see COMPACT_AFTER)
         if any(p not in visible for p in self.panels):
             self._update_titles()
 
     def _trim_messages(self) -> None:
-        """Each group keeps its last MAX_MESSAGES. With one shared limit, a busy group pushed
-        a quiet group's history out, and the next full re-render (filter, font size) showed
-        the quiet group with far fewer lines. Runs every TRIM_STEP new messages."""
-        counts: dict[int, int] = {}
-        for m in self.messages.values():
+        """Keeps the union of every group's last MAX_MESSAGES messages – what a full re-render
+        (filter, font size) shows. A message stays as long as one of its groups still counts
+        it among its newest; groups sharing a channel never cost each other newer lines.
+        Runs every TRIM_STEP new messages."""
+        left = {id(pn): MAX_MESSAGES for pn in self.panels}
+        keep = set()
+        for uid in reversed(self.messages):  # newest first
+            m = self.messages[uid]
             for pn in self.panels_for(m):
-                counts[id(pn)] = counts.get(id(pn), 0) + 1
-        over = {k for k, n in counts.items() if n > MAX_MESSAGES}
-        for uid, m in list(self.messages.items()):
-            if not over:
+                if left.get(id(pn), 0) > 0:
+                    left[id(pn)] -= 1
+                    keep.add(uid)
+            if not any(left.values()):
                 break
-            shown_in = self.panels_for(m)
-            if all(id(pn) in over for pn in shown_in):  # also messages no group shows any more
-                del self.messages[uid]
-                for pn in shown_in:
-                    counts[id(pn)] -= 1
-                    if counts[id(pn)] <= MAX_MESSAGES:
-                        over.discard(id(pn))
-        if len(self.messages) > MAX_MESSAGES * (len(self.panels) + 1):  # left-overs of removed channels
-            for uid in [u for u, m in self.messages.items() if not self.panels_for(m)]:
-                del self.messages[uid]
+        if len(keep) < len(self.messages):  # also drops messages no group shows any more
+            self.messages = OrderedDict((u, m) for u, m in self.messages.items() if u in keep)
         self._trim_at = len(self.messages) + TRIM_STEP
 
-    def render_all(self) -> None:
-        """Requests a full re-render (filters, deletions, failed images); coalesced."""
+    def render_all(self, panel: GroupPanel | None = None) -> None:
+        """Requests a full re-render (filters, deletions, failed images) of all groups or of
+        one; coalesced. A full re-render costs ~0.2 s per 1000 lines – only where needed."""
+        if panel is None:
+            self._rerender = None
+        elif self._rerender is not None:
+            self._rerender.add(panel)
         self._render_timer.start()
+
+    def _rerender_due(self, panel: GroupPanel) -> bool:
+        return self._render_timer.isActive() and (self._rerender is None or panel in self._rerender)
 
     def _follow_changed(self, panel: GroupPanel, following: bool) -> None:
         if following and panel.view.held:  # back at the bottom: show what arrived meanwhile
             panel.view.held = False
-            self.render_all()
+            self.render_all(panel)  # only this group missed lines
 
     def _render_now(self) -> None:
+        due, self._rerender = self._rerender, set()
         self._flush_messages()
         for panel in self.panels:
+            if due is not None and panel not in due:
+                continue
             v = panel.view
             if v.follow:
                 v.held = False
@@ -553,13 +560,13 @@ class MainWindow(GroupsMixin, ConnectionsMixin, QMainWindow):
     def update_lines(self, msgs) -> None:
         """Re-renders just these messages' lines (busy chats delete and time out all the time –
         rebuilding the whole view each time made the window stutter)."""
-        if self._render_timer.isActive():
-            return  # a full re-render is due anyway
         for panel in self.panels:
+            if self._rerender_due(panel):
+                continue  # a full re-render of this group is due anyway
             shown = [m for m in msgs if self.filters[m.platform].isChecked() and panel in self.panels_for(m)]
             if len(shown) > 200:  # e.g. "clear chat": one rebuild is cheaper
-                self.render_all()
-                return
+                self.render_all(panel)
+                continue
             if shown:
                 panel.view.update_messages(panel.view.items(shown))
 
@@ -661,6 +668,13 @@ class MainWindow(GroupsMixin, ConnectionsMixin, QMainWindow):
     # ---- Accounts -------------------------------------------------------- #
     def refresh_accounts(self) -> None:
         self._refresh_targets()
+        own = {p: (own_pattern(a.user_name), a.user_id, a.user_name.lower())
+               for p, a in self.accounts.items() if a.logged_in and a.user_name}
+        if any(v.own.keys() != own.keys() or any(v.own[p][2] != own[p][2] for p in own) for v in self.views()):
+            for v in self.views():
+                v.own = own
+            if self.messages:
+                self.render_all()  # lines naming you are highlighted (or no longer after a logout)
 
     def login(self, platform: str) -> None:
         cid, secret = self.app_creds(platform)

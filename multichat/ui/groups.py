@@ -217,6 +217,9 @@ class GroupPanel(QWidget):
             row.status.set_full("–")
         self.view.rebuild([])
         self.view.held = False
+        self.view.scroll_to_bottom()  # follows the newest message again, hides "↓ New messages (n)"
+        self.view.unseen = 0
+        self.view._update_jump()
         self.unread = self.mentions = 0
         self.fold.setChecked(True)
         self.set_index(index)

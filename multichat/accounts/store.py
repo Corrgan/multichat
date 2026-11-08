@@ -5,7 +5,9 @@
 By default the data goes into the system keyring via the Secret Service API
 (KWallet, GNOME Keyring, KeePassXC …). If none is available, it falls back to JSON
 files in ~/.config/multichat/ that only the user can read (0600).
-MULTICHAT_SECRETS=file forces the files, MULTICHAT_SECRETS=keyring the keyring.
+MULTICHAT_SECRETS=file forces the files, MULTICHAT_SECRETS=keyring the keyring: then
+nothing is ever written to a file – without a working keyring, logins only last until
+the app is closed.
 """
 from __future__ import annotations
 
@@ -53,8 +55,29 @@ class FileBackend:
         self.path(key).unlink(missing_ok=True)
 
 
+class MemoryBackend:
+    """MULTICHAT_SECRETS=keyring without a usable keyring: kept in memory only."""
+
+    name = "memory (not saved – no keyring)"
+    strict = True
+
+    def __init__(self) -> None:
+        self.items: dict = {}
+
+    def load(self, key: str) -> dict | None:
+        return self.items.get(key)
+
+    def save(self, key: str, data: dict) -> None:
+        self.items[key] = json.loads(json.dumps(data))
+
+    def delete(self, key: str) -> None:
+        self.items.pop(key, None)
+
+
 class KeyringBackend:
     """One keyring entry per item (service "multichat"), the value is JSON."""
+
+    strict = False  # True: never fall back to a file (MULTICHAT_SECRETS=keyring)
 
     def __init__(self, keyring) -> None:
         self.kr = keyring
@@ -101,9 +124,13 @@ def choose_backend(directory: Path):
     kr = system_keyring()
     if kr is None:
         if mode == "keyring":
-            log.error("Secrets: MULTICHAT_SECRETS=keyring, but no keyring is available – using files")
+            log.error("Secrets: MULTICHAT_SECRETS=keyring, but no keyring is available – logins are kept "
+                      "in memory only (nothing is written to a file)")
+            return MemoryBackend(), None
         return files, files
-    return KeyringBackend(kr), files
+    backend = KeyringBackend(kr)
+    backend.strict = mode == "keyring"
+    return backend, files
 
 
 class SecretStore:
@@ -122,20 +149,24 @@ class SecretStore:
         self._migrate_files()
 
     def _migrate_files(self) -> None:
-        """Move data from an old JSON file into the keyring and delete the file."""
+        """A JSON file next to a keyring: from an older version, or written because the
+        keyring failed while the app ran (_save). Either way it is the newer state – it
+        replaces what the keyring holds (else a logout made while the keyring failed would
+        be undone by the old keyring entry), goes into the keyring and the file is deleted."""
         if not self.files or self.files is self.backend:
             return
         old = self.files.load(self.key)
-        if not old:
+        if old is None:
             return
-        for platform, values in old.items():
-            self.data.setdefault(platform, values)
+        self.data = old if isinstance(old, dict) else {}
         try:
             self.backend.save(self.key, self.data)
             if self.backend.load(self.key) != self.data:
                 raise RuntimeError("read-back mismatch")
         except Exception as e:  # noqa: BLE001
             log.warning("Secrets: moving %s into the keyring failed, keeping the file: %s", self.key, e)
+            if not getattr(self.backend, "strict", False):
+                self.backend = self.files  # keep using the file – it stays the newest state
             return
         self.files.delete(self.key)
         log.info("Secrets: %s moved from %s into the %s", self.key, self.files.path(self.key).name, self.backend.name)
@@ -176,10 +207,19 @@ class SecretStore:
         try:
             self.backend.save(self.key, self.data)
         except Exception as e:  # noqa: BLE001
+            if getattr(self.backend, "strict", False):
+                # MULTICHAT_SECRETS=keyring: never a file – the change lives in memory until the app closes
+                log.error("Secrets: saving %s in the %s failed (%s) – not saved (keyring-only mode)",
+                          self.key, self.backend.name, e)
+                return
             if not self.files or self.files is self.backend:
                 raise
             # e.g. the wallet was closed: keep the data instead of losing the login
             log.error("Secrets: saving %s in the %s failed (%s) – using the file", self.key, self.backend.name, e)
+            try:  # the old entry must not come back at the next start (a logout would be undone)
+                self.backend.delete(self.key)
+            except Exception:  # noqa: BLE001 – the file wins at the next start anyway (_migrate_files)
+                pass
             self.backend = self.files
             self.files.save(self.key, self.data)
 
