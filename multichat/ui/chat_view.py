@@ -15,7 +15,7 @@ from collections import OrderedDict
 from PyQt6.QtCore import QBuffer, QByteArray, QIODevice, QSize, Qt, QTimer, QUrl, pyqtSignal
 from PyQt6.QtGui import QImage, QImageReader, QMovie, QTextBlockFormat, QTextCharFormat, QTextCursor, QTextDocument
 from PyQt6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
-from PyQt6.QtWidgets import QTextBrowser
+from PyQt6.QtWidgets import QTextBrowser, QToolButton
 
 from ..chat.models import ChatMessage, user_key
 from ..core.constants import BADGES, BROWSER_UA, FAVICONS
@@ -42,6 +42,7 @@ class ChatView(QTextBrowser):
 
     rerender_needed = pyqtSignal()
     name_context = pyqtSignal(QUrl)  # right-click on a user name
+    follow_changed = pyqtSignal(bool)  # True: sticks to the newest message
 
     def __init__(self) -> None:
         super().__init__()
@@ -64,6 +65,95 @@ class ChatView(QTextBrowser):
         self._repaint.timeout.connect(self.viewport().update)
         self._prune = QTimer(self, singleShot=True, interval=500)
         self._prune.timeout.connect(self._pause_old_movies)
+
+        # Auto-scroll: follow the newest message until the user scrolls up; scrolling back to
+        # the bottom (or the jump button) follows again. Kept as state instead of checking the
+        # position before each append – images loading later make the text taller, and a
+        # position check would then wrongly count that as "scrolled up".
+        self.follow = True
+        self.unseen = 0
+        self._programmatic = 0
+        bar = self.verticalScrollBar()
+        bar.valueChanged.connect(self._on_scroll)
+        bar.rangeChanged.connect(self._on_range)
+        self.jump = QToolButton(self.viewport())
+        self.jump.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.jump.setStyleSheet(
+            "QToolButton { background:#9147ff; color:white; border:none; border-radius:12px;"
+            " padding:4px 14px; font-weight:bold; }"
+            "QToolButton:hover { background:#a970ff; }"
+        )
+        self.jump.clicked.connect(self.scroll_to_bottom)
+        self.jump.hide()
+        self._update_jump()
+
+    # ---- Auto-scroll ------------------------------------------------------ #
+    def _at_bottom(self) -> bool:
+        bar = self.verticalScrollBar()
+        return bar.value() >= bar.maximum() - 4
+
+    def _set_follow(self, on: bool) -> None:
+        if on:
+            self.unseen = 0
+        if on != self.follow:
+            self.follow = on
+            self.follow_changed.emit(on)
+        self._update_jump()
+
+    def _on_scroll(self, _value: int) -> None:
+        if not self._programmatic:  # moved by the user (wheel, scrollbar, keys)
+            self._set_follow(self._at_bottom())
+
+    def _on_range(self, _min: int, _max: int) -> None:
+        if self.follow:
+            self.scroll_to_bottom()
+
+    def scroll_to_bottom(self) -> None:
+        self._programmatic += 1
+        try:
+            bar = self.verticalScrollBar()
+            bar.setValue(bar.maximum())
+        finally:
+            self._programmatic -= 1
+        self._set_follow(True)
+
+    def rebuild(self, htmls: list[str]) -> None:
+        """Replaces all messages; keeps following, or keeps the position while scrolled up."""
+        bar = self.verticalScrollBar()
+        value = bar.value()
+        self._programmatic += 1
+        try:
+            self.clear()
+            self.append_many(htmls)
+            if not self.follow:
+                bar.setValue(value)
+        finally:
+            self._programmatic -= 1
+        if self.follow:
+            self.scroll_to_bottom()
+
+    def note_unseen(self, n: int) -> None:
+        """Messages that arrived while scrolled up (shown once you return to the bottom)."""
+        self.unseen += n
+        self._update_jump()
+
+    def _update_jump(self) -> None:
+        if self.follow:
+            self.jump.hide()
+            return
+        text = _("New messages") if self.unseen else _("Jump to newest")
+        self.jump.setText(f"↓ {text}" + (f" ({self.unseen})" if self.unseen else ""))
+        self.jump.adjustSize()
+        vp = self.viewport()
+        self.jump.move((vp.width() - self.jump.width()) // 2, vp.height() - self.jump.height() - 10)
+        self.jump.show()
+        self.jump.raise_()
+
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        if self.follow:
+            self.scroll_to_bottom()
+        self._update_jump()
 
     def loadResource(self, rtype, url: QUrl):  # noqa: N802
         if int(getattr(rtype, "value", rtype)) == IMAGE_RES and url.scheme() in ("http", "https"):
@@ -209,7 +299,11 @@ class ChatView(QTextBrowser):
             movie.deleteLater()
         self.movies.clear()
         self.cache.clear()
-        self.document().clear()  # also drops the document's image resources
+        self._programmatic += 1
+        try:
+            self.document().clear()  # also drops the document's image resources
+        finally:
+            self._programmatic -= 1
         self._apply_style()
         self.rerender_needed.emit()
 

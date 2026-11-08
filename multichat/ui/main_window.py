@@ -212,6 +212,8 @@ class MainWindow(QMainWindow):
         self.view.anchorClicked.connect(self.on_anchor)
         self.view.rerender_needed.connect(self.render_all)
         self.view.name_context.connect(self.on_name_context)
+        self.view.follow_changed.connect(self._follow_changed)
+        self._held = False  # messages arrived while scrolled up
         self.action_bar = ActionBar(self.mod, self.open_card)
         self.card: UserCard | None = None
 
@@ -520,14 +522,6 @@ class MainWindow(QMainWindow):
     def msg_html(self, m: ChatMessage) -> str:
         return self.view.message_html(m)
 
-    def _at_bottom(self) -> bool:
-        bar = self.view.verticalScrollBar()
-        return bar.value() >= bar.maximum() - 4
-
-    def _scroll_bottom(self) -> None:
-        bar = self.view.verticalScrollBar()
-        bar.setValue(bar.maximum())
-
     def add_message(self, msg: ChatMessage) -> None:
         """Queues a message; _flush_messages shows the batch (one layout pass instead of one per message)."""
         self._incoming.append(msg)
@@ -544,27 +538,33 @@ class MainWindow(QMainWindow):
             self.mod.observe(msg)
         while len(self.messages) > MAX_MESSAGES:
             self.messages.popitem(last=False)
-        if self._render_timer.isActive():
-            return  # a full re-render is due anyway
         shown = [m for m in batch if self.filters[m.platform].isChecked()]
         if not shown:
             return
-        at_bottom = self._at_bottom()
-        self.view.append_many([self.msg_html(m) for m in shown])
-        if at_bottom:
-            self._scroll_bottom()
+        if not self.view.follow:
+            # scrolled up: the view stays as it is (appending would also drop lines at the top and
+            # move the text you are reading); everything is shown when you return to the bottom
+            self.view.note_unseen(len(shown))
+            self._held = True
+            return
+        if self._render_timer.isActive():
+            return  # a full re-render is due anyway
+        self.view.append_many([self.msg_html(m) for m in shown])  # scrolls along
 
     def render_all(self) -> None:
         """Requests a full re-render (filters, deletions, failed images); coalesced."""
         self._render_timer.start()
 
+    def _follow_changed(self, following: bool) -> None:
+        if following and self._held:  # back at the bottom: show what arrived meanwhile
+            self._held = False
+            self.render_all()
+
     def _render_now(self) -> None:
         self._flush_messages()
-        at_bottom = self._at_bottom()
-        self.view.clear()
-        self.view.append_many([self.msg_html(m) for m in self.messages.values() if self.filters[m.platform].isChecked()])
-        if at_bottom:
-            self._scroll_bottom()
+        if self.view.follow:
+            self._held = False
+        self.view.rebuild([self.msg_html(m) for m in self.messages.values() if self.filters[m.platform].isChecked()])
 
     def apply_deletion(self, ev: Deletion) -> None:
         self._flush_messages()  # the message to delete may still be queued
@@ -583,7 +583,8 @@ class MainWindow(QMainWindow):
     def clear_chat(self) -> None:
         self._incoming.clear()
         self.messages.clear()
-        self.view.clear()
+        self.view.rebuild([])
+        self.view.scroll_to_bottom()
 
     # ---- Moderation ------------------------------------------------------ #
     def on_anchor(self, url: QUrl) -> None:

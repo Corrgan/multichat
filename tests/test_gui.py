@@ -310,3 +310,33 @@ def test_update_check_builds_its_own_link(window, monkeypatch):
     asyncio.run(run({"tag_name": "v9.99<script>", "html_url": "https://evil.example/"}))
     QApplication.processEvents()
     assert shown == [("9.90", "https://github.com/Corrgan/multichat/releases/tag/v9.90")]
+
+
+def test_autoscroll_pauses_and_resumes(window, app):
+    w = window
+    w.resize(500, 400)
+    w.show()
+    for i in range(80):
+        w.add_message(ChatMessage("twitch", "chan", "User", f"line {i}"))
+    w._flush_messages()
+    app.processEvents()
+    view, bar = w.view, w.view.verticalScrollBar()
+    assert view.follow and bar.value() == bar.maximum() > 0 and view.jump.isHidden()
+    # content growing later (e.g. images loading) keeps it at the bottom
+    view.append_many(["<p style='font-size:60px'>tall</p>"])
+    app.processEvents()
+    assert view.follow and bar.value() == bar.maximum()
+    bar.setValue(0)  # the user scrolls up → paused
+    assert not view.follow and not view.jump.isHidden()
+    w.add_message(ChatMessage("twitch", "chan", "User", "while paused"))
+    w._flush_messages()
+    assert bar.value() == 0 and "while paused" not in view.toPlainText()
+    assert view.unseen == 1 and "(1)" in view.jump.text()
+    view.jump.click()  # jump to the newest
+    w._render_now()
+    app.processEvents()
+    assert view.follow and view.jump.isHidden() and bar.value() == bar.maximum()
+    assert "while paused" in view.toPlainText()
+    bar.setValue(0)
+    bar.setValue(bar.maximum())  # scrolling back down by hand also resumes
+    assert view.follow

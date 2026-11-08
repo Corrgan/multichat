@@ -423,7 +423,7 @@ class UserCard(QDockWidget):
 
         self.history = QTextBrowser()
         self.history.setOpenLinks(False)
-        self.history.setStyleSheet("QTextBrowser { background:#18181b; color:#efeff1; border:none; }")
+        self.history.setStyleSheet("QTextBrowser { background:#18181b; color:#efeff1; border:none; font-weight:normal; }")
         self.actions = QLabel()
         self.actions.setWordWrap(True)
         self.actions.setTextFormat(Qt.TextFormat.RichText)
