@@ -29,8 +29,10 @@ def window(app, monkeypatch):
         status("twitch", "connected (#{channel})", channel=value)
         await asyncio.sleep(3600)
 
+    from multichat.ui import window_connections
+
     for name in ("run_twitch", "run_kick", "run_youtube"):
-        monkeypatch.setattr(main_window, name, idle)
+        monkeypatch.setattr(window_connections, name, idle)
     cfg = load_config()
     cfg["video"]["enabled"] = False
     cfg["extra_emotes"] = False
@@ -544,3 +546,40 @@ def test_about_dialog_fits_its_text(window, app):
         dlg.close()
     finally:
         app.setFont(old)
+
+
+def test_changed_channel_stops_its_old_chat(window, app):
+    w = window
+    row = w.panels[0].rows["kick"]
+    row.edit.setText("examplekick")
+    w.toggle_row(row)
+    assert "kick:examplekick" in w.readers
+    row.edit.setText("otherkick")  # the old channel's chat must not keep running unseen
+    assert "kick:examplekick" not in w.readers
+    stray = ChatMessage("kick", "examplekick", "User", "late message")
+    stray.source = "kick:examplekick"
+    assert w.panels_for(stray) == []  # a late message of it goes nowhere (not into group 1)
+    row.edit.setText("")
+
+
+def test_mention_counter_matches_whole_names(window, app):
+    w = window
+    w.accounts["twitch"].store.update("twitch", access_token="x", expires_at=9e12, user_name="Me")
+    second = w.add_group()
+    second.rows["twitch"].edit.setText("examplechan")
+    w.tabs.setCurrentIndex(0)
+    for text in ("hi @meow", "hey @Me!", "@me"):
+        m = ChatMessage("twitch", "examplechan", "User", text)
+        m.source = "twitch:examplechan"
+        w.add_message(m)
+    w._flush_messages()
+    assert second.unread == 3 and second.mentions == 2
+    w.logout("twitch")
+
+
+def test_video_settings_stay_bounded():
+    from multichat.core import config
+
+    many = {f"twitch:chan{i}": "720p" for i in range(config.MAX_REMEMBERED + 50)}
+    kept = config._newest(many)
+    assert len(kept) == config.MAX_REMEMBERED and "twitch:chan149" in kept and "twitch:chan0" not in kept

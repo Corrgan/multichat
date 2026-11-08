@@ -202,7 +202,7 @@ async def run_youtube(value: str, emit: Emit, status: Status, emotes=None) -> No
         except asyncio.CancelledError:
             raise
         except Exception as e:  # noqa: BLE001
-            log.warning("YouTube chat %s: %s", value, e, exc_info=True)
+            log.warning("YouTube chat %s: %s", value, e, exc_info=not isinstance(e, ValueError))
             delay = backoff.next()
             status("youtube", "error: {error} – retrying in {seconds} s", error=e, seconds=delay)
             await asyncio.sleep(delay)

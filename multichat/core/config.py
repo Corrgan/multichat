@@ -112,9 +112,9 @@ def load_config() -> dict:
     v = cfg["video"]
     v["enabled"] = pick(vid.get("enabled"), True)
     # per platform ("twitch") or per channel ("twitch:somechannel")
-    v["quality"] = {k: q for k, q in pick(vid.get("quality"), {}).items() if _video_key(k) and isinstance(q, str)}
-    v["volume"] = {k: max(0, min(100, n)) for k, n in pick(vid.get("volume"), {}).items()
-                   if _video_key(k) and isinstance(n, int) and not isinstance(n, bool)}
+    v["quality"] = _newest({k: q for k, q in pick(vid.get("quality"), {}).items() if _video_key(k) and isinstance(q, str)})
+    v["volume"] = _newest({k: max(0, min(100, n)) for k, n in pick(vid.get("volume"), {}).items()
+                           if _video_key(k) and isinstance(n, int) and not isinstance(n, bool)})
     v["audio"] = vid.get("audio") if _video_key(vid.get("audio")) else None
     sizes = vid.get("sizes")
     if isinstance(sizes, list) and len(sizes) == 2 and all(isinstance(n, int) and n >= 0 for n in sizes):
@@ -125,6 +125,15 @@ def load_config() -> dict:
 MAX_GROUPS = 10
 MAX_PER_PLATFORM = 1  # channels per platform in one group (more channels: more groups)
 MAX_CHANNEL_LEN = 200  # YouTube video URLs are the longest entries
+
+
+MAX_REMEMBERED = 100  # channels whose video quality/volume is kept
+
+
+def _newest(d: dict) -> dict:
+    """The last MAX_REMEMBERED entries (newer ones are written later) – every channel ever
+    entered would otherwise stay in the settings file."""
+    return dict(list(d.items())[-MAX_REMEMBERED:])
 
 
 def _video_key(k) -> bool:

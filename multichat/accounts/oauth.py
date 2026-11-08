@@ -33,6 +33,20 @@ REDIRECT_PORT = 17563
 REDIRECT_URI = f"http://localhost:{REDIRECT_PORT}/callback"
 LOGIN_TIMEOUT = 300
 
+# The login that is waiting for the browser. Only one can listen on REDIRECT_PORT – a new
+# attempt cancels it (e.g. the platform showed an error page and never redirected back,
+# which used to block every further login until the timeout or a restart).
+_waiting: asyncio.Task | None = None
+
+
+async def _take_over_login() -> None:
+    global _waiting
+    old, _waiting = _waiting, asyncio.current_task()
+    if old is not None and old is not _waiting and not old.done():
+        log.info("Login: cancelling the earlier attempt that is still waiting")
+        old.cancel()
+        await asyncio.wait([old], timeout=5)  # its cleanup frees the port
+
 SUCCESS_HTML = """<!doctype html><meta charset="utf-8"><title>MultiChat</title>
 <body style="font-family:sans-serif;background:#18181b;color:#efeff1;display:grid;
 place-items:center;height:100vh;margin:0"><div style="text-align:center">
@@ -132,6 +146,7 @@ class Account:
             challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
             params.update(code_challenge=challenge, code_challenge_method="S256")
 
+        await _take_over_login()
         loop = asyncio.get_running_loop()
         code_fut: asyncio.Future = loop.create_future()
 

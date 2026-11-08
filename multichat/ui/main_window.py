@@ -16,7 +16,6 @@ import aiohttp
 
 from PyQt6.QtCore import QEvent, QObject, QProcess, Qt, QTimer, QUrl, pyqtSignal
 from PyQt6.QtGui import QAction, QActionGroup, QDesktopServices, QImageReader, QKeySequence
-from PyQt6.QtGui import QColor
 from PyQt6.QtOpenGLWidgets import QOpenGLWidget
 from PyQt6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDialog, QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMessageBox,
@@ -25,27 +24,27 @@ from PyQt6.QtWidgets import (
 
 from ..accounts import ApiError, KickAccount, SecretStore, TwitchAccount, YouTubeAccount
 from ..accounts.store import choose_backend
-from ..chat import ChatMessage, Deletion, EmoteStore, run_kick, run_twitch, run_youtube
-from ..chat.models import source_key
+from ..chat import ChatMessage, Deletion, EmoteStore
 from ..core import i18n
-from ..core.config import CONF_DIR, MAX_GROUPS, OVERLAY_PORT, clean_groups, load_config, load_config_apps, save_config
+from ..core.config import CONF_DIR, OVERLAY_PORT, clean_groups, load_config, load_config_apps, save_config
 from .. import __version__ as APP_VERSION
 from ..core.constants import FAVICONS, LOGIN_DOCS, NAMES, PLATFORMS, REPO_SLUG, REPO_URL, version_tuple
 from ..core.i18n import _
 from ..core.logsetup import LOG_DIR, LOG_FILE, asyncio_exception_handler, set_debug, tail
 from ..overlay.server import OverlayServer, deletion_payload, message_payload
 from ..video.player import load_mpv
-from ..video.tiles import AudioHub, VideoPanel
-from .chat_view import DEFAULT_FONT, ChatView
-from .groups import GroupPanel, normalize_channel
+from ..video.tiles import AudioHub
+from .chat_view import DEFAULT_FONT
+from .groups import GroupPanel
 from .dialogs import AboutDialog, AlertsDialog, AppsDialog
-from .moderation import ActionBar, ModActions, ModNotes
+from .moderation import ModActions, ModNotes
 from .watchdog import Watchdog
+from .window_connections import ConnectionsMixin
+from .window_groups import MAX_MESSAGES, GroupsMixin
 
 log = logging.getLogger("multichat")
 
 
-MAX_MESSAGES = 1000
 FLUSH_MS = 100  # incoming messages are shown in batches – busy chats send hundreds per second
 MAX_INPUT = 500  # longest message the platforms accept
 
@@ -61,7 +60,7 @@ class Bridge(QObject):
     update = pyqtSignal(str, str)  # newer version, release page
 
 
-class MainWindow(QMainWindow):
+class MainWindow(GroupsMixin, ConnectionsMixin, QMainWindow):
     def __init__(self, config: dict | None = None) -> None:
         super().__init__()
         self.setWindowTitle("MultiChat")
@@ -219,7 +218,6 @@ class MainWindow(QMainWindow):
         for g in self.config["groups"]:
             self._add_panel(g)
 
-
         send = QHBoxLayout()
         self.target = QComboBox()
         self.target.setMinimumContentsLength(10)
@@ -252,199 +250,6 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(_("Tip: click a name to select the user, right-click it for the menu."), 8000)
 
     # ---- Groups ------------------------------------------------------------ #
-    def views(self) -> list[ChatView]:
-        return [panel.view for panel in self.panels]
-
-    @property
-    def view(self) -> ChatView:
-        """The chat view of the active group."""
-        return self.active_panel().view
-
-    def active_panel(self) -> GroupPanel:
-        if self.side_by_side and self._side_active in self.panels:
-            return self._side_active
-        i = self.tabs.currentIndex()
-        return self.panels[i] if 0 <= i < len(self.panels) else self.panels[0]
-
-    def _visible_panels(self) -> list[GroupPanel]:
-        return list(self.panels) if self.side_by_side else [self.active_panel()]
-
-    def _add_panel(self, cfg: dict) -> GroupPanel:
-        video = None
-        if self.video_ok:
-            video = VideoPanel(self.run, self.config["video"], self.audio)
-            video.changed.connect(self._schedule_save)
-        panel = GroupPanel(cfg, len(self.panels), video)
-        panel.set_action_bar(ActionBar(self.mod, lambda m, pn=panel: pn in self.panels_for(m)))
-        sizes = self.config["video"].get("sizes") or [440, 860]
-        panel.split.setSizes([int(x) for x in sizes[:2]])
-        panel.split.splitterMoved.connect(lambda _pos, _i, pn=panel: self._split_moved(pn))
-        v = panel.view
-        v.document().setMaximumBlockCount(MAX_MESSAGES)
-        v.anchorClicked.connect(self.on_anchor)
-        v.rerender_needed.connect(self.render_all)
-        v.image_failed.connect(self._image_failed)
-        v.name_context.connect(self.on_name_context)
-        v.follow_changed.connect(lambda following, pn=panel: self._follow_changed(pn, following))
-        v.held = False  # messages arrived while scrolled up
-        if self.panels:  # same look as the others
-            v.set_font_px(self.panels[0].view.font_px)
-            v.alerts_cfg = self.panels[0].view.alerts_cfg
-            v.selected = self.panels[0].view.selected
-        panel.toggle_row.connect(self.toggle_row)
-        panel.connect_group.connect(self.connect_group)
-        panel.disconnect_group.connect(self.disconnect_group)
-        panel.remove_group.connect(self.remove_group)
-        panel.renamed.connect(lambda _p: self._update_titles())
-        panel.changed.connect(self._schedule_save)
-        panel.rows_changed.connect(lambda _p: self._rows_changed())
-        if video is not None and hasattr(self, "video_action"):
-            video.setVisible(self.video_action.isChecked())
-        self.panels.append(panel)
-        self.side.addWidget(panel)
-        panel.setVisible(self.side_by_side)
-        self.tabs.addTab(panel.title())  # may switch the tab → _tab_changed shows the right panel
-        self._rows_changed()
-        self._update_titles()
-        return panel
-
-    def _split_moved(self, panel: GroupPanel) -> None:
-        """Chat/video width: the same for all groups (side by side each keeps its own until
-        it is changed)."""
-        sizes = panel.split.sizes()
-        if len(sizes) == 2 and min(sizes) > 0:
-            self.config["video"]["sizes"] = sizes
-            self._schedule_save()
-
-    def add_group(self) -> GroupPanel | None:
-        if len(self.panels) >= MAX_GROUPS:
-            self.statusBar().showMessage(_("At most {n} groups").format(n=MAX_GROUPS), 5000)
-            return None
-        panel = self._add_panel({"name": "", "channels": []})
-        self._side_active = panel
-        self.tabs.setCurrentIndex(len(self.panels) - 1)
-        self.side_action.setEnabled(len(self.panels) > 1)
-        if self.side_by_side:
-            self._fit_width()
-        panel.rows["twitch"].edit.setFocus()
-        self.save_config()
-        return panel
-
-    def remove_group(self, panel: GroupPanel) -> None:
-        if len(self.panels) <= 1:
-            return
-        if panel.keys() and QMessageBox.question(
-            self, _("Remove group"), _("Remove the group “{name}” and its channel list?").format(name=panel.title())
-        ) != QMessageBox.StandardButton.Yes:
-            return
-        self.disconnect_group(panel)
-        i = self.panels.index(panel)
-        self.panels.remove(panel)
-        if panel.video is not None:
-            panel.video.shutdown()
-        self.tabs.blockSignals(True)
-        self.tabs.removeTab(i)
-        self.tabs.blockSignals(False)
-        panel.hide()
-        panel.deleteLater()  # the whole window goes on – the panel only leaves the splitter
-        for j, pn in enumerate(self.panels):
-            pn.set_index(j)
-        if len(self.panels) < 2 and self.side_action.isChecked():
-            self.side_action.setChecked(False)
-        self.side_action.setEnabled(len(self.panels) > 1)
-        self._rows_changed()
-        self._show_panels()
-        self.save_config()
-
-    def toggle_side_by_side(self, on: bool) -> None:
-        """Groups next to each other (chat 1 | videos 1 | chat 2 | videos 2 …), or as tabs."""
-        active = self.active_panel() if self.panels else None
-        self.side_by_side = bool(on and len(self.panels) > 1)
-        self._side_active = active
-        if not self.side_by_side and active in self.panels:
-            self.tabs.setCurrentIndex(self.panels.index(active))
-        self._show_panels()
-        if self.side_by_side:
-            self._fit_width()
-
-    def _fit_width(self) -> None:
-        per = 900 if self.video_ok and self.video_action.isChecked() else 420
-        screen = self.screen().availableGeometry().width() if self.screen() else 1920
-        want = min(screen, per * len(self.panels))
-        if self.width() < want:
-            self.resize(want, self.height())
-
-    def _tab_changed(self) -> None:
-        if not self.side_by_side:
-            self._show_panels()
-
-    def _show_panels(self) -> None:
-        """Tabs: only the active group. Side by side: all groups."""
-        if not self.panels:
-            return
-        self.tabs.setVisible(not self.side_by_side)
-        active = self.active_panel()
-        for panel in self.panels:
-            panel.setVisible(self.side_by_side or panel is active)
-        self._active_changed()
-
-    def _focus_changed(self, _old, new) -> None:
-        if not self.side_by_side or new is None:
-            return
-        for panel in self.panels:
-            if panel.isAncestorOf(new) and panel is not self._side_active:
-                self._side_active = panel
-                self._active_changed()
-                break
-
-    def _active_changed(self) -> None:
-        """Another group is active: its videos are shown, the send line targets it."""
-        if not self.panels:
-            return
-        for panel in self._visible_panels():
-            panel.unread = panel.mentions = 0
-        self._update_titles()
-        self._refresh_targets()
-        self._update_video()
-        for v in self.views():
-            v.update_animations()  # hidden tabs pause their animations
-
-    def _update_titles(self) -> None:
-        for i, panel in enumerate(self.panels):
-            text = panel.title()
-            if panel.unread:
-                text += f" ({'@' if panel.mentions else ''}{min(panel.unread, 999)})"
-            if i < self.tabs.count():
-                self.tabs.setTabText(i, text)
-                self.tabs.setTabTextColor(i, QColor("#ff9a3c") if panel.mentions else QColor())
-            panel.remove_btn.setVisible(len(self.panels) > 1)
-
-    def _rows_changed(self) -> None:
-        """A channel was edited: routing, titles, buttons and send targets follow."""
-        self._route = {}
-        for panel in self.panels:
-            for key in panel.keys():
-                self._route.setdefault(key, []).append(panel)
-            if panel.video is not None:
-                panel.video.forget(panel.keys())  # tiles of channels the group doesn't have any more
-        self._update_titles()  # an unnamed group is named after its first channel
-        for panel in self.panels:
-            if panel.action_bar is not None:
-                panel.action_bar.refresh()  # the selected user may belong to another group now
-        self._update_conn_buttons()
-        self._refresh_targets()
-        self._update_video()  # e.g. a video box was ticked
-
-    def _schedule_save(self) -> None:
-        if not hasattr(self, "_save_timer"):
-            self._save_timer = QTimer(self, singleShot=True, interval=800)
-            self._save_timer.timeout.connect(self.save_config)
-        self._save_timer.start()
-
-    def panels_for(self, msg) -> list[GroupPanel]:
-        """Groups that show this message (messages without a known source go to the first group)."""
-        return self._route.get(msg.source) or [self.panels[0]]
-
     def _build_menus(self) -> None:
         mb = self.menuBar()
         view = mb.addMenu(_("View"))
@@ -599,42 +404,6 @@ class MainWindow(QMainWindow):
 
             self.run(self.emotes.load_global(), then=loaded)
 
-    def toggle_video(self, on: bool, resize: bool = True) -> None:
-        for panel in self.panels:
-            if panel.video is None:
-                continue
-            if not on:
-                panel.video.set_entries([], shown=False)
-                panel.video.stop_all()  # saves bandwidth
-            panel.video.setVisible(on)
-        if on:
-            if resize and self.width() < 900:
-                self.resize(1300, max(self.height(), 820))
-            self._update_video()  # already connected → start the streams right away
-
-    def _video_entries(self, panel: GroupPanel) -> list[tuple[str, str, str]]:
-        """The group's connected channels with the video box ticked."""
-        entries, seen = [], set()
-        for row in panel.all_rows():
-            key = row.key()
-            if key and key in self.readers and row.video.isChecked() and key not in seen:
-                seen.add(key)
-                entries.append((key, row.platform, row.value()))
-        return entries
-
-    def _update_video(self) -> None:
-        """Each group shows its own videos while it is on screen; hidden groups' tiles keep
-        running muted for a while (see VideoPanel.set_entries)."""
-        if not hasattr(self, "video_action") or not self.video_action.isChecked():
-            return
-        visible = self._visible_panels()
-        for panel in self.panels:
-            if panel.video is not None:
-                panel.video.set_entries(self._video_entries(panel), shown=panel in visible)
-                panel.video.stop_hidden(set(self.readers))  # disconnected channels: stop right away
-
-    normalize_channel = staticmethod(normalize_channel)
-
     def toggle_on_top(self, on: bool) -> None:
         visible = self.isVisible()
         self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, on)
@@ -642,115 +411,6 @@ class MainWindow(QMainWindow):
             self.show()
 
     # ---- Connecting ------------------------------------------------------ #
-    def _stop_reader(self, key: str) -> None:
-        self.conn_gen[key] = self.conn_gen.get(key, 0) + 1  # ignore status messages of the old connection
-        fut = self.readers.pop(key, None)
-        if fut:
-            fut.cancel()
-
-    def _emit(self, ev, key: str) -> None:
-        ev.source = key
-        (self.bridge.message if isinstance(ev, ChatMessage) else self.bridge.deletion).emit(ev)
-
-    def connect_key(self, platform: str, value: str) -> None:
-        """(Re)connects one channel's chat."""
-        key = source_key(platform, value)
-        self._stop_reader(key)
-        gen = self.conn_gen[key]
-
-        def status(_platform: str, template: str, **kw) -> None:
-            # readers pass an English template – logged in English, shown translated
-            log.info("[%s] %s", key, template.format(**kw))
-            self.bridge.status.emit(key, _(template).format(**kw), gen)
-
-        runners = {"twitch": run_twitch, "kick": run_kick, "youtube": run_youtube}
-        coro = runners[platform](value, lambda ev: self._emit(ev, key), status, self.emotes)
-        self.readers[key] = asyncio.run_coroutine_threadsafe(coro, self.loop)
-
-    def disconnect_key(self, key: str) -> None:
-        if key not in self.readers:
-            return
-        self._stop_reader(key)
-        self.set_status(key, _("disconnected"))
-        log.info("%s: connection closed", key)
-
-    def _connect_row(self, row) -> None:
-        value = row.value()
-        if value is None:
-            row.status.set_full(_("invalid channel name"))
-        elif not value:
-            row.status.set_full("–")
-        else:
-            self.connect_key(row.platform, value)
-
-    def toggle_row(self, row) -> None:
-        key = row.key()
-        if key and key in self.readers:
-            self.disconnect_key(key)
-        else:
-            self.save_config()
-            self._connect_row(row)
-        self._after_connection_change()
-
-    def connect_group(self, panel: GroupPanel) -> None:
-        self.save_config()
-        for row in panel.all_rows():
-            self._connect_row(row)
-        self._after_connection_change()
-
-    def disconnect_group(self, panel: GroupPanel) -> None:
-        """Stops the group's channels – except those another group shows as well."""
-        others = {k for pn in self.panels if pn is not panel for k in pn.keys()}
-        for key in panel.keys() - others:
-            self.disconnect_key(key)
-        self._after_connection_change()
-
-    def connect_all(self) -> None:
-        self.save_config()
-        for panel in self.panels:
-            for row in panel.all_rows():
-                self._connect_row(row)
-        self._after_connection_change()
-
-    def disconnect_all(self) -> None:
-        for key in list(self.readers):
-            self._stop_reader(key)
-            self.set_status(key, _("disconnected"))
-        for panel in self.panels:
-            if panel.video is not None:
-                panel.video.stop_all()
-        self._update_video()
-        self._update_conn_buttons()
-        log.info("All connections closed")
-        self.statusBar().showMessage(_("Disconnected – chats and videos stopped"), 5000)
-
-    def _after_connection_change(self) -> None:
-        self._update_video()
-        self._update_conn_buttons()
-        self._refresh_targets()
-
-    def _update_conn_buttons(self) -> None:
-        for panel in self.panels:
-            keys = panel.keys()
-            on = bool(keys & self.readers.keys())
-            panel.connect_btn.setText(_("Reconnect") if on else _("Connect"))
-            panel.connect_btn.setEnabled(bool(keys))
-            panel.disconnect_btn.setEnabled(on)
-            for row in panel.all_rows():
-                key = row.key()
-                connected = bool(key) and key in self.readers
-                row.button.setIcon(self.icon_stop if connected else self.icon_play)
-                row.button.setEnabled(connected or bool(row.edit.text().strip()))
-
-    def _reader_status(self, key: str, text: str, gen: int) -> None:
-        if gen == self.conn_gen.get(key):  # drop messages from a connection that was already closed
-            self.set_status(key, text)
-
-    def set_status(self, key: str, text: str) -> None:
-        for panel in self.panels:
-            for row in panel.rows_for(key):
-                row.status.set_full(text)
-
     def msg_html(self, m: ChatMessage) -> str:
         return self.view.message_html(m)
 
@@ -772,14 +432,15 @@ class MainWindow(QMainWindow):
         while len(self.messages) > MAX_MESSAGES * len(self.panels):
             self.messages.popitem(last=False)
         visible = self._visible_panels()
-        own = [f"@{a.user_name.lower()}" for a in self.accounts.values() if a.logged_in and a.user_name]
+        names = [re.escape(a.user_name) for a in self.accounts.values() if a.logged_in and a.user_name]
+        own = re.compile(r"@(?:%s)\b" % "|".join(names), re.IGNORECASE) if names else None  # not "@me" in "@meow"
         for panel in self.panels:
             shown = [m for m in batch if self.filters[m.platform].isChecked() and panel in self.panels_for(m)]
             if not shown:
                 continue
             if panel not in visible:  # counter on the tab
                 panel.unread += len(shown)
-                panel.mentions += sum(any(o in m.text.lower() for o in own) for m in shown) if own else 0
+                panel.mentions += sum(bool(own.search(m.text)) for m in shown) if own else 0
             v = panel.view
             if not v.follow:
                 # scrolled up: the view stays as it is (appending would also drop lines at the top and
@@ -944,7 +605,8 @@ class MainWindow(QMainWindow):
         target = self.target.currentData()
         options = [o for o in self._send_options() if target in (None, o[0])]
         for _key, platform, channel, label in options:
-            self.run(self.send_to(platform, channel, text), label=_("Sent to {platform}").format(platform=label))
+            self.run(self.send_to(platform, channel, text),
+                     label=_("Sent to {platform}").format(platform=f"{label} · {channel}"))
         if options:
             self.input.clear()
 

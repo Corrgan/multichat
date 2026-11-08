@@ -28,6 +28,7 @@ log = logging.getLogger("multichat.video")
 OFFLINE_RETRY = 60
 ERROR_RETRY = 30
 ENDED_RETRY = 10
+RECHECK_AFTER = 20  # seconds: an offline tile shown again checks right away only after this
 HIDDEN_STOP = 300  # seconds a hidden tile (other group) keeps streaming before it is stopped
 
 
@@ -47,6 +48,7 @@ class VideoTile(QFrame):
         self.state = "idle"
         self.muted = True
         self._mute_sent = False  # mute state not yet passed to mpv
+        self._started = 0.0  # time.monotonic() of the last start()
         self._closer = None  # stops the running Streamlink data stream
         self._ads = None
         self._title = ""
@@ -127,9 +129,13 @@ class VideoTile(QFrame):
 
     # ---- Control ---------------------------------------------------------- #
     def set_source(self, value: str) -> None:
+        """Called on every change in the window (tab switch, connect, …). A waiting tile
+        (offline, ended) checks again only if its last attempt is a while ago – otherwise its
+        retry timer does it (the log showed offline channels checked every few seconds)."""
         value = value.strip()
         self.setVisible(bool(value))
-        if value != self.value or self.state in ("idle", "offline", "ended"):
+        waiting = self.state in ("offline", "ended") and time.monotonic() - self._started > RECHECK_AFTER
+        if value != self.value or self.state == "idle" or waiting:
             self.value = value
             self.start() if value else self.stop()
 
@@ -164,6 +170,7 @@ class VideoTile(QFrame):
         self.gen += 1
         if not self.value:
             return
+        self._started = time.monotonic()
         gen = self.gen
         self.state = "resolving"
         self.stop_btn.setIcon(self.icon_stop)
@@ -199,7 +206,10 @@ class VideoTile(QFrame):
         except Offline:
             return "offline", None
         except Exception as e:  # noqa: BLE001
-            log.warning("Video %s %r: %s", self.platform, self.value, e, exc_info=True)
+            # "not found", Streamlink and yt-dlp errors carry their own message – a traceback
+            # only for the unexpected ones
+            log.warning("Video %s %r: %s", self.platform, self.value, e,
+                        exc_info=not isinstance(e, (RuntimeError, ValueError)))
             return "error", str(e)
 
     def _resolved(self, gen: int, res) -> None:
@@ -252,6 +262,8 @@ class VideoTile(QFrame):
             idle = self.video.player.idle_active
         except Exception:  # noqa: BLE001
             idle = True
+        if idle and self.video._pending:
+            return  # loads once the tile is first shown (needs its OpenGL context) – not ended
         if idle:
             self.watch.stop()
             err = self.video.last_error
@@ -461,9 +473,11 @@ class VideoPanel(QWidget):
 
     def _remember(self) -> None:
         """Keeps quality and volume per channel, also for tiles that are removed later."""
-        for key, t in self.tiles.items():
-            self.config.setdefault("quality", {})[key] = t.quality
-            self.config.setdefault("volume", {})[key] = t.volume
+        for name, attr in (("quality", "quality"), ("volume", "volume")):
+            store = self.config.setdefault(name, {})
+            for key, t in self.tiles.items():
+                store.pop(key, None)  # re-added at the end: the newest entries are kept (config.MAX_REMEMBERED)
+                store[key] = getattr(t, attr)
         self.changed.emit()
 
     def frame_counts(self) -> dict[str, tuple[int, float]]:

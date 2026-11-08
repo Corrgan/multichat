@@ -284,12 +284,12 @@ async def run_kick(channel: str, emit: Emit, status: Status, emotes=None) -> Non
                 status("kick", "key rejected – trying the next one …")
                 await asyncio.sleep(1)
                 continue
-            log.warning("Kick chat %s: %s", slug, e, exc_info=True)
+            log.warning("Kick chat %s: %s", slug, e, exc_info=not isinstance(e, ValueError))
             delay = backoff.next()
             status("kick", "error: {error} – retrying in {seconds} s", error=e, seconds=delay)
             await asyncio.sleep(delay)
         except Exception as e:  # noqa: BLE001
-            log.warning("Kick chat %s: %s", slug, e, exc_info=True)
+            log.warning("Kick chat %s: %s", slug, e, exc_info=not isinstance(e, ValueError))
             delay = backoff.next()
             status("kick", "error: {error} – retrying in {seconds} s", error=e, seconds=delay)
             await asyncio.sleep(delay)

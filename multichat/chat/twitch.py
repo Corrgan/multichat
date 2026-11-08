@@ -174,7 +174,7 @@ async def run_twitch(channel: str, emit: Emit, status: Status, emotes=None) -> N
         except asyncio.CancelledError:
             raise
         except Exception as e:  # noqa: BLE001
-            log.warning("Twitch chat #%s: %s", channel, e, exc_info=True)
+            log.warning("Twitch chat #%s: %s", channel, e, exc_info=not isinstance(e, ValueError))
             delay = backoff.next()
             status("twitch", "error: {error} – retrying in {seconds} s", error=e, seconds=delay)
             await asyncio.sleep(delay)

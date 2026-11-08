@@ -102,3 +102,27 @@ async def _run(tmp_dir: Path):
 
     await session.close()
     await runner.cleanup()
+
+
+def test_new_login_replaces_a_stuck_one(tmp_path, monkeypatch):
+    """The platform showed an error page and never redirected back: a second attempt must not
+    fail with "port in use" – it cancels the waiting one."""
+    from multichat.accounts import YouTubeAccount
+
+    monkeypatch.setattr(oauth.webbrowser, "open", lambda url: True)  # the browser never comes back
+
+    async def run():
+        session = aiohttp.ClientSession()
+        store = SecretStore("tokens", FileBackend(tmp_path))
+        acc = YouTubeAccount(store, lambda p: ("CID", "SECRET"), lambda: session)
+        first = asyncio.ensure_future(acc.login())
+        await asyncio.sleep(0.3)
+        second = asyncio.ensure_future(acc.login())
+        await asyncio.sleep(0.3)
+        assert first.cancelled()
+        assert not second.done()  # listening on the port, waiting for the browser
+        second.cancel()
+        await asyncio.wait([second])
+        await session.close()
+
+    asyncio.run(run())
