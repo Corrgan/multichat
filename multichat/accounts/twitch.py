@@ -88,7 +88,7 @@ class TwitchAccount(Account):
                 for _page in range(10):  # 100 per page
                     params = {"user_id": self.user_id, "first": "100", **({"after": cursor} if cursor else {})}
                     res = await self.request("GET", f"{self.API}/moderation/channels", params=params)
-                    channels |= {c["broadcaster_login"] for c in res.get("data", [])}
+                    channels |= {str(c.get("broadcaster_login", "")).lower() for c in res.get("data") or [] if isinstance(c, dict)}
                     cursor = (res.get("pagination") or {}).get("cursor")
                     if not cursor:
                         break
@@ -104,7 +104,7 @@ class TwitchAccount(Account):
         info: dict = {}
         if not msg.user_id:
             return info
-        users = (await self.request("GET", f"{self.API}/users", params={"id": msg.user_id}))["data"]
+        users = (await self.request("GET", f"{self.API}/users", params={"id": msg.user_id}) or {}).get("data") or []
         if users:
             info["created"] = users[0].get("created_at")
         try:

@@ -3,8 +3,11 @@
 """Kick login, sending and moderating (official Kick API)."""
 from __future__ import annotations
 
+import asyncio
+
 import logging
 
+from ..chat.kick import fetch_kick_user
 from ..chat.models import ChatMessage, kick_channel
 from ..core.i18n import _
 from .oauth import Account, ApiError
@@ -62,14 +65,13 @@ class KickAccount(Account):
         )
 
     async def user_info(self, msg: ChatMessage) -> dict:
-        import asyncio
-
-        from ..chat.kick import fetch_kick_user
-
         data = await asyncio.to_thread(fetch_kick_user, msg.channel, msg.user)
+        if not isinstance(data, dict):
+            return {}
+        months = data.get("subscribed_for")
         return {
-            "following_since": data.get("following_since") or "",
-            "subscribed_months": data.get("subscribed_for") or 0,
+            "following_since": str(data.get("following_since") or ""),
+            "subscribed_months": months if isinstance(months, int) and not isinstance(months, bool) else 0,
             "banned": bool(data.get("banned")),
         }
 

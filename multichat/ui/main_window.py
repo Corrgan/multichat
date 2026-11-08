@@ -15,9 +15,9 @@ from pathlib import Path
 import aiohttp
 
 from PyQt6.QtCore import QObject, QProcess, Qt, QTimer, QUrl, pyqtSignal
-from PyQt6.QtGui import QAction, QActionGroup, QCursor, QDesktopServices, QImageReader, QKeySequence
+from PyQt6.QtGui import QAction, QActionGroup, QDesktopServices, QImageReader, QKeySequence
 from PyQt6.QtWidgets import (
-    QApplication, QCheckBox, QComboBox, QDialog, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMenu, QMessageBox, QPushButton, QSplitter, QStyle, QToolButton,
+    QApplication, QCheckBox, QComboBox, QDialog, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMessageBox, QPushButton, QSplitter, QStyle, QToolButton,
     QVBoxLayout, QWidget,
 )
 
@@ -35,13 +35,12 @@ from ..overlay.server import OverlayServer, deletion_payload, message_payload
 from ..video.tiles import VideoPanel
 from .chat_view import ChatView
 from .dialogs import AboutDialog, AlertsDialog, AppsDialog
-from .moderation import ActionBar, ModActions, ModNotes, UserCard
+from .moderation import ActionBar, ModActions, ModNotes
 from .widgets import CopyLabel
 
 log = logging.getLogger("multichat")
 
 
-TIMEOUTS = [(60, "Timeout 1 min"), (600, "Timeout 10 min"), (3600, "Timeout 1 h")]
 MAX_MESSAGES = 1000
 FLUSH_MS = 100  # incoming messages are shown in batches – busy chats send hundreds per second
 MAX_INPUT = 500  # longest message the platforms accept
@@ -215,8 +214,7 @@ class MainWindow(QMainWindow):
         self.view.name_context.connect(self.on_name_context)
         self.view.follow_changed.connect(self._follow_changed)
         self._held = False  # messages arrived while scrolled up
-        self.action_bar = ActionBar(self.mod, self.open_card)
-        self.card: UserCard | None = None
+        self.action_bar = ActionBar(self.mod)
 
         send = QHBoxLayout()
         self.target = QComboBox()
@@ -578,6 +576,7 @@ class MainWindow(QMainWindow):
                 m.deleted = True
                 changed = True
         self.overlay.publish(deletion_payload(ev))
+        self.mod.apply_deletion(ev)
         if changed:
             self.render_all()
             self.mod.history_changed.emit()
@@ -588,112 +587,19 @@ class MainWindow(QMainWindow):
         self.view.rebuild([])
         self.view.scroll_to_bottom()
 
-    # ---- Moderation ------------------------------------------------------ #
+    # ---- Moderation (logic in moderation/actions.py) ---------------------- #
     def on_anchor(self, url: QUrl) -> None:
         """Left click on a name: select the user (the action bar and user card follow)."""
-        msg = self._anchor_msg(url)
+        msg = self.mod.anchor_url(url)
         if msg:
             self.mod.select(msg)
-            if self.card and self.card.isVisible():
-                self.card.show_user(self.mod.selected)
 
     def on_name_context(self, url: QUrl) -> None:
-        msg = self._anchor_msg(url)
+        """Right click on a name: select the user and open the menu."""
+        msg = self.mod.anchor_url(url)
         if msg:
             self.mod.select(msg)
-            self.message_menu(msg.uid)
-
-    def _anchor_msg(self, url: QUrl) -> ChatMessage | None:
-        if url.scheme() != "msg":
-            return None
-        try:
-            return self.messages.get(int(url.path()))
-        except ValueError:
-            return None
-
-    def open_card(self, msg: ChatMessage) -> None:
-        if self.card is None:
-            self.card = UserCard(self.mod, self)
-            docked = bool(self.config.get("usercard_docked"))
-            self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.card)
-            self.card.setFloating(not docked)
-            self.card.pin.setChecked(docked)
-            self.card.docked_changed.connect(self._card_docked)
-            if not docked:
-                self.card.move(self.geometry().center() - self.card.rect().center())
-        self.card.show_user(msg)
-
-    def _card_docked(self, docked: bool) -> None:
-        self.config["usercard_docked"] = docked
-
-    def message_menu(self, uid: int) -> None:
-        msg = self.messages.get(uid)
-        if not msg:
-            return
-        menu = QMenu(self)
-        menu.addSection(f"{msg.user} · {NAMES[msg.platform]}")
-        menu.addAction(_("Open user card")).triggered.connect(lambda: self.open_card(msg))
-        menu.addAction(_("Mention (@)")).triggered.connect(lambda: self.mention(msg))
-        menu.addAction(_("Copy text")).triggered.connect(lambda: QApplication.clipboard().setText(msg.text))
-        menu.addSeparator()
-        if not self.accounts[msg.platform].logged_in:
-            menu.addAction(_("Log in to {platform} to moderate …").format(platform=NAMES[msg.platform])).triggered.connect(
-                lambda: self.login(msg.platform)
-            )
-        elif not self.mod.can_moderate(msg):
-            menu.addAction(_("You are not a moderator in this channel")).setEnabled(False)
-        else:
-            a = menu.addAction(_("Delete message"))
-            a.setEnabled(bool(msg.msg_id) and not msg.deleted)
-            a.triggered.connect(lambda: self.moderate(msg, "delete"))
-            for secs, label in TIMEOUTS:
-                a = menu.addAction(_(label))
-                a.setEnabled(bool(msg.user_id))
-                a.triggered.connect(lambda _checked=False, s=secs: self.moderate(msg, "timeout", s))
-            a = menu.addAction(_("Ban …"))
-            a.setEnabled(bool(msg.user_id))
-            a.triggered.connect(lambda: self.moderate(msg, "ban"))
-            a = menu.addAction(_("Unban"))
-            a.setEnabled(bool(msg.user_id))
-            a.triggered.connect(lambda: self.moderate(msg, "unban"))
-        menu.exec(QCursor.pos())
-
-    def moderate(self, msg: ChatMessage, action: str, seconds: int = 0) -> None:
-        acc = self.accounts[msg.platform]
-        ev = None
-        if action == "delete":
-            coro = acc.delete(msg)
-            ev = Deletion(msg.platform, msg_id=msg.msg_id)
-            label = _("Message deleted")
-            entry = f"delete: {msg.text[:80]}"
-        elif action == "timeout":
-            coro = acc.timeout(msg, seconds)
-            ev = Deletion(msg.platform, user_id=msg.user_id)
-            label = _("Timeout for {user} ({minutes} min)").format(user=msg.user, minutes=seconds // 60)
-            entry = f"timeout {seconds // 60} min"
-        elif action == "unban":
-            coro = acc.unban(msg)
-            label = _("{user} unbanned").format(user=msg.user)
-            entry = "unban"
-        else:
-            answer = QMessageBox.question(
-                self,
-                _("Ban"),
-                _("Permanently ban {user} on {platform}?").format(user=msg.user, platform=NAMES[msg.platform]),
-            )
-            if answer != QMessageBox.StandardButton.Yes:
-                return
-            coro = acc.ban(msg)
-            ev = Deletion(msg.platform, user_id=msg.user_id)
-            label = _("{user} banned").format(user=msg.user)
-            entry = "ban"
-
-        def done(_result) -> None:
-            self.mod.record(msg, entry)
-            if ev:
-                self.apply_deletion(ev)
-
-        self.run(coro, then=done, label=label)
+            self.mod.menu(msg)
 
     def mention(self, msg: ChatMessage) -> None:
         if self.target.isEnabled():

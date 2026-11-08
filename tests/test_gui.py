@@ -135,10 +135,11 @@ def test_selection_action_bar_and_user_card(window, app, monkeypatch):
     bar.delete.click()
     settle()
     assert done == ["a2"] and second.deleted
-    w.open_card(second)
+    w.mod.open_card(second)
+    card = w.mod.card
+    assert card.isVisible() and card.info_labels["seen"].text() == "2"  # filled right away
+    assert "second" in card.history.toPlainText()
     settle()
-    card = w.card
-    assert card.isVisible() and card.info_labels["seen"].text() == "2"
     assert card.info_labels["created"].text().startswith("2020-01-01")
     assert card.info_labels["following"].text() == "not following"
     assert "delete: second" in card.actions.text()
