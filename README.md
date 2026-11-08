@@ -4,22 +4,25 @@ Twitch, Kick and YouTube live chat combined in one window for Linux – with vid
 
 ## Download
 
-Under [Releases](https://github.com/Corrgan/multichat/releases) there is an **AppImage** and a **Flatpak**, both built automatically by GitHub Actions, with SHA256 checksums.
+Under [Releases](https://github.com/Corrgan/multichat/releases) there is a **Flatpak** and an **AppImage**, both built automatically by GitHub Actions, with SHA256 checksums.
 
-### Flatpak – recommended for SteamOS, Bazzite, Fedora Atomic and other immutable systems
+| | Flatpak | AppImage |
+|---|---|---|
+| Brings along | everything: Qt, mpv, FFmpeg, Deno for YouTube | Python, Qt and the app – everything else comes from the system |
+| You need | Flatpak with Flathub (fetches the KDE runtime once) | a desktop distribution with glibc ≥ 2.35 and OpenSSL 3, plus **libmpv** and **Node.js or Deno** for video (see below) |
+| Good for | SteamOS, Bazzite, Fedora Atomic and other immutable systems; anyone who wants no setup | regular distributions (Ubuntu 22.04+, Debian 12+, Fedora 36+, Arch) – uses the system's graphics drivers, fonts, codecs and CA certificates |
+| Settings | `~/.var/app/io.github.Corrgan.MultiChat/` | `~/.config/multichat/` |
 
-Everything is included (mpv, FFmpeg, a JavaScript runtime for YouTube); the KDE runtime is fetched from Flathub automatically.
+### Flatpak
 
 ```bash
 flatpak install --user MultiChat-x86_64.flatpak
 flatpak run io.github.Corrgan.MultiChat
 ```
 
-On many desktops a double-click on the file opens it in the software centre (e.g. Discover). The Flatpak keeps its settings in `~/.var/app/io.github.Corrgan.MultiChat/`, separate from the AppImage. Updates: install the file of the newer release the same way.
+On many desktops a double-click on the file opens it in the software centre (e.g. Discover). Updates: install the file of the newer release the same way.
 
 ### AppImage
-
-AppImages under [Releases](https://github.com/Corrgan/multichat/releases) – built automatically by GitHub Actions, with a SHA256 checksum. They run on systems with glibc ≥ 2.35 (e.g. Ubuntu 22.04+, Debian 12+, Fedora 36+, current Arch).
 
 ```bash
 chmod +x MultiChat-x86_64.AppImage
@@ -27,26 +30,28 @@ sha256sum -c MultiChat-x86_64.AppImage.sha256   # optional: verify the download
 ./MultiChat-x86_64.AppImage
 ```
 
-`./MultiChat-x86_64.AppImage --selftest` checks that all components (Streamlink, yt-dlp, libmpv …) can be loaded.
+`./MultiChat-x86_64.AppImage --selftest` checks that all components (Streamlink, yt-dlp, libmpv, translations, CA certificates …) can be loaded.
 
-## Requirements
+The AppImage deliberately leaves system libraries (C++ runtime, GLib, fonts, X11/Wayland, OpenSSL …) to the host: the system's libmpv needs the system's versions of them, and the system's OpenSSL knows where the CA certificates are. Every desktop installation has these libraries; only the two packages below usually have to be installed.
 
-The video tiles need **libmpv**, YouTube video additionally needs a **JavaScript runtime** (Node.js or Deno):
+## Requirements (AppImage only)
+
+The video tiles need **libmpv**, YouTube video additionally needs a **JavaScript runtime** (Node.js or Deno). Chat, moderation and the overlay work without them.
 
 ```bash
 # Ubuntu/Debian
 sudo apt install libmpv2 nodejs
 # Fedora (see below: RPM Fusion for Twitch/Kick)
-sudo dnf install mpv-libs nodejs fuse-libs xcb-util-cursor
+sudo dnf install mpv-libs nodejs
 # Arch
 sudo pacman -S mpv nodejs
 ```
 
-Chat, moderation and the overlay also work without them.
+On immutable systems (SteamOS, Fedora Atomic …) libmpv usually can't be installed – use the Flatpak there.
 
-### Fedora: full FFmpeg (for Twitch and Kick)
+### Fedora: full FFmpeg (AppImage, for Twitch and Kick)
 
-Fedora only ships `ffmpeg-free`, which lacks a full H.264 decoder. Twitch and Kick send H.264, so the tiles would stay black. Swap it via RPM Fusion:
+Not needed for the Flatpak. Fedora only ships `ffmpeg-free`, which lacks a full H.264 decoder. Twitch and Kick send H.264, so the tiles would stay black. Swap it via RPM Fusion:
 
 ```bash
 sudo dnf install \
@@ -76,7 +81,7 @@ packaging/build-appimage.sh
 ./MultiChat-x86_64.AppImage
 ```
 
-The script creates its own Python environment in `build-appimage/` with the exact, hash-checked versions from `packaging/requirements-lock.txt`, bundles the app with PyInstaller and packs it with a pinned `appimagetool` release (downloaded automatically and verified by checksum). The result is a single file of about 105 MB. `PYTHON=python3.12 packaging/build-appimage.sh` selects a specific Python interpreter.
+The script creates its own Python environment in `build-appimage/` with the exact, hash-checked versions from `packaging/requirements-lock.txt`, bundles the app with PyInstaller and packs it with a pinned `appimagetool` release (downloaded automatically and verified by checksum). The result is a single file of about 100 MB; `packaging/prune-bundle.py` removes the build machine's system libraries from it (see above). `PYTHON=python3.12 packaging/build-appimage.sh` selects a specific Python interpreter.
 
 - **libmpv** is taken from the system by default (see Requirements) – small, and guaranteed to match your graphics drivers. `MPV_BUNDLE=1 packaging/build-appimage.sh` bundles libmpv and FFmpeg (~270 MB, then runs without mpv installed).
 - The AppImage runs on systems with **at least the glibc version of the build machine**, so build on the oldest distribution you want to support.
@@ -187,12 +192,13 @@ The overlay only answers requests from this computer (`127.0.0.1` / `localhost`)
 ## Troubleshooting / log
 
 - **Help → Copy log** puts the last 300 lines on the clipboard, ready to paste into a chat or an issue.
-- **Help → Open log file / Open log folder**. The file is `~/.local/state/multichat/multichat.log` (rotated, max. 3 × 1 MB).
+- **Help → Open log file / Open log folder**. The file is `~/.local/state/multichat/multichat.log` – for the Flatpak `~/.var/app/io.github.Corrgan.MultiChat/.local/state/multichat/multichat.log` (rotated, max. 3 × 1 MB).
 - **Help → Verbose log (debug)** additionally records every HTTP response, Kick WebSocket events, stream lookups and mpv messages. Reproduce the problem afterwards, then copy the log.
 - Right-click a status text (next to the channel fields or in a video tile) → **Copy status** copies the full text.
 - Tokens, secrets and login codes are redacted in the log automatically.
 - If the app crashes, `coredumpctl info multichat` (Fedora, systemd) shows a backtrace that helps with debugging.
-- Hardware decoding problems with the videos: start with `MULTICHAT_HWDEC=no`, e.g. `MULTICHAT_HWDEC=no ./MultiChat-x86_64.AppImage`.
+- Hardware decoding problems with the videos: start with `MULTICHAT_HWDEC=no`, e.g. `MULTICHAT_HWDEC=no ./MultiChat-x86_64.AppImage` or `flatpak run --env=MULTICHAT_HWDEC=no io.github.Corrgan.MultiChat`.
+- AppImage: "libmpv could not be loaded" is followed by the reason from the dynamic linker. "TLS certificates" in the log shows which CA certificates are used.
 
 **YouTube video stays black / "DNS blocker":** Pi-hole, AdGuard Home & co. often block `manifest.googlevideo.com`, but YouTube serves its live-stream playlists from there (no ads). The tile reports this explicitly. Fix: allow it in the blocker, e.g. Pi-hole `pihole allow manifest.googlevideo.com`, AdGuard Home `@@||manifest.googlevideo.com^`, then `resolvectl flush-caches`. Check with `getent ahosts manifest.googlevideo.com` – it must show a real IP, not `0.0.0.0`.
 
@@ -201,8 +207,8 @@ The overlay only answers requests from this computer (`127.0.0.1` / `localhost`)
 - **Twitch** chat is read via anonymous IRC; sending and moderating use the official Helix API.
 - **Kick** rotated the Pusher key for its chat in October 2026. The app therefore asks Kick for the current credentials when connecting (`web.kick.com/api/v1/realtime/connection`) and automatically tries the next key if one is rejected.
 - **Kick** chat is read via the unofficial website endpoints (chatroom ID from `kick.com/api/v2`, behind Cloudflare, hence `curl_cffi`). Sending and moderating use the official Kick API. If Kick changes its website, reading may break.
-- **YouTube** chat is read via `pytchat` (unofficial; run `pip install -U pytchat` if needed), sending and moderating use the official YouTube Data API.
-- **YouTube video:** the app finds the running live stream via the channel page; mpv plays it via yt-dlp (mpv's `ytdl_hook`, which also handles separate video/audio tracks and DASH live streams). yt-dlp is included in the app – `MultiChat-x86_64.AppImage --yt-dlp …` behaves like the yt-dlp program. For YouTube, yt-dlp needs Node.js or Deno.
+- **YouTube** chat is read via `pytchat` (unofficial), sending and moderating use the official YouTube Data API.
+- **YouTube video:** the app finds the running live stream via the channel page; mpv plays it via yt-dlp (mpv's `ytdl_hook`, which also handles separate video/audio tracks and DASH live streams). yt-dlp is included in the app – `MultiChat-x86_64.AppImage --yt-dlp …` behaves like the yt-dlp program. For YouTube, yt-dlp needs Node.js or Deno (included in the Flatpak).
 - Emotes: Twitch, Kick and YouTube emotes are shown as images, plus **7TV, BetterTTV and FrankerFaceZ** (menu **View → 7TV / BTTV / FFZ emotes**):
   - global sets apply to all three platforms
   - channel emotes: Twitch channels get 7TV + BTTV + FFZ, Kick channels 7TV (if the streamer has linked a 7TV account)
@@ -211,7 +217,6 @@ The overlay only answers requests from this computer (`127.0.0.1` / `localhost`)
   - animated emotes (GIF/WebP) play in the app window and in the OBS overlay
   - if Qt lacks the WebP plugin (some distribution packages), the app uses PNG/GIF; otherwise install `qt6-image-formats-plugins` or use the pip package
 - On Wayland, **Always on top** may be ignored depending on the compositor. The video tiles work on X11 and Wayland.
-- If the app doesn't start on X11 ("xcb platform plugin"): `sudo apt install libxcb-cursor0`.
 
 ## License
 
