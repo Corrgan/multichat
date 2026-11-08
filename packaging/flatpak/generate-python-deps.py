@@ -16,7 +16,6 @@ import urllib.request
 from pathlib import Path
 
 from packaging.markers import Marker
-from packaging.tags import parse_tag
 from packaging.utils import parse_wheel_filename
 
 HERE = Path(__file__).resolve().parent

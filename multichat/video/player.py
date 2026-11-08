@@ -87,6 +87,14 @@ def load_mpv():
     except (ImportError, OSError) as e:
         MPV_ERROR = str(e)
         log.warning("libmpv could not be loaded: %s", e)
+        name = ctypes.util.find_library("mpv")
+        if name:  # PyInstaller hides the reason – ask the dynamic linker directly
+            try:
+                ctypes.CDLL(name)
+            except OSError as why:
+                why = why.__cause__ or why  # PyInstaller wraps the linker's message
+                MPV_ERROR = str(why)
+                log.warning("libmpv: %s", why)
     return mpv
 
 
@@ -120,6 +128,8 @@ class MpvWidget(QOpenGLWidget):
             lvl = levels.get(level, logging.DEBUG)
             if component == "libmpv_render" and "OpenGL error INVALID_ENUM" in msg:
                 lvl = logging.DEBUG  # common with Mesa when creating textures, harmless
+            elif "CUDA" in msg and ("libcuda" in msg or "dynamically load" in msg):
+                lvl = logging.DEBUG  # hwdec probing NVIDIA decoding on a machine without it – mpv moves on
             (flog if component.startswith("ffmpeg") else mlog).log(lvl, "[%s] %s", component, msg)
 
         extra = {}

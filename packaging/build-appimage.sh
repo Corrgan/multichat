@@ -62,6 +62,9 @@ pyinstaller --noconfirm --clean --windowed --name multichat \
   --hidden-import queue --hidden-import concurrent.futures --hidden-import ctypes.util \
   packaging/entry.py
 
+echo "==> Leaving system libraries to the host"
+python3 packaging/prune-bundle.py "$BUILD/dist/multichat/_internal"
+
 echo "==> AppDir"
 rm -rf "$APPDIR"
 mkdir -p "$APPDIR/usr/bin" "$APPDIR/usr/share/applications" "$APPDIR/usr/share/icons/hicolor/256x256/apps"

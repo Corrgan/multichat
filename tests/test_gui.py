@@ -168,3 +168,12 @@ def test_channel_input_normalisation():
     assert n("twitch", "bad name\r\nPRIVMSG #x :hi") is None
     assert n("kick", "../../api") is None
     assert n("youtube", "@examplechannel") == "@examplechannel"
+
+
+def test_no_video_when_tiles_are_off(window, monkeypatch):
+    started = []
+    monkeypatch.setattr(window.video, "set_sources", lambda values: started.append(values))
+    window.inputs["kick"].setText("examplekick")
+    window.connect_platform("kick")
+    window.disconnect_platform("kick")
+    assert started == []  # video tiles are switched off in this window

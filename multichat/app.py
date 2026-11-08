@@ -33,6 +33,41 @@ from .core.paths import app_icon_path  # noqa: E402
 
 log = logging.getLogger("multichat")
 
+# CA certificates, by distribution (OpenSSL's built-in default depends on where it was built)
+CA_BUNDLES = (
+    "/etc/pki/tls/certs/ca-bundle.crt",  # Fedora, RHEL
+    "/etc/ssl/certs/ca-certificates.crt",  # Debian, Ubuntu, Arch, SteamOS
+    "/etc/ssl/ca-bundle.pem",  # openSUSE
+    "/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem",
+    "/etc/ssl/cert.pem",  # Alpine, Void
+)
+
+
+def ensure_ca_certificates() -> str:
+    """Makes sure TLS finds the system's CA certificates; returns where they come from.
+
+    OpenSSL looks where it was configured at build time. If that doesn't exist here
+    (e.g. a library built on Ubuntu running on Fedora), point it to the system bundle,
+    or to certifi's as a last resort."""
+    import ssl
+
+    if os.environ.get("SSL_CERT_FILE"):
+        return os.environ["SSL_CERT_FILE"]
+    paths = ssl.get_default_verify_paths()
+    if (paths.cafile and os.path.isfile(paths.cafile)) or (paths.capath and os.path.isdir(paths.capath) and os.listdir(paths.capath)):
+        return paths.cafile or paths.capath
+    for cand in CA_BUNDLES:
+        if os.path.isfile(cand):
+            os.environ["SSL_CERT_FILE"] = cand
+            return cand
+    try:
+        import certifi
+
+        os.environ["SSL_CERT_FILE"] = certifi.where()
+        return certifi.where()
+    except ImportError:
+        return "none found"
+
 
 def run_ytdlp(args: list[str]) -> None:
     """`multichat --yt-dlp …` behaves like the yt-dlp program (for mpv's ytdl_hook)."""
@@ -66,6 +101,7 @@ def selftest() -> None:
     ok = ok and not missing
     print(f"MISSING locales: {', '.join(missing)}" if missing else f"OK      locales ({len(i18n.LANGUAGES)} languages)")
     print("OK      icon" if app_icon_path().is_file() else "MISSING app icon")
+    print(f"OK      TLS certificates: {ensure_ca_certificates()}")
     from .accounts.store import system_keyring
 
     kr = system_keyring()
@@ -80,6 +116,7 @@ def main() -> None:
         selftest()
     config = load_config()
     setup_logging(config["debug_log"])
+    log.info("TLS certificates: %s", ensure_ca_certificates())
     QApplication.setDesktopFileName(APP_ID)  # Wayland app ID → KDE/GNOME find io.github.Corrgan.MultiChat.desktop
     app = QApplication(sys.argv)
     app.setApplicationName("MultiChat")

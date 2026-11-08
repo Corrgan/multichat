@@ -19,3 +19,21 @@ def test_redacts_secrets():
 
 def test_keeps_normal_text():
     assert redact("no cookies here, connected (#chan)") == "no cookies here, connected (#chan)"
+
+
+def test_ca_certificates_fallback(monkeypatch, tmp_path):
+    import ssl
+
+    from multichat import app
+
+    bundle = tmp_path / "ca-bundle.crt"
+    bundle.write_text("-----BEGIN CERTIFICATE-----\n")
+    monkeypatch.delenv("SSL_CERT_FILE", raising=False)
+    # OpenSSL built elsewhere: its default locations don't exist on this system
+    monkeypatch.setattr(ssl, "get_default_verify_paths",
+                        lambda: ssl.DefaultVerifyPaths("/nonexistent/cert.pem", "/nonexistent/certs", "", "", "", ""))
+    monkeypatch.setattr(app, "CA_BUNDLES", ("/nonexistent/a.crt", str(bundle)))
+    assert app.ensure_ca_certificates() == str(bundle)
+    import os
+
+    assert os.environ["SSL_CERT_FILE"] == str(bundle)

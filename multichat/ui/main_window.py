@@ -301,8 +301,14 @@ class MainWindow(QMainWindow):
         """Run a coroutine in the asyncio thread; the result arrives in the Qt thread."""
         name = getattr(coro, "__qualname__", "action")  # English name for the log (the label is translated)
         fut = asyncio.run_coroutine_threadsafe(coro, self.loop)
-        fut.add_done_callback(lambda f: self.bridge.result.emit((then, label, on_error, name), f))
+        fut.add_done_callback(lambda f: self._deliver(then, label, on_error, name, f))
         return fut
+
+    def _deliver(self, then, label, on_error, name, fut) -> None:
+        try:
+            self.bridge.result.emit((then, label, on_error, name), fut)
+        except RuntimeError:  # window already closed – nobody left to tell
+            pass
 
     def _on_result(self, meta, fut) -> None:
         then, label, on_error, name = meta
@@ -430,7 +436,8 @@ class MainWindow(QMainWindow):
             return
         self._stop_reader(p)
         self.set_status(p, _("disconnected"))
-        self.video.set_sources(self._connected_channels())  # stops and hides its tile
+        if self.video_action.isChecked():
+            self.video.set_sources(self._connected_channels())  # stops and hides its tile
         log.info("%s: connection closed", NAMES[p])
         self._update_conn_buttons()
 
