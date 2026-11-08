@@ -401,6 +401,8 @@ class MainWindow(QMainWindow):
                 self.render_all()
         self._update_conn_buttons()
         self._refresh_targets()
+        if hasattr(self, "video"):
+            self.video.forget(set(self._route))  # tiles of channels that no group has any more
         self._update_video()  # e.g. a video box was ticked
 
     def _schedule_save(self) -> None:
@@ -580,17 +582,22 @@ class MainWindow(QMainWindow):
             self.video.set_sources([])  # saves bandwidth
             self.video.setVisible(False)
 
-    def _update_video(self) -> None:
-        """Tiles for the active group's connected channels with the video box ticked."""
-        if not hasattr(self, "video") or not self.video_action.isChecked():
-            return
+    def _video_entries(self, panel: GroupPanel) -> list[tuple[str, str, str]]:
+        """The group's connected channels with the video box ticked."""
         entries, seen = [], set()
-        for row in self.active_panel().all_rows():
+        for row in panel.all_rows():
             key = row.key()
             if key and key in self.readers and row.video.isChecked() and key not in seen:
                 seen.add(key)
                 entries.append((key, row.platform, row.value()))
-        self.video.set_sources(entries)
+        return entries
+
+    def _update_video(self) -> None:
+        """Tabs: the active group's videos. Side by side: one video column per group."""
+        if not hasattr(self, "video") or not self.video_action.isChecked():
+            return
+        self.video.set_columns([self._video_entries(panel) for panel in self._visible_panels()])
+        self.video.stop_hidden(set(self.readers))  # disconnected channels: stop right away
 
     normalize_channel = staticmethod(normalize_channel)
 

@@ -13,6 +13,7 @@ import os
 import time
 import re
 import sys
+import threading
 from pathlib import Path
 
 from PyQt6.QtCore import QByteArray, Qt, pyqtSignal
@@ -184,6 +185,7 @@ class MpvWidget(QOpenGLWidget):
         self._proc = mpv.MpvGlGetProcAddressFn(self._get_proc)
         self._frame.connect(self._on_frame, Qt.ConnectionType.QueuedConnection)
         self.frameSwapped.connect(self._swapped)
+        self._alive = True
         self.frames = 0  # drawn frames and time spent drawing them (performance log)
         self.paint_ms = 0.0
 
@@ -208,15 +210,28 @@ class MpvWidget(QOpenGLWidget):
     def initializeGL(self) -> None:  # noqa: N802
         self._free_ctx()
         self.ctx = mpv.MpvRenderContext(self.player, "opengl", opengl_init_params={"get_proc_address": self._proc})
-        self.ctx.update_cb = self._frame.emit  # called from the mpv thread → queued
+        self.ctx.update_cb = self._frame_ready  # called from the mpv thread → queued
         self.context().aboutToBeDestroyed.connect(self._free_ctx)
         if self._pending:
             url, opts = self._pending
             self._pending = None
             self.player.loadfile(url, **opts)
 
+    def _frame_ready(self) -> None:
+        """mpv thread: a new frame. Ignored once the widget is being shut down (mpv may still
+        call back while the Qt object is already gone – that crashed the app)."""
+        if self._alive:
+            try:
+                self._frame.emit()
+            except RuntimeError:  # wrapped C++ object deleted
+                self._alive = False
+
     def _free_ctx(self) -> None:
         if self.ctx:
+            try:
+                self.ctx.update_cb = None  # no more frame callbacks into this widget
+            except Exception:  # noqa: BLE001
+                pass
             self.makeCurrent()
             self.ctx.free()
             self.ctx = None
@@ -261,6 +276,10 @@ class MpvWidget(QOpenGLWidget):
         self.clicked.emit()
 
     def shutdown(self) -> None:
+        """Frees the render context (needs this thread's GL context), then lets mpv shut down in
+        the background – terminate() waits for mpv and blocked the window for ~0.5 s per tile."""
+        self._alive = False
         self._pending = None
         self._free_ctx()
-        self.player.terminate()
+        player = self.player
+        threading.Thread(target=player.terminate, name="mpv-terminate", daemon=True).start()
