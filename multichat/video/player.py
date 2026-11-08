@@ -23,6 +23,15 @@ from PyQt6.QtWidgets import (
 
 log = logging.getLogger("multichat.video")
 
+# mpv/ffmpeg messages that look like errors but are expected: probing hardware decoders the
+# machine doesn't have (mpv falls back automatically), joining a live stream mid-GOP, and
+# live streams having no duration
+_HARMLESS = (
+    "libcuda", "Could not dynamically load CUDA",
+    "Device does not support decoding", "hwaccel initialisation returned error",
+    "no frame!", "Missing reference picture", "has unknown duration",
+)
+
 DEFAULT_UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36"
 
 mpv = None
@@ -128,8 +137,8 @@ class MpvWidget(QOpenGLWidget):
             lvl = levels.get(level, logging.DEBUG)
             if component == "libmpv_render" and "OpenGL error INVALID_ENUM" in msg:
                 lvl = logging.DEBUG  # common with Mesa when creating textures, harmless
-            elif "CUDA" in msg and ("libcuda" in msg or "dynamically load" in msg):
-                lvl = logging.DEBUG  # hwdec probing NVIDIA decoding on a machine without it – mpv moves on
+            elif any(s in msg for s in _HARMLESS):
+                lvl = logging.DEBUG
             (flog if component.startswith("ffmpeg") else mlog).log(lvl, "[%s] %s", component, msg)
 
         extra = {}

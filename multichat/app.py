@@ -116,7 +116,6 @@ def main() -> None:
         selftest()
     config = load_config()
     setup_logging(config["debug_log"])
-    log.info("TLS certificates: %s", ensure_ca_certificates())
     QApplication.setDesktopFileName(APP_ID)  # Wayland app ID → KDE/GNOME find io.github.Corrgan.MultiChat.desktop
     app = QApplication(sys.argv)
     app.setApplicationName("MultiChat")
@@ -127,6 +126,7 @@ def main() -> None:
     i18n.install_qt_translator(app)
     install_qt_handler()
     log_system_info()
+    log.info("TLS certificates: %s", ensure_ca_certificates())
     log.info("Language: %s (setting: %s)", lang, config["language"])
     from .ui.main_window import MainWindow
 
