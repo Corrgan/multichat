@@ -625,3 +625,20 @@ def test_overlay_payloads_carry_source_and_groups(window):
     d = deletion_payload(D("twitch", user_id="7", source="twitch:examplechan"))
     assert d["source"] == "twitch:examplechan" and d["user_id"] == "7"
     assert window.overlay_url(2).endswith("&group=2") and "group" not in window.overlay_url()
+
+
+def test_removed_group_is_reused_empty(window, app):
+    from PyQt6.QtWidgets import QMessageBox
+
+    w = window
+    g = w.add_group()
+    g.name.setText("Old")
+    g.rows["kick"].edit.setText("examplekick")
+    w.connect_group(g)
+    QMessageBox.question = lambda *a, **k: QMessageBox.StandardButton.Yes
+    w.remove_group(g)
+    assert g not in w.panels and g.isHidden() and "kick:examplekick" not in w.readers
+    again = w.add_group()
+    assert again is g  # the same widgets – its video players are not destroyed and rebuilt
+    assert again.title() == "Group 2" and not again.keys() and again.view.toPlainText() == ""
+    assert w.tabs.count() == 2 and w.side.widget(w.side.count() - 1) is again

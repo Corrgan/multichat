@@ -119,11 +119,7 @@ def fetch_kick_json(slug: str) -> dict:
     Kick sits behind Cloudflare, hence curl_cffi (browser fingerprint). Answers are shared
     for a few seconds (chat and video tile ask together)."""
     slug = kick_channel(slug)
-    fresh, data = _channel_cache.get(slug)
-    if not fresh:
-        data = _kick_get(f"https://kick.com/api/v2/channels/{slug}", slug)
-        _channel_cache.put(slug, data)
-    return data
+    return _channel_cache.fetch(slug, lambda: _kick_get(f"https://kick.com/api/v2/channels/{slug}", slug))
 
 
 _channel_cache = TTLCache(20)

@@ -28,7 +28,7 @@ log = logging.getLogger("multichat.video")
 OFFLINE_RETRY = 60
 ERROR_RETRY = 30
 ENDED_RETRY = 10
-RECHECK_AFTER = 20  # seconds: an offline tile shown again checks right away only after this
+RECHECK_AFTER = OFFLINE_RETRY  # seconds: before this, an offline tile shown again waits for its retry timer
 HIDDEN_STOP = 300  # seconds a hidden tile (other group) keeps streaming before it is stopped
 
 
@@ -58,9 +58,9 @@ class VideoTile(QFrame):
         self.icon_on = style.standardIcon(QStyle.StandardPixmap.SP_MediaVolume)
         self.icon_off = style.standardIcon(QStyle.StandardPixmap.SP_MediaVolumeMuted)
 
-        title = QLabel(f"<b style='color:{color}'>{name}</b>")
-        if channel:
-            title.setText(f"<b style='color:{color}'>{name}</b> <span style='color:#aaa'>{html.escape(channel[:32])}</span>")
+        self._name, self._color = name, color
+        title = self.title = QLabel()
+        self._set_title(channel)
         self.status = CopyLabel("–")
         self.status.setStyleSheet("color:#888")
         self.status.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
@@ -125,6 +125,29 @@ class VideoTile(QFrame):
         self.retry.timeout.connect(self.start)
         self.watch = QTimer(self, interval=5000)
         self.watch.timeout.connect(self._check)
+        self._show_message(_("Not connected yet"))
+
+    def _set_title(self, channel: str) -> None:
+        text = f"<b style='color:{self._color}'>{self._name}</b>"
+        if channel:
+            text += f" <span style='color:#aaa'>{html.escape(channel[:32])}</span>"
+        self.title.setText(text)
+
+    def retarget(self, key: str, channel: str, quality: str, volume: int) -> None:
+        """Reuses this (stopped) tile for another channel of the same platform – creating and
+        destroying mpv players blocks the window (~0.3 s each with GPU decoding)."""
+        self.key = key
+        self.value = ""
+        self._set_title(channel)
+        self.quality = normalize_quality(quality)
+        self.qbox.blockSignals(True)
+        self.qbox.setCurrentIndex(max(0, self.qbox.findData(self.quality)))
+        self.qbox.blockSignals(False)
+        self.vol.blockSignals(True)
+        self.vol.setValue(max(0, min(100, int(volume))))
+        self.vol.blockSignals(False)
+        self._on_volume(self.vol.value())
+        self.set_muted(True)
         self._show_message(_("Not connected yet"))
 
     # ---- Control ---------------------------------------------------------- #
@@ -225,13 +248,16 @@ class VideoTile(QFrame):
             return
         log.info("Video %s: %s%s", self.platform, kind, f" – {data}" if kind == "error" else "")
         if kind == "ok":
-            p = self.video.player
             headers = {k: v for k, v in (data.headers or {}).items() if k.lower() not in ("accept-encoding",)}
-            p["user-agent"] = headers.pop("User-Agent", DEFAULT_UA)
-            p["http-header-fields"] = [f"{k}: {v}" for k, v in headers.items() if "," not in v]
-            opts = {"audio_file": data.audio_url} if data.audio_url else {}
+            # options for this stream only, sent along with loadfile (nothing waits for mpv)
+            opts = {"user-agent": headers.pop("User-Agent", DEFAULT_UA)}
+            fields = [f"{k}: {v}" for k, v in headers.items() if "," not in v]
+            if fields:
+                opts["http-header-fields"] = fields
+            if data.audio_url:
+                opts["audio-file"] = data.audio_url
             if data.ytdl_format:
-                p["ytdl-format"] = data.ytdl_format
+                opts["ytdl-format"] = data.ytdl_format
             self.stack.setCurrentIndex(1)
             self._closer, self._ads, self._title = data.closer, data.ads, data.title
             self.video.play(data.url, **opts)
@@ -295,8 +321,8 @@ class VideoTile(QFrame):
             self.quality_changed.emit()
 
     def _apply_volume(self) -> None:
-        try:
-            self.video.player.volume = self.volume
+        try:  # async: a synchronous property set waits for mpv, which may be busy stopping
+            self.video.player.command_async("set", "volume", str(self.volume))
         except Exception:  # noqa: BLE001
             pass
 
@@ -370,6 +396,7 @@ class VideoPanel(QWidget):
         self.hub = hub
         hub.panels.append(self)
         self.tiles: dict[str, VideoTile] = {}
+        self.retired: dict[str, VideoTile] = {}  # platform → stopped tile, reused for the next channel
         self.shown = False  # the group is on screen
         self.lay = QVBoxLayout(self)
         self.lay.setContentsMargins(0, 0, 0, 0)
@@ -406,6 +433,11 @@ class VideoPanel(QWidget):
 
     def _tile(self, key: str, platform: str, channel: str) -> VideoTile:
         tile = self.tiles.get(key)
+        if tile is None and platform in self.retired:
+            tile = self.retired.pop(platform)
+            tile.retarget(key, channel, self._setting("quality", key, platform, DEFAULT_QUALITY),
+                          self._setting("volume", key, platform, 100))
+            self.tiles[key] = tile
         if tile is None:
             tile = VideoTile(platform, NAMES[platform], BADGES[platform][0],
                              self._setting("quality", key, platform, DEFAULT_QUALITY), self.runner,
@@ -448,14 +480,22 @@ class VideoPanel(QWidget):
         self.hub.apply()
 
     def forget(self, keep: set[str]) -> None:
-        """Removes tiles of channels the group doesn't have any more."""
+        """Tiles of channels the group doesn't have any more: stopped and kept for the next
+        channel of that platform (destroying an mpv player blocks the window)."""
         for key in [k for k in self.tiles if k not in keep]:
             self._remember()
             tile = self.tiles.pop(key)
-            self.lay.removeWidget(tile)
+            tile.idle_stop.stop()
+            if tile.state != "idle":
+                tile.stop()
+            tile.set_muted(True)
             tile.hide()
-            tile.shutdown()
-            tile.deleteLater()
+            if tile.platform in self.retired:  # one per platform is enough (can't really happen)
+                self.lay.removeWidget(tile)
+                tile.shutdown()
+                tile.deleteLater()
+            else:
+                self.retired[tile.platform] = tile
 
     def stop_all(self) -> None:
         for tile in self.tiles.values():
@@ -500,5 +540,5 @@ class VideoPanel(QWidget):
     def shutdown(self) -> None:
         if self in self.hub.panels:
             self.hub.panels.remove(self)
-        for tile in self.tiles.values():
+        for tile in [*self.tiles.values(), *self.retired.values()]:
             tile.shutdown()

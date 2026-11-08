@@ -99,6 +99,7 @@ class MainWindow(GroupsMixin, ConnectionsMixin, QMainWindow):
         self.readers: dict = {}  # source key ("twitch:channel") → running chat reader (concurrent future)
         self.conn_gen: dict[str, int] = {}  # increases with every (dis)connect of a channel
         self.panels: list[GroupPanel] = []
+        self._spare: list[GroupPanel] = []  # removed groups, hidden – reused by add_group()
         self._route: dict[str, list[GroupPanel]] = {}  # source key → groups that show it
         self.messages: OrderedDict[int, ChatMessage] = OrderedDict()
         self._trim_at = MAX_MESSAGES  # message count that triggers the next _trim_messages()
@@ -783,7 +784,7 @@ class MainWindow(GroupsMixin, ConnectionsMixin, QMainWindow):
         self.mod.notes.save()
         for t in self.readers.values():
             t.cancel()
-        for panel in self.panels:
+        for panel in [*self.panels, *self._spare]:
             if panel.video is not None:
                 panel.video.shutdown()
 

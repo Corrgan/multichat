@@ -208,6 +208,19 @@ class GroupPanel(QWidget):
     def _update_placeholder(self) -> None:
         self.name.setPlaceholderText(self.channel_name() or default_group_name(self.index))
 
+    def reset(self, index: int) -> None:
+        """Empties the group so it can be reused as a new one (see GroupsMixin.remove_group)."""
+        self.name.setText("")
+        for row in self.all_rows():
+            row.edit.setText("")
+            row.video.setChecked(True)
+            row.status.set_full("–")
+        self.view.rebuild([])
+        self.view.held = False
+        self.unread = self.mentions = 0
+        self.fold.setChecked(True)
+        self.set_index(index)
+
     def set_index(self, index: int) -> None:
         self.index = index
         self._update_placeholder()

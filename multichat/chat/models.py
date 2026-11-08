@@ -76,6 +76,7 @@ class TTLCache:
         self.ttl, self.size = ttl, size
         self._data: dict = {}
         self._lock = threading.Lock()
+        self._busy: dict = {}  # key → lock held while that key is being loaded
 
     def get(self, key):
         """(True, value) if fresh, else (False, None)."""
@@ -84,6 +85,26 @@ class TTLCache:
             if hit and hit[0] > time.monotonic():
                 return True, hit[1]
             return False, None
+
+    def fetch(self, key, load: Callable):
+        """The cached answer, or load() it – once: whoever asks while it loads waits for that
+        answer instead of sending the same request (chat and video tile start together).
+        Errors are not cached. Blocking: call from a thread."""
+        import threading
+
+        with self._lock:
+            busy = self._busy.get(key)
+            if busy is None:
+                if len(self._busy) > 4 * self.size:  # forget idle keys
+                    self._busy = {k: v for k, v in self._busy.items() if v.locked()}
+                busy = self._busy[key] = threading.Lock()
+        with busy:
+            fresh, value = self.get(key)
+            if fresh:
+                return value
+            value = load()
+            self.put(key, value)
+            return value
 
     def clear(self) -> None:
         with self._lock:

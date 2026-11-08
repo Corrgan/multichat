@@ -81,6 +81,26 @@ class GroupsMixin:
         self._update_titles()
         return panel
 
+    def _reuse_panel(self) -> GroupPanel | None:
+        """A removed group, emptied, as the new last group (see remove_group)."""
+        if not self._spare:
+            return None
+        panel = self._spare.pop()
+        panel.set_index(len(self.panels))
+        first = self.panels[0].view
+        panel.view.set_font_px(first.font_px)  # may have changed meanwhile
+        panel.view.alerts_cfg = first.alerts_cfg
+        panel.view.selected = first.selected
+        if panel.video is not None:
+            panel.video.setVisible(self.video_action.isChecked())
+        self.panels.append(panel)
+        self.side.addWidget(panel)  # already in the splitter: only moves to the end (same parent)
+        panel.setVisible(self.side_by_side)
+        self.tabs.addTab(panel.title())
+        self._rows_changed()
+        self._update_titles()
+        return panel
+
     def _split_moved(self, panel: GroupPanel) -> None:
         """Chat/video width: the same for all groups (side by side each keeps its own until
         it is changed)."""
@@ -93,7 +113,7 @@ class GroupsMixin:
         if len(self.panels) >= MAX_GROUPS:
             self.statusBar().showMessage(_("At most {n} groups").format(n=MAX_GROUPS), 5000)
             return None
-        panel = self._add_panel({"name": "", "channels": []})
+        panel = self._reuse_panel() or self._add_panel({"name": "", "channels": []})
         self._side_active = panel
         self.tabs.setCurrentIndex(len(self.panels) - 1)
         self.side_action.setEnabled(len(self.panels) > 1)
@@ -113,13 +133,17 @@ class GroupsMixin:
         self.disconnect_group(panel)
         i = self.panels.index(panel)
         self.panels.remove(panel)
-        if panel.video is not None:
-            panel.video.shutdown()
         self.tabs.blockSignals(True)
         self.tabs.removeTab(i)
         self.tabs.blockSignals(False)
+        # Kept hidden and reused for the next new group: destroying its video players
+        # blocked the window for ~0.3 s (GPU decoder teardown on the UI thread).
         panel.hide()
-        panel.deleteLater()  # the whole window goes on – the panel only leaves the splitter
+        panel.reset(len(self.panels))
+        if panel.video is not None:
+            panel.video.set_entries([], shown=False)
+            panel.video.forget(set())  # stopped, kept for reuse
+        self._spare.append(panel)
         for j, pn in enumerate(self.panels):
             pn.set_index(j)
         if len(self.panels) < 2 and self.side_action.isChecked():

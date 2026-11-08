@@ -38,9 +38,11 @@ def test_youtube_lookup(monkeypatch):
 
     def fake_get(url, **kw):
         seen.append(url)
-        return types.SimpleNamespace(status_code=200, text=page)
+        return types.SimpleNamespace(status_code=200, text=page, url=url)
 
-    monkeypatch.setattr(streams, "_http_get", fake_get)
+    from multichat.chat import youtube
+
+    monkeypatch.setattr(youtube, "_get", fake_get)
     monkeypatch.setattr(streams, "check_dns", lambda host: None)
     s = streams._youtube("@examplechannel", 480)
     assert seen == ["https://www.youtube.com/@examplechannel/live"]
@@ -48,37 +50,70 @@ def test_youtube_lookup(monkeypatch):
 
 
 def test_youtube_offline(monkeypatch):
-    monkeypatch.setattr(streams, "_http_get", lambda url, **kw: types.SimpleNamespace(status_code=200, text="<html>"))
+    from multichat.chat import youtube
+
+    monkeypatch.setattr(youtube, "_get", lambda url, **kw: types.SimpleNamespace(status_code=200, text="<html>", url=url))
     monkeypatch.setattr(streams, "check_dns", lambda host: None)
     with pytest.raises(streams.Offline):
         streams._youtube("@examplechannel", 480)
 
 
 def test_chat_and_video_share_the_live_check(monkeypatch):
-    """The chat just looked whether the channel is live – the video tile reuses that answer."""
+    """Chat and video tile ask at the same moment – one request, both get the answer."""
     import asyncio
+    import threading
+    import time as _time
 
     from multichat.chat import youtube
 
     page = ('<link rel="canonical" href="https://www.youtube.com/watch?v=abcdefghijk">'
             '<meta name="title" content="Example stream">"isLiveNow":true')
-    youtube.LIVE_CACHE.put("https://www.youtube.com/@examplechannel", ("abcdefghijk", "Example stream"))
     calls = []
-    monkeypatch.setattr(streams, "_http_get", lambda url, **kw: calls.append(url) or types.SimpleNamespace(
-        status_code=200, text=page))
+
+    def slow_get(url, **kw):
+        calls.append(url)
+        _time.sleep(0.3)
+        return types.SimpleNamespace(status_code=200, text=page, url=url)
+
+    monkeypatch.setattr(youtube, "_get", slow_get)
     monkeypatch.setattr(streams, "check_dns", lambda host: None)
-    s = streams._youtube("@examplechannel", 480)
-    assert calls == [] and s.url.endswith("watch?v=abcdefghijk")
-    # and the chat reuses an answer of the video tile
-    assert asyncio.run(youtube.find_live_video("https://www.youtube.com/@examplechannel")) == (
-        "abcdefghijk", "Example stream")
+    out = {}
+    video = threading.Thread(target=lambda: out.setdefault("video", streams._youtube("@examplechannel", 480)))
+    video.start()
+    out["chat"] = asyncio.run(youtube.find_live_video("https://www.youtube.com/@examplechannel"))
+    video.join()
+    assert len(calls) == 1
+    assert out["chat"] == ("abcdefghijk", "Example stream") and out["video"].url.endswith("watch?v=abcdefghijk")
+
+
+def test_missing_youtube_channel(monkeypatch):
+    from multichat.chat import youtube
+
+    monkeypatch.setattr(youtube, "_get", lambda url, **kw: types.SimpleNamespace(status_code=404, text="", url=url))
+    monkeypatch.setattr(streams, "check_dns", lambda host: None)
+    with pytest.raises(RuntimeError, match="YouTube channel not found"):
+        streams._youtube("@examplechannel", 480)
+    with pytest.raises(ValueError):
+        youtube.live_now("https://www.youtube.com/@examplechannel")  # errors are not kept
 
 
 def test_kick_channel_info_is_shared(monkeypatch):
     from multichat.chat import kick
 
     calls = []
-    monkeypatch.setattr(kick, "_kick_get", lambda url, slug: calls.append(url) or {"chatroom": {"id": 5}, "user_id": 7})
-    assert kick._fetch_kick_channel("examplekick") == (5, "7")
-    assert kick.fetch_kick_json("Examplekick")["chatroom"]["id"] == 5
-    assert len(calls) == 1
+    import threading
+    import time as _time
+
+    def slow(url, slug):
+        calls.append(url)
+        _time.sleep(0.2)
+        return {"chatroom": {"id": 5}, "user_id": 7}
+
+    monkeypatch.setattr(kick, "_kick_get", slow)
+    both = [threading.Thread(target=kick.fetch_kick_json, args=("examplekick",)) for _ in range(2)]
+    for t in both:
+        t.start()
+    assert kick._fetch_kick_channel("Examplekick") == (5, "7")
+    for t in both:
+        t.join()
+    assert len(calls) == 1  # three callers at once, one request

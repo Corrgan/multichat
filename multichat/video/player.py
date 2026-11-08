@@ -190,12 +190,28 @@ class MpvWidget(QOpenGLWidget):
         self.paint_ms = 0.0
 
     def play(self, url: str, **opts) -> None:
-        """Load only once the render context exists – otherwise mpv plays audio only."""
+        """Load only once the render context exists – otherwise mpv plays audio only.
+        opts: mpv options for this stream only, e.g. {"user-agent": …, "audio-file": …}."""
         self.last_error = ""
         if self.ctx is None:
             self._pending = (url, opts)
         else:
-            self.player.loadfile(url, **opts)
+            self._load(url, opts)
+
+    def _load(self, url: str, opts: dict) -> None:
+        """loadfile without waiting: a synchronous call waits until mpv has torn down the
+        previous stream (~0.2-0.4 s on the UI thread). The options travel with the command
+        (per-file options), so there is nothing to set beforehand that could wait as well."""
+        parts = []
+        for key, value in opts.items():
+            value = ",".join(value) if isinstance(value, (list, tuple)) else str(value)
+            parts.append(f"{key}=%{len(value.encode())}%{value}")  # %n% quoting: commas etc. stay literal
+        args = ["loadfile", url, "replace"]
+        if getattr(self.player, "mpv_version_tuple", (0, 0, 0)) >= (0, 38, 0):
+            args.append("-1")  # since mpv 0.38 an index comes before the options
+        if parts:
+            args.append(",".join(parts))
+        self.player.command_async(*args)
 
     @staticmethod
     def _get_proc(_ctx, name):
@@ -215,7 +231,7 @@ class MpvWidget(QOpenGLWidget):
         if self._pending:
             url, opts = self._pending
             self._pending = None
-            self.player.loadfile(url, **opts)
+            self._load(url, opts)
 
     def _frame_ready(self) -> None:
         """mpv thread: a new frame. Ignored once the widget is being shut down (mpv may still

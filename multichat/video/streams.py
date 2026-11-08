@@ -201,23 +201,18 @@ def check_dns(host: str) -> None:
 
 def _youtube(value: str, max_h: int) -> Stream:
     """Finds the live video via the channel page; mpv plays it with yt-dlp."""
-    from ..chat.youtube import LIVE_CACHE, YT_COOKIES, YT_HEADERS, parse_live_page
+    from ..chat.youtube import live_now
 
     kind, target = youtube_target(value)
     check_dns("manifest.googlevideo.com")
     if kind == "video":
         return Stream(f"https://www.youtube.com/watch?v={target}", "", ytdl_format=ytdl_format(max_h))
     page_url = target.rstrip("/") + "/live"
-    fresh, live = LIVE_CACHE.get(target)  # the chat may have just asked
-    if not fresh:
-        r = _http_get(page_url, headers=YT_HEADERS, cookies=YT_COOKIES)
-        if r.status_code == 404:
-            raise RuntimeError(_("YouTube channel not found"))
-        if r.status_code != 200:
-            raise RuntimeError(f"YouTube page HTTP {r.status_code}")
-        live = parse_live_page(r.text)
-        LIVE_CACHE.put(target, live)
-    log.debug("YouTube %s: live=%s%s", page_url, live, " (shared with the chat)" if fresh else "")
+    try:
+        live = live_now(target)  # one request for chat and video
+    except ValueError as e:
+        raise RuntimeError(_("YouTube channel not found")) from e
+    log.debug("YouTube %s: live=%s", page_url, live)
     if not live:
         raise Offline("offline")
     vid, title = live

@@ -70,26 +70,36 @@ def parse_live_page(page: str) -> tuple[str, str] | None:
 LIVE_CACHE = TTLCache(30)
 
 
+def _get(url: str):
+    try:
+        from curl_cffi import requests as cf  # type: ignore
+
+        return cf.get(url, impersonate="chrome", timeout=20, headers=YT_HEADERS, cookies=YT_COOKIES)
+    except ImportError:
+        import requests
+
+        return requests.get(url, timeout=20, headers=YT_HEADERS, cookies=YT_COOKIES)
+
+
+def live_now(channel_url: str) -> tuple[str, str] | None:
+    """(video ID, title) of the channel's live stream, None if not live. Blocking; chat and
+    video tile share one request (LIVE_CACHE). ValueError if the channel doesn't exist."""
+
+    def load():
+        r = _get(channel_url.rstrip("/") + "/live")
+        if r.status_code == 404:
+            raise ValueError("YouTube channel not found")
+        if r.status_code != 200:
+            raise RuntimeError(f"YouTube page HTTP {r.status_code}")
+        if "consent." in str(r.url):
+            raise RuntimeError("YouTube cookie consent page blocks the lookup")
+        return parse_live_page(r.text)
+
+    return LIVE_CACHE.fetch(channel_url, load)
+
+
 async def find_live_video(channel_url: str) -> tuple[str, str] | None:
-    import aiohttp
-
-    fresh, live = LIVE_CACHE.get(channel_url)
-    if fresh:
-        return live
-
-    async with aiohttp.ClientSession(
-        trust_env=True, cookies=YT_COOKIES, headers=YT_HEADERS, timeout=aiohttp.ClientTimeout(total=20)
-    ) as s:
-        async with s.get(channel_url.rstrip("/") + "/live") as r:
-            if r.status == 404:
-                raise ValueError("YouTube channel not found")
-            r.raise_for_status()
-            if "consent." in (r.url.host or ""):
-                raise RuntimeError("YouTube cookie consent page blocks the lookup")
-            page = await r.text()
-    live = parse_live_page(page)
-    LIVE_CACHE.put(channel_url, live)
-    return live
+    return await asyncio.to_thread(live_now, channel_url)
 
 
 def _yt_parts(c) -> list[Part]:
