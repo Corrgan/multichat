@@ -143,6 +143,11 @@ def selftest_net(url: str = "https://api.github.com/") -> None:
 
 
 def main() -> None:
+    if len(sys.argv) > 1 and sys.argv[1] == "--component-probe":
+        from .core.component_probe import main as component_probe
+
+        component_probe()
+        return
     ensure_ca_certificates()  # before anything creates an SSL context
     if len(sys.argv) > 1 and sys.argv[1] == "--yt-dlp":
         run_ytdlp(sys.argv[2:])

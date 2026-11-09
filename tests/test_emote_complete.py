@@ -4,6 +4,7 @@ import asyncio
 
 import pytest
 from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QIcon, QInputMethodEvent
 from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication, QLineEdit
 
@@ -74,6 +75,60 @@ def test_no_suggestions_inside_words_or_urls(app):
     edit.clear()
     QTest.keyClicks(edit, "time 12:kap")
     assert not c.visible()
+
+
+def input_unicode(edit, text):
+    event = QInputMethodEvent()
+    event.setCommitString(text)
+    QApplication.sendEvent(edit, event)
+
+
+@pytest.mark.parametrize("prefix", ["😀 ", "😀🚀 ", "hello 😀 "])
+def test_unicode_completion_keeps_qt_cursor_and_following_text(app, monkeypatch, prefix):
+    monkeypatch.setattr(EmoteCompleter, "_icon", lambda *_: QIcon())
+    edit, c, sent = make(app)
+    input_unicode(edit, prefix)
+    QTest.keyClicks(edit, ":kap")
+    assert c.visible()
+    QTest.keyClick(c.completer.popup(), Qt.Key.Key_Tab)
+    assert edit.text() == prefix + "Kappa "
+    assert edit.cursorPosition() == len(edit.text().encode("utf-16-le")) // 2
+    QTest.keyClicks(edit, "hello")
+    QTest.keyClick(edit, Qt.Key.Key_Return)
+    assert sent == [prefix + "Kappa hello"]
+
+
+def test_unicode_completion_in_middle_preserves_suffix_and_undo(app, monkeypatch):
+    monkeypatch.setattr(EmoteCompleter, "_icon", lambda *_: QIcon())
+    edit, c, _ = make(app)
+    input_unicode(edit, "😀 ")
+    QTest.keyClicks(edit, ":ka tail")
+    for _ in range(5):
+        QTest.keyClick(edit, Qt.Key.Key_Left)
+    QTest.keyClicks(edit, "p")
+    assert c.visible()
+    QTest.keyClick(c.completer.popup(), Qt.Key.Key_Tab)
+    QTest.keyClicks(edit, "hello ")
+    assert edit.text() == "😀 Kappa hello tail"
+    for _ in range(2):  # Qt may group the completion and following typing into one undo.
+        edit.undo()
+        if edit.text() == "😀 :kap tail":
+            break
+    assert edit.text() == "😀 :kap tail"
+
+
+def test_completion_does_not_apply_stale_span_after_selection(app, monkeypatch):
+    monkeypatch.setattr(EmoteCompleter, "_icon", lambda *_: QIcon())
+    edit, c, _ = make(app)
+    input_unicode(edit, "😀 ")
+    QTest.keyClicks(edit, ":kap")
+    assert c.visible()
+    edit.selectAll()
+    assert not c.visible()
+    c.insert("Kappa")
+    assert edit.text() == "😀 :kap"
+    QTest.keyClicks(edit, "new text")
+    assert edit.text() == "new text"
 
 
 def test_twitch_usable_emotes_pages_and_fallback(tmp_path):

@@ -2,6 +2,7 @@
 """Packaging consistency: the Flatpak's Python packages match the lock file."""
 import importlib.util
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -55,6 +56,8 @@ def test_video_selftest():
     from multichat.video import player
 
     if not player.load_mpv():
+        if os.environ.get("MULTICHAT_REQUIRE_MPV") == "1":
+            pytest.fail(f"libmpv is required in this job: {player.MPV_ERROR}")
         pytest.skip(f"libmpv not available: {player.MPV_ERROR}")
     r = subprocess.run([sys.executable, "-m", "multichat", "--selftest-video", str(ROOT / "tests/data/testclip.webm")],
                        capture_output=True, text=True, timeout=60, cwd=ROOT)

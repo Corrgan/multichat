@@ -11,9 +11,12 @@ Precedence for equal names: channel before global; within each, 7TV > BTTV > FFZ
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import re
+import threading
 import time
+from collections import OrderedDict
 from typing import Callable
 
 import aiohttp
@@ -28,6 +31,14 @@ EmoteMap = dict[str, str]  # name -> image URL
 
 
 RETRY_EMPTY = 600  # s until a channel whose emotes could not be loaded is tried again
+CHANNEL_TTL = 6 * 3600
+MAX_CHANNELS = 64
+MAX_CHANNEL_EMOTES = 4096
+MAX_GLOBAL_EMOTES = 8192
+MAX_CACHED_EMOTES = 32768
+MAX_LOADS = 8
+MAX_PENDING_LOADS = 64
+MAX_JSON_BYTES = 4 * 1024 * 1024
 _EXT_ID_RE = re.compile(r"[0-9]{1,20}")
 
 
@@ -46,10 +57,14 @@ class EmoteStore:
         self.enabled = True
         self.global_: EmoteMap = {}
         self.global_loaded = False
-        self.channels: dict[tuple[str, str], EmoteMap] = {}
+        self.channels: OrderedDict[tuple[str, str], EmoteMap] = OrderedDict()
+        self._lock = threading.RLock()  # reader loop writes, Qt completion reads
+        self._loaded_at: dict[tuple[str, str], float] = {}
         self._empty_since: dict[tuple[str, str], float] = {}
         self._loading: set[tuple[str, str]] = set()
         self._tasks: set[asyncio.Task] = set()
+        self._scheduled: set[tuple[str, str]] = set()
+        self._load_slots = asyncio.Semaphore(MAX_LOADS)
 
     # ---- Loading ---------------------------------------------------------- #
     async def _json(self, url: str):
@@ -57,7 +72,47 @@ class EmoteStore:
             if r.status != 200:
                 log.debug("Emotes %s → HTTP %s", url, r.status)
                 return None
-            return await r.json(content_type=None)
+            if r.content_length is not None and r.content_length > MAX_JSON_BYTES:
+                raise ValueError("emote metadata exceeds byte limit")
+            body = bytearray()
+            async for chunk in r.content.iter_chunked(65536):
+                body.extend(chunk)
+                if len(body) > MAX_JSON_BYTES:
+                    raise ValueError("emote metadata exceeds byte limit")
+            return json.loads(body)
+
+    @staticmethod
+    def _bounded(emap: EmoteMap, limit: int) -> EmoteMap:
+        out = {}
+        for name, url in emap.items():
+            if (isinstance(name, str) and 0 < len(name) <= 100
+                    and isinstance(url, str) and len(url) <= 2048 and _https(url)):
+                out[name] = url
+                if len(out) >= limit:
+                    break
+        return out
+
+    def _prune(self, now: float) -> None:
+        """Called with the lock held. Evict expired and least recently used sets."""
+        for key in list(self.channels):
+            if now - self._loaded_at.get(key, now) >= CHANNEL_TTL:
+                self.channels.pop(key, None)
+        total = sum(map(len, self.channels.values()))
+        while len(self.channels) > MAX_CHANNELS or total > MAX_CACHED_EMOTES:
+            _, removed = self.channels.popitem(last=False)
+            total -= len(removed)
+        for metadata in (self._loaded_at, self._empty_since):
+            for key in list(metadata):
+                if key not in self.channels:
+                    metadata.pop(key, None)
+
+    def _channel(self, key: tuple[str, str]) -> EmoteMap:
+        with self._lock:
+            self._prune(time.monotonic())
+            emap = self.channels.get(key, {})
+            if key in self.channels:
+                self.channels.move_to_end(key)
+            return emap  # stored maps are replaced, never mutated
 
     @staticmethod
     async def _merge(*loaders) -> tuple[EmoteMap, dict[str, int]]:
@@ -72,25 +127,33 @@ class EmoteStore:
         return merged, counts
 
     async def load_global(self) -> dict[str, int]:
-        self.global_, counts = await self._merge(
+        emap, counts = await self._merge(
             self._ffz_global(), self._bttv_global(), self._7tv_set("https://7tv.io/v3/emote-sets/global")
         )
-        self.global_loaded = bool(counts)  # nothing reachable → try again the next time it is enabled
+        with self._lock:
+            self.global_ = self._bounded(emap, MAX_GLOBAL_EMOTES)
+            self.global_loaded = bool(counts)  # nothing reachable → try again next time
         return counts
 
     def _needs_load(self, key: tuple[str, str], ext_id: str | None) -> bool:
-        if not ext_id or not _EXT_ID_RE.fullmatch(str(ext_id)) or key in self._loading:
-            return False
-        if key not in self.channels:
-            return True
-        # nothing found last time (network error or no sets) → try again after a while
-        return not self.channels[key] and time.monotonic() - self._empty_since.get(key, 0) > RETRY_EMPTY
+        with self._lock:
+            self._prune(time.monotonic())
+            if not ext_id or not _EXT_ID_RE.fullmatch(str(ext_id)) or key in self._loading:
+                return False
+            if key not in self.channels:
+                return True
+            return not self.channels[key] and time.monotonic() - self._empty_since.get(key, 0) > RETRY_EMPTY
 
     async def load_channel(self, platform: str, channel: str, ext_id: str) -> None:
+        async with self._load_slots:
+            await self._load_channel(platform, channel, ext_id)
+
+    async def _load_channel(self, platform: str, channel: str, ext_id: str) -> None:
         key = (platform, channel.lower())
-        if not self._needs_load(key, ext_id):
-            return
-        self._loading.add(key)
+        with self._lock:
+            if not self._needs_load(key, ext_id):
+                return
+            self._loading.add(key)
         try:
             if platform == "twitch":
                 emap, _ = await self._merge(
@@ -98,20 +161,33 @@ class EmoteStore:
                 )
             else:
                 emap, _ = await self._merge(_none(), _none(), self._7tv_user(platform, ext_id))
-            self.channels[key] = emap
-            if not emap:
-                self._empty_since[key] = time.monotonic()
+            with self._lock:
+                self.channels[key] = self._bounded(emap, MAX_CHANNEL_EMOTES)
+                self.channels.move_to_end(key)
+                self._loaded_at[key] = time.monotonic()
+                if not self.channels[key]:
+                    self._empty_since[key] = time.monotonic()
+                else:
+                    self._empty_since.pop(key, None)
+                self._prune(time.monotonic())
         finally:
-            self._loading.discard(key)
+            with self._lock:
+                self._loading.discard(key)
 
     def schedule_channel(self, platform: str, channel: str, ext_id: str | None) -> None:
         """Call from within a running reader (same event loop)."""
         key = (platform, channel.lower())
-        if not self._needs_load(key, ext_id):
+        if key in self._scheduled or len(self._tasks) >= MAX_PENDING_LOADS or not self._needs_load(key, ext_id):
             return
+        self._scheduled.add(key)
         task = asyncio.ensure_future(self.load_channel(platform, channel, ext_id))
         self._tasks.add(task)
-        task.add_done_callback(self._tasks.discard)
+        def done(future):
+            self._tasks.discard(future)
+            self._scheduled.discard(key)
+            if not future.cancelled() and future.exception() is not None:
+                log.debug("Channel emote load failed: %s", future.exception())
+        task.add_done_callback(done)
 
     # ---- 7TV ------------------------------------------------------------- #
     def _7tv_url(self, emote: dict) -> str | None:
@@ -186,12 +262,12 @@ class EmoteStore:
         the emote suggestions while typing)."""
         if not self.enabled:
             return {}
-        return {**self.global_, **self.channels.get((platform, channel.lower()), {})}
+        return {**self.global_, **self._channel((platform, channel.lower()))}
 
     def apply(self, platform: str, channel: str, parts: list[Part]) -> list[Part]:
         if not self.enabled or not (self.global_ or self.channels):
             return parts
-        chan = self.channels.get((platform, channel.lower()), {})
+        chan = self._channel((platform, channel.lower()))
         out: list[Part] = []
         for kind, value, alt in parts:
             if kind != "text":

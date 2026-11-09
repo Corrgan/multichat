@@ -183,27 +183,28 @@ class SecretStore:
         with self.lock:
             return dict(self.data.get(platform) or {})
 
-    def update(self, platform: str, **values) -> None:
+    def update(self, platform: str, **values) -> bool:
         with self.lock:
             self.data.setdefault(platform, {}).update(values)
-            self._save()
+            return self._save()
 
-    def replace(self, platform: str, values: dict) -> None:
+    def replace(self, platform: str, values: dict) -> bool:
         with self.lock:
             self.data[platform] = dict(values)
-            self._save()
+            return self._save()
 
-    def replace_all(self, data: dict) -> None:
+    def replace_all(self, data: dict) -> bool:
         with self.lock:
             self.data = json.loads(json.dumps(data))
-            self._save()
+            return self._save()
 
-    def delete(self, platform: str) -> None:
+    def delete(self, platform: str) -> bool:
         with self.lock:
             self.data.pop(platform, None)
-            self._save()
+            return self._save()
 
-    def _save(self) -> None:
+    def _save(self) -> bool:
+        """Whether the new state was saved; memory changes survive a failed save."""
         try:
             self.backend.save(self.key, self.data)
         except Exception as e:  # noqa: BLE001
@@ -211,7 +212,7 @@ class SecretStore:
                 # MULTICHAT_SECRETS=keyring: never a file – the change lives in memory until the app closes
                 log.error("Secrets: saving %s in the %s failed (%s) – not saved (keyring-only mode)",
                           self.key, self.backend.name, e)
-                return
+                return False
             if not self.files or self.files is self.backend:
                 raise
             # e.g. the wallet was closed: keep the data instead of losing the login
@@ -222,6 +223,7 @@ class SecretStore:
                 pass
             self.backend = self.files
             self.files.save(self.key, self.data)
+        return True
 
 
 TokenStore = SecretStore  # name used by the accounts

@@ -1,12 +1,14 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Emote images: scaled once, animated GIFs play, bounded cache, size limit."""
 import pytest
-from PyQt6.QtCore import QBuffer, QByteArray, QIODevice, QUrl
-from PyQt6.QtGui import QColor, QImage
+from PyQt6.QtCore import QBuffer, QByteArray, QIODevice, QPoint, QUrl
+from PyQt6.QtGui import QColor, QImage, QTextCursor
+from PyQt6.QtNetwork import QNetworkReply
 from PyQt6.QtWidgets import QApplication
 
 from multichat.ui import chat_view
 from multichat.ui.chat_view import EMOTE_H, ChatView
+from test_image_limits import ControlledReply
 
 
 @pytest.fixture(scope="module")
@@ -142,3 +144,120 @@ def test_view_is_compacted_after_many_lines(app, monkeypatch):
     assert v.needs_compaction and grown > 100
     v.rebuild(v.items(msgs[-50:]))
     assert not v.needs_compaction and len(v.document().allFormats()) < grown / 2
+
+
+def test_compaction_preserves_paused_wrapped_line_and_message_ids(app, monkeypatch):
+    monkeypatch.setattr(chat_view, "COMPACT_AFTER", 200)
+    v = ChatView()
+    v.resize(380, 250)
+    items = [(i, f"<img src='mcicon:user'> user{i}: " + "wrapped text " * 12, None) for i in range(80)]
+    v.append_many(items)
+    v.show()
+    app.processEvents()
+    bar = v.verticalScrollBar()
+    bar.setValue(bar.maximum() // 2 + 11)
+    assert not v.follow
+    anchor = v._read_anchor()
+    text = v.toPlainText()
+    for _ in range(140):
+        v.update_messages([items[3]])
+    assert v.needs_compaction
+    grown = len(v.document().allFormats())
+    v.compact()
+    assert not v.needs_compaction and len(v.document().allFormats()) < grown
+    assert v.toPlainText() == text and v._read_anchor()[:3] == anchor[:3]
+    assert not v.follow
+    block = v.document().firstBlock()
+    ids = []
+    while block.isValid():
+        ids.append(block.userState())
+        block = block.next()
+    assert ids == list(range(80))
+    v.close()
+
+
+def test_rebuild_anchors_to_message_after_earlier_lines_are_trimmed(app):
+    v = ChatView()
+    v.resize(380, 250)
+    items = [(i, f"user{i}: " + "wrapped text " * 8, None) for i in range(100)]
+    v.append_many(items)
+    v.show()
+    app.processEvents()
+    bar = v.verticalScrollBar()
+    bar.setValue(bar.maximum() // 2 + 7)
+    anchor = v._read_anchor()
+    assert not v.follow and anchor[0] > 20
+    v.rebuild(items[20:])
+    assert v._read_anchor()[:3] == anchor[:3]
+    v.close()
+
+
+class ImageReply(ControlledReply):
+    def __init__(self, data=None, parent=None):
+        super().__init__(parent)
+        if data is None:
+            self.setError(QNetworkReply.NetworkError.ConnectionRefusedError, "controlled error")
+        else:
+            self.buffer.extend(bytes(data))
+
+
+def test_transient_image_failure_expires_and_refreshes_existing_line(app, monkeypatch):
+    from types import SimpleNamespace
+    import time
+
+    now = [time.monotonic()]
+    monkeypatch.setattr(chat_view, "time", SimpleNamespace(monotonic=lambda: now[0]))
+    v = ChatView()
+    key = "https://cdn.invalid/emote.png"
+    part = ("emote", key, "Kappa")
+    requests = []
+
+    def get(request):
+        reply = ImageReply(png() if requests else None, v)
+        requests.append(reply)
+        return reply
+
+    monkeypatch.setattr(v.nam, "get", get)
+    v.image_failed.connect(lambda _key: v.update_messages([(7, v._part_html(part), None)]))
+    v.append_many([(7, v._part_html(part), None)])
+    v.show()
+    app.processEvents()
+    assert len(requests) == 1
+    requests[0].finished.emit()
+    app.processEvents()
+    assert key in v.failed and v.toPlainText() == "Kappa"
+    v.loadResource(chat_view.IMAGE_RES, QUrl(key))
+    assert len(requests) == 1  # backoff prevents repeated immediate attempts
+    now[0] += chat_view.IMAGE_RETRY_SECONDS + 1
+    v._image_retry.stop()
+    v._retry_images()
+    app.processEvents()
+    assert len(requests) == 2 and key not in v.failed
+    requests[-1].finished.emit()
+    assert key in v.cache
+    assert key in v.toHtml() and "Kappa" not in v.toPlainText()
+    v.close()
+
+
+def test_negative_image_cache_and_each_retry_batch_are_bounded(app, monkeypatch):
+    from types import SimpleNamespace
+    monkeypatch.setattr(chat_view, "MAX_FAILED", 5)
+    monkeypatch.setattr(chat_view, "RETRY_BATCH", 2)
+    now = [100.0]
+    monkeypatch.setattr(chat_view, "time", SimpleNamespace(monotonic=lambda: now[0]))
+    v = ChatView()
+    for i in range(9):
+        v._failed_image(f"https://cdn.invalid/{i}")
+    assert list(v.failed) == [f"https://cdn.invalid/{i}" for i in range(4, 9)]
+    changed = []
+    v.image_failed.connect(changed.append)
+    now[0] += chat_view.IMAGE_RETRY_SECONDS + 1
+    v.pending.update({"https://slow.invalid/1", "https://slow.invalid/2"})
+    v._image_retry.stop()
+    v._retry_images()
+    assert len(v.failed) == 5 and not changed and v._image_retry.interval() >= 100
+    v.pending.clear()
+    v._image_retry.stop()
+    v._retry_images()
+    assert len(v.failed) == 3 and len(changed) == 2 and v._image_retry.isActive()
+    v.close()

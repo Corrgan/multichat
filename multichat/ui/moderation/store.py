@@ -169,8 +169,18 @@ class UserHistory:
     def of(self, m: ChatMessage) -> list[ChatMessage]:
         return list(self.users.get(self.key(m)) or [])
 
+    @staticmethod
+    def context_key(m: ChatMessage) -> tuple[str, str, str, str]:
+        """The moderation target, separate from the user's cross-channel history."""
+        return m.platform, user_key(m), m.channel, m.source
+
+    def in_context(self, m: ChatMessage) -> list[ChatMessage]:
+        context = self.context_key(m)
+        return [msg for msg in self.of(m) if self.context_key(msg) == context]
+
     def latest(self, m: ChatMessage) -> ChatMessage:
-        hist = self.users.get(self.key(m))
+        """Latest message of this user in the originally chosen channel and source."""
+        hist = self.in_context(m)
         return hist[-1] if hist else m
 
     def apply_deletion(self, ev: Deletion) -> bool:

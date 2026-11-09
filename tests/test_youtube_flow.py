@@ -32,7 +32,7 @@ def test_offline_live_ended_flow(monkeypatch):
     monkeypatch.setenv("MULTICHAT_YT_CHAT", "pytchat")  # this test covers the pytchat path
     monkeypatch.setattr(youtube, "find_live_video", fake_find)
     monkeypatch.setattr(youtube, "YT_POLL", 0.05)
-    monkeypatch.setitem(sys.modules, "pytchat", types.SimpleNamespace(create=lambda **kw: FakeChat()))
+    monkeypatch.setitem(sys.modules, "pytchat", types.SimpleNamespace(create=lambda **kw: FakeChat(), DefaultProcessor=object))
     statuses, msgs = [], []
     real_sleep = asyncio.sleep
 

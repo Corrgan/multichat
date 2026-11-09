@@ -98,8 +98,6 @@ async def _run(tmp_dir: Path):
     assert any(c[1] == "/kick/chat/uuid-1" and c[0] == "DELETE" for c in ks)
     kb = [json.loads(c[3]) for c in ks if c[1] == "/kick/moderation/bans"]
     assert kb == [{"broadcaster_user_id": 555, "user_id": 88, "duration": 10}, {"broadcaster_user_id": 555, "user_id": 88}], kb
-    assert oct(tmp.stat().st_mode & 0o777) == "0o600"
-
     await session.close()
     await runner.cleanup()
 

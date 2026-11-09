@@ -273,6 +273,9 @@ async def run_kick(channel: str, emit: Emit, status: Status, emotes=None) -> Non
                         data = evt.get("data") or "{}"
                         data = json.loads(data) if isinstance(data, str) else data
                         if isinstance(data, dict):
+                            if emotes and name.endswith("ChatMessageEvent"):
+                                # Retry empty/expired/evicted sets without reconnecting.
+                                emotes.schedule_channel("kick", slug, streamer_id)
                             _handle_event(name, data, slug, emit, emotes)
                     except Exception as e:  # noqa: BLE001
                         log.debug("Kick %s: event %s skipped: %s", slug, name, e)

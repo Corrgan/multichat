@@ -7,7 +7,7 @@ from __future__ import annotations
 import asyncio
 import logging
 
-from ..chat import ChatMessage, run_kick, run_twitch, run_youtube
+from ..chat import run_kick, run_twitch, run_youtube
 from ..chat.models import source_key
 from ..core.i18n import _
 from .groups import GroupPanel
@@ -25,8 +25,12 @@ class ConnectionsMixin:
             fut.cancel()
 
     def _emit(self, ev, key: str) -> None:
+        if self._closing:
+            return
         ev.source = key
-        (self.bridge.message if isinstance(ev, ChatMessage) else self.bridge.deletion).emit(ev)
+        wakeup = self._incoming.put(ev)
+        if wakeup:
+            self.bridge.incoming.emit(wakeup == 2)
 
     def connect_key(self, platform: str, value: str) -> None:
         """(Re)connects one channel's chat."""
@@ -119,6 +123,8 @@ class ConnectionsMixin:
                 row.button.setEnabled(connected or bool(row.edit.text().strip()))
 
     def _reader_status(self, key: str, text: str, gen: int) -> None:
+        if self._closing:
+            return
         if gen == self.conn_gen.get(key):  # drop messages from a connection that was already closed
             self.set_status(key, text)
 

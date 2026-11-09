@@ -207,6 +207,7 @@ class GroupsMixin:
         self._update_video()
         for v in self.views():
             v.update_animations()  # hidden tabs pause their animations
+        self._resume_renders()
 
     def _update_titles(self) -> None:
         for i, panel in enumerate(self.panels):
@@ -230,6 +231,7 @@ class GroupsMixin:
             # the channel was changed or its group removed: its chat would run on unseen
             self._stop_reader(key)
             log.info("%s: connection closed (no group shows it any more)", key)
+        self._sync_retained_routes()
         self._update_titles()  # an unnamed group is named after its first channel
         for panel in self.panels:
             if panel.action_bar is not None:

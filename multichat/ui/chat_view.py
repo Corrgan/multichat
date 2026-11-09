@@ -13,14 +13,14 @@ import re
 import time
 from collections import OrderedDict
 
-from PyQt6.QtCore import QBuffer, QByteArray, QIODevice, QSize, Qt, QTimer, QUrl, pyqtSignal
-from PyQt6.QtGui import QColor, QImage, QImageReader, QMovie, QTextBlockFormat, QTextCharFormat, QTextCursor, QTextDocument
-from PyQt6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
+from PyQt6.QtCore import QBuffer, QByteArray, QObject, QPoint, QSize, Qt, QTimer, QUrl, pyqtSignal, pyqtSlot
+from PyQt6.QtGui import QColor, QImage, QMovie, QTextBlockFormat, QTextCharFormat, QTextCursor, QTextDocument
 from PyQt6.QtWidgets import QTextBrowser, QToolButton
 
 from ..chat import alerts
 from ..chat.models import ChatMessage, user_key
 from . import icons
+from .image_io import ImageCache, ImageTransfers, raster_reader, read_scaled
 from ..core.constants import BADGES, BROWSER_UA, FAVICONS
 from ..core.i18n import _
 
@@ -31,6 +31,19 @@ ROLE_ORDER = ("broadcaster", "moderator", "vip", "subscriber", "verified")
 IMAGE_RES = QTextDocument.ResourceType.ImageResource.value
 MAX_IMAGE_BYTES = 4 * 1024 * 1024  # emotes are a few KB – anything bigger is not an emote
 MAX_CACHED = 1500  # distinct images kept in memory
+MAX_CACHE_BYTES = 32 * 1024 * 1024
+MAX_IMAGE_ACTIVE = 8
+MAX_IMAGE_WAITING = 96
+MAX_MOVIES = 128
+MAX_MOVIE_BYTES = 16 * 1024 * 1024  # encoded animation buffers across the view
+MAX_MOVIE_WORKING_BYTES = 32 * 1024 * 1024  # charge source/scratch/scaled surfaces before creating QMovie
+MAX_ANIMATION_FRAMES = 120
+MAX_ANIMATION_PIXELS = 4 * 1024 * 1024  # source pixels across all declared frames
+MAX_ANIMATION_FRAME_BYTES = 16 * 1024 * 1024
+MAX_FAILED = 1500  # negative cache holds URLs/deadlines, never decoded images
+IMAGE_RETRY_SECONDS = 30
+RETRY_BATCH = 32  # spread recovery after a network outage over multiple GUI turns
+FAILURE_NOTIFY_BATCH = 8
 # Qt's HTML import creates a new image object + text format for every <img> (platform icon,
 # role icons, emotes) and only a clear() releases them – ~2-3 KB per chat line that stayed
 # in memory even after the line scrolled out. After this many inserted lines the view is
@@ -63,6 +76,7 @@ class ChatView(QTextBrowser):
 
     def __init__(self) -> None:
         super().__init__()
+        self._closed = False
         self.setOpenLinks(False)
         self.font_px = DEFAULT_FONT
         self.emote_h = EMOTE_H
@@ -72,28 +86,47 @@ class ChatView(QTextBrowser):
         self.own: dict[str, tuple] = {}
         self._icons: dict = {}
         self._apply_style()
-        self.nam = QNetworkAccessManager(self)
-        self.nam.setTransferTimeout(15000)
-        self.cache: OrderedDict[str, QImage] = OrderedDict()  # LRU: least recently shown first
+        self._images = ImageTransfers(self, max_active=MAX_IMAGE_ACTIVE, max_waiting=MAX_IMAGE_WAITING,
+                                      max_bytes=MAX_IMAGE_BYTES, user_agent=BROWSER_UA)
+        self.nam = self._images.nam
+        self._image_connections = [self._images.loaded.connect(self._image_data),
+                                   self._images.failed.connect(self._failed_image)]
+        self.cache = ImageCache()  # LRU with both a count and a byte ceiling
         self.movies: dict[str, tuple[QMovie, QBuffer]] = {}
+        self._movie_bytes = 0
+        self._movie_working_bytes = 0
+        self._movie_costs: dict[str, int] = {}
+        self._movie_resume: dict[str, QTimer] = {}
+        self._movie_connections: dict[str, list] = {}
+        self._playing: set[str] = set()
         self.pending: set[str] = set()
-        self.failed: set[str] = set()
+        self.failed: OrderedDict[str, float] = OrderedDict()
+        self._failure_notifications: OrderedDict[str, None] = OrderedDict()
+        self._failure_timer = QTimer(self, singleShot=True, interval=0)
+        self._timer_connections = [self._failure_timer.timeout.connect(self._emit_image_failures)]
+        self._image_retry = QTimer(self, singleShot=True)
+        self._timer_connections.append(self._image_retry.timeout.connect(self._retry_images))
         self.placeholder = QImage(EMOTE_H, EMOTE_H, QImage.Format.Format_ARGB32)  # resized in set_font_px
         self.placeholder.fill(Qt.GlobalColor.transparent)
         self._relayout = QTimer(self, singleShot=True, interval=120)  # new images change line widths
-        self._relayout.timeout.connect(self._do_relayout)
+        self._timer_connections.append(self._relayout.timeout.connect(self._do_relayout))
         self._repaint = QTimer(self, singleShot=True, interval=FRAME_MS)
-        self._repaint.timeout.connect(self.viewport().update)
+        self._timer_connections.append(self._repaint.timeout.connect(self.viewport().update))
         self._loaded_keys: set[str] = set()  # images loaded since the last relayout
         self._anim = QTimer(self, singleShot=True, interval=200)  # which animations are on screen
-        self._anim.timeout.connect(self.update_animations)
+        self._timer_connections.append(self._anim.timeout.connect(self.update_animations))
 
         # Auto-scroll: follow the newest message until the user scrolls up; scrolling back to
         # the bottom (or the jump button) follows again. Kept as state instead of checking the
         # position before each append – images loading later make the text taller, and a
         # position check would then wrongly count that as "scrolled up".
         self.follow = True
+        self.held = False
         self.unseen = 0
+        # References to the actual displayed messages, bounded by the owning group's
+        # line limit. While paused they survive trimming of the shared live history.
+        self.retained_messages: OrderedDict[int, ChatMessage] = OrderedDict()
+        self._rebuild_anchor: tuple | None = None
         self.inserted = 0  # lines inserted since the last clear() (see COMPACT_AFTER)
         self._programmatic = 0
         bar = self.verticalScrollBar()
@@ -110,6 +143,29 @@ class ChatView(QTextBrowser):
         self.jump.hide()
         self._update_jump()
 
+    def shutdown(self) -> None:
+        """Stop terminal image work before this widget or its window is destroyed."""
+        if self._closed:
+            return
+        self._closed = True
+        for connection in self._image_connections + self._timer_connections:
+            QObject.disconnect(connection)
+        self._image_connections.clear()
+        self._timer_connections.clear()
+        for timer in (self._failure_timer, self._image_retry, self._relayout, self._repaint, self._anim):
+            timer.stop()
+        self._images.shutdown()
+        for key in list(self.movies):
+            self._drop_movie(key)
+        self.pending.clear()
+        self.failed.clear()
+        self._failure_notifications.clear()
+        self._loaded_keys.clear()
+
+    def closeEvent(self, event) -> None:  # noqa: N802
+        self.shutdown()
+        super().closeEvent(event)
+
     # ---- Auto-scroll ------------------------------------------------------ #
     def _at_bottom(self) -> bool:
         bar = self.verticalScrollBar()
@@ -124,11 +180,15 @@ class ChatView(QTextBrowser):
         self._update_jump()
 
     def _on_scroll(self, _value: int) -> None:
+        if self._closed:
+            return
         self._anim.start()
         if not self._programmatic:  # moved by the user (wheel, scrollbar, keys)
             self._set_follow(self._at_bottom())
 
     def _on_range(self, _min: int, _max: int) -> None:
+        if self._closed:
+            return
         if self.follow:
             self.scroll_to_bottom()
 
@@ -143,15 +203,84 @@ class ChatView(QTextBrowser):
 
     def rebuild(self, htmls: list) -> None:
         """Replaces all messages; keeps following, or keeps the position while scrolled up."""
-        bar = self.verticalScrollBar()
-        value = bar.value()
+        anchor = self._rebuild_anchor or self._read_anchor()
+        self._rebuild_anchor = None
         self._programmatic += 1
         try:
             self.clear()
             self.inserted = 0
             self.append_many(htmls)
             if not self.follow:
-                bar.setValue(value)
+                self._restore_anchor(anchor)
+        finally:
+            self._programmatic -= 1
+        if self.follow:
+            self.scroll_to_bottom()
+
+    def retain_messages(self, messages, limit: int, *, replace: bool = False) -> None:
+        if replace:
+            self.retained_messages.clear()
+        for message in messages:
+            self.retained_messages[message.uid] = message
+        while len(self.retained_messages) > limit:
+            self.retained_messages.popitem(last=False)
+
+    def reset_history(self) -> None:
+        """Drop the paused model as well as its document when a group is cleared/reused."""
+        self.retained_messages.clear()
+        self._rebuild_anchor = None
+        self.held = False
+        self.rebuild([])
+        self.scroll_to_bottom()
+        self.unseen = 0
+        self._update_jump()
+
+    def _read_anchor(self) -> tuple:
+        """The character currently at the top, including its offset inside a wrapped line."""
+        cur = self.cursorForPosition(QPoint(0, 0))
+        block = cur.block()
+        return (block.userState(), cur.position() - block.position(), self.cursorRect(cur).top(),
+                self.verticalScrollBar().value())
+
+    def _restore_anchor(self, anchor: tuple) -> None:
+        uid, offset, top, fallback = anchor
+        block = self.document().firstBlock()
+        while uid >= 0 and block.isValid():
+            if block.userState() == uid:
+                cur = QTextCursor(block)
+                cur.setPosition(block.position() + min(offset, block.length() - 1))
+                bar = self.verticalScrollBar()
+                bar.setValue(bar.value() + self.cursorRect(cur).top() - top)
+                return
+            block = block.next()
+        self.verticalScrollBar().setValue(fallback)
+
+    def compact(self) -> None:
+        """Release obsolete Qt formats while preserving exactly the displayed messages.
+
+        A paused view can contain older lines no longer in the shared history. Rebuilding
+        from that history would replace the passage being read, so reimport this document.
+        """
+        doc = self.document()
+        content = doc.toHtml()
+        ids = []
+        block = doc.firstBlock()
+        while block.isValid():
+            ids.append(block.userState())
+            block = block.next()
+        anchor = self._read_anchor()
+        self._programmatic += 1
+        try:
+            self.setHtml(content)
+            block = doc.firstBlock()
+            for uid in ids:
+                if not block.isValid():
+                    break
+                block.setUserState(uid)
+                block = block.next()
+            self.inserted = doc.blockCount() if not doc.isEmpty() else 0
+            if not self.follow:
+                self._restore_anchor(anchor)
         finally:
             self._programmatic -= 1
         if self.follow:
@@ -181,6 +310,8 @@ class ChatView(QTextBrowser):
         self._update_jump()
 
     def loadResource(self, rtype, url: QUrl):  # noqa: N802
+        if self._closed and int(getattr(rtype, "value", rtype)) == IMAGE_RES:
+            return self.placeholder
         if int(getattr(rtype, "value", rtype)) == IMAGE_RES and url.scheme() == "mcicon":
             # drawn role/alert icons (emoji fonts can't be relied on)
             name = url.path()
@@ -198,18 +329,15 @@ class ChatView(QTextBrowser):
                 return img
             if _allowed_url(url) and key not in self.pending and key not in self.failed:
                 self.pending.add(key)
-                req = QNetworkRequest(url)
-                req.setHeader(QNetworkRequest.KnownHeaders.UserAgentHeader, BROWSER_UA)
-                reply = self.nam.get(req)
-                reply.downloadProgress.connect(lambda got, _total, r=reply: got > MAX_IMAGE_BYTES and r.abort())
-                reply.finished.connect(lambda r=reply, k=key: self._loaded(r, k))
+                if not self._images.request(key):
+                    self._failed_image(key)
             return self.placeholder
         return super().loadResource(rtype, url)
 
     # ---- Images ---------------------------------------------------------- #
     def _target_size(self, size: QSize) -> QSize:
         """Size in device pixels for the line height (keeps the aspect ratio)."""
-        h = max(1, round(self.emote_h * self.devicePixelRatioF()))
+        h = min(256, max(1, round(self.emote_h * self.devicePixelRatioF())))
         w = max(1, round(size.width() * h / max(1, size.height())))
         return QSize(min(w, h * 6), h)
 
@@ -219,72 +347,190 @@ class ChatView(QTextBrowser):
         out.setDevicePixelRatio(self.devicePixelRatioF())
         return out
 
-    def _loaded(self, reply: QNetworkReply, key: str) -> None:
+    def _failed_image(self, key: str) -> None:
+        if self._closed:
+            return
         self.pending.discard(key)
-        data = reply.readAll() if reply.error() == QNetworkReply.NetworkError.NoError else QByteArray()
-        reply.deleteLater()
+        self.failed.pop(key, None)
+        self.failed[key] = time.monotonic() + IMAGE_RETRY_SECONDS
+        while len(self.failed) > MAX_FAILED:
+            self.failed.popitem(last=False)
+        self._schedule_image_retry()
+        # loadResource runs inside Qt's HTML importer: don't reenter that importer
+        # or enqueue a separate Qt event for every URL rejected under a burst.
+        self._failure_notifications[key] = None
+        while len(self._failure_notifications) > MAX_FAILED:
+            self._failure_notifications.popitem(last=False)
+        if not self._failure_timer.isActive():
+            self._failure_timer.start()
+
+    def _emit_image_failures(self) -> None:
+        if self._closed:
+            return
+        for _ in range(min(FAILURE_NOTIFY_BATCH, len(self._failure_notifications))):
+            key, _value = self._failure_notifications.popitem(last=False)
+            self.image_failed.emit(key)
+        if self._failure_notifications:
+            self._failure_timer.start()
+
+    def _image_data(self, key: str, data: QByteArray) -> None:
+        if self._closed:
+            return
+        self.pending.discard(key)
         img = self._decode(key, data) if 0 < data.size() <= MAX_IMAGE_BYTES else None
         if img is None:
-            self.failed.add(key)
-            self.image_failed.emit(key)
+            self._failed_image(key)
             return
+        self.failed.pop(key, None)
         self._store(key, img)
         self._loaded_keys.add(key)
         self._relayout.start()
-        self._anim.start()
+        if not self._anim.isActive():
+            self._anim.start()
+
+    def _schedule_image_retry(self) -> None:
+        if self._closed:
+            return
+        if self.failed and not self._image_retry.isActive():
+            delay = next(iter(self.failed.values())) - time.monotonic()
+            # Recovery must not add a new request queue while earlier downloads are slow.
+            minimum = 100 if len(self.pending) >= RETRY_BATCH else 1
+            self._image_retry.start(max(minimum, round(delay * 1000)))
+
+    def _retry_images(self) -> None:
+        """Expire a bounded batch and refresh existing text fallbacks through the usual path."""
+        if self._closed:
+            return
+        now = time.monotonic()
+        expired = []
+        capacity = max(0, RETRY_BATCH - len(self.pending))
+        for key, deadline in self.failed.items():
+            if deadline > now or len(expired) >= capacity:
+                break
+            expired.append(key)
+        for key in expired:
+            self.failed.pop(key, None)
+            self.document().addResource(IMAGE_RES, QUrl(key), None)
+        for key in expired:
+            self.image_failed.emit(key)  # reintroduces <img> for matching displayed messages
+        # Qt may keep the old placeholder in its layout cache after reimporting a line.
+        # Explicitly load only expired URLs still present in this document, not old history.
+        wanted = set(expired)
+        block = self.document().firstBlock()
+        while wanted and block.isValid():
+            for key in self._block_images(block) & wanted:
+                self.loadResource(IMAGE_RES, QUrl(key))
+                wanted.remove(key)
+            block = block.next()
+        self._schedule_image_retry()
 
     def _decode(self, key: str, data: QByteArray) -> QImage | None:
-        buf = QBuffer()
-        buf.setData(data)
-        buf.open(QIODevice.OpenModeFlag.ReadOnly)
-        reader = QImageReader(buf)
-        animated = reader.supportsAnimation() and reader.imageCount() != 1
+        if self._closed:
+            return None
+        checked = raster_reader(data)
+        if checked is None:
+            return None
+        reader, buf = checked
         first_size = reader.size()
-        buf.seek(0)
-        if animated and first_size.isValid():
+        count = reader.imageCount() if reader.supportsAnimation() else 1
+        target = self._target_size(first_size)
+        working = (first_size.width() * first_size.height() * 3 + target.width() * target.height() * 2) * 4
+        animated = (1 < count <= MAX_ANIMATION_FRAMES
+                    and first_size.width() * first_size.height() * count <= MAX_ANIMATION_PIXELS
+                    and target.width() * target.height() * count * 4 <= MAX_ANIMATION_FRAME_BYTES
+                    and len(self.movies) < MAX_MOVIES
+                    and self._movie_bytes + data.size() <= MAX_MOVIE_BYTES
+                    and self._movie_working_bytes + working <= MAX_MOVIE_WORKING_BYTES)
+        if animated:
+            buf.seek(0)
             movie = QMovie(buf, QByteArray(), self)
-            movie.setScaledSize(self._target_size(first_size))
-            movie.setCacheMode(QMovie.CacheMode.CacheAll)
+            buf.setParent(movie)
+            movie.setScaledSize(target)
+            movie.setCacheMode(QMovie.CacheMode.CacheNone)
             if movie.isValid() and movie.jumpToFrame(0):
-                movie.frameChanged.connect(lambda _n, k=key: self._next_frame(k))
+                self._drop_movie(key)
+                movie.setProperty("multichat_movie_key", key)
+                frame_connection = movie.frameChanged.connect(self._movie_frame_changed)
                 self.movies[key] = (movie, buf)
-                movie.start()
+                self._movie_bytes += buf.size()
+                self._movie_costs[key] = working
+                self._movie_working_bytes += working
+                resume = self._movie_resume[key] = QTimer(movie, singleShot=True)
+                resume.setProperty("multichat_movie_key", key)
+                self._movie_connections[key] = [frame_connection, resume.timeout.connect(self._movie_timeout)]
+                # Frame zero is enough until visibility selection starts at most MAX_ANIMATED.
                 frame = movie.currentImage()
                 frame.setDevicePixelRatio(self.devicePixelRatioF())
                 return frame
             movie.deleteLater()
-        img = QImage()
-        return self._scaled(img) if img.loadFromData(data) else None
+            return None
+        image = read_scaled(reader, target)
+        return self._scaled(image) if image is not None else None
+
+    def _drop_movie(self, key: str) -> None:
+        entry = self.movies.pop(key, None)
+        if entry:
+            movie, buffer = entry
+            self._movie_bytes -= buffer.size()
+            self._movie_working_bytes -= self._movie_costs.pop(key)
+            self._playing.discard(key)
+            for connection in self._movie_connections.pop(key):
+                QObject.disconnect(connection)
+            self._movie_resume.pop(key).stop()
+            movie.stop()
+            movie.deleteLater()
+
+    @pyqtSlot(int)
+    def _movie_frame_changed(self, _number: int) -> None:
+        if not self._closed and (sender := self.sender()) is not None:
+            self._next_frame(sender.property("multichat_movie_key"))
+
+    @pyqtSlot()
+    def _movie_timeout(self) -> None:
+        if not self._closed and (sender := self.sender()) is not None:
+            self._resume_movie(sender.property("multichat_movie_key"))
 
     def _next_frame(self, key: str) -> None:
+        if self._closed:
+            return
         entry = self.movies.get(key)
         if not entry:
             return
         frame = entry[0].currentImage()
         frame.setDevicePixelRatio(self.devicePixelRatioF())
-        self.cache[key] = frame
-        self.document().addResource(IMAGE_RES, QUrl(key), frame)
+        self._store(key, frame)
+        if key in self.movies:
+            movie = entry[0]
+            delay = movie.nextFrameDelay()
+            if movie.state() == QMovie.MovieState.Running and delay < FRAME_MS:
+                movie.setPaused(True)
+                self._movie_resume[key].start(max(1, FRAME_MS - max(0, delay)))
         if not self._repaint.isActive():
             self._repaint.start()  # same size → a repaint is enough, no re-layout
 
+    def _resume_movie(self, key: str) -> None:
+        if self._closed:
+            return
+        if key in self._playing and key in self.movies:
+            self.movies[key][0].setPaused(False)
+
     def _store(self, key: str, img: QImage) -> None:
+        if self._closed:
+            return
         self.cache[key] = img
         self.document().addResource(IMAGE_RES, QUrl(key), img)
-        while len(self.cache) > MAX_CACHED:
+        while len(self.cache) > MAX_CACHED or self.cache.byte_size > MAX_CACHE_BYTES:
             old, _img = self.cache.popitem(last=False)
             # the document keeps its own reference – drop it as well, or the limit only applies
             # to this dict (an invalid value makes the document ask loadResource() again)
             self.document().addResource(IMAGE_RES, QUrl(old), None)
-            entry = self.movies.pop(old, None)
-            if entry:
-                entry[0].stop()
-                entry[0].deleteLater()
+            self._drop_movie(old)
 
     def touch(self, key: str) -> None:
         """Marks an image as just shown (least recently shown ones leave the cache first)."""
-        if key in self.cache:
+        if not self._closed and key in self.cache:
             self.cache.move_to_end(key)
-            if key in self.movies:
+            if key in self.movies and not self._anim.isActive():
                 self._anim.start()
 
     # ---- What is on screen ------------------------------------------------ #
@@ -312,27 +558,31 @@ class ChatView(QTextBrowser):
     def update_animations(self) -> None:
         """Only emotes on screen are animated – off-screen ones, or all of them while the window
         is minimised or hidden, are paused (each running animation repaints the chat)."""
-        if not self.movies:
+        if self._closed or not self.movies:
             return
         win = self.window()
         active = self.isVisible() and not win.isMinimized()
         visible = self._visible_images() if active else set()
-        playing = 0
+        self._playing = set([key for key in reversed(self.cache) if key in visible and key in self.movies][:MAX_ANIMATED])
+        # Release old slots before starting newly visible movies, even within this GUI turn.
         for key, (movie, _buf) in self.movies.items():
-            run = key in visible and playing < MAX_ANIMATED
-            playing += run
+            if key not in self._playing:
+                self._movie_resume[key].stop()
+                if movie.state() == QMovie.MovieState.Running:
+                    movie.setPaused(True)
+        for key in self._playing:
+            movie = self.movies[key][0]
             state = movie.state()
-            if run and state != QMovie.MovieState.Running:
+            if state != QMovie.MovieState.Running:
                 if state == QMovie.MovieState.NotRunning:
                     movie.start()
-                else:
+                elif not self._movie_resume[key].isActive():
                     movie.setPaused(False)
-            elif not run and state == QMovie.MovieState.Running:
-                movie.setPaused(True)
 
     def showEvent(self, event) -> None:  # noqa: N802
         super().showEvent(event)
-        self._anim.start()
+        if not self._closed:
+            self._anim.start()
 
     def hideEvent(self, event) -> None:  # noqa: N802
         super().hideEvent(event)
@@ -341,6 +591,8 @@ class ChatView(QTextBrowser):
     def _do_relayout(self) -> None:
         """Newly loaded images change line heights – lay out just the lines that show them
         (relaying out the whole chat took ~40 ms each time a batch of emotes arrived)."""
+        if self._closed:
+            return
         keys, self._loaded_keys = self._loaded_keys, set()
         doc = self.document()
         block = doc.lastBlock()
@@ -451,14 +703,14 @@ class ChatView(QTextBrowser):
         px = max(FONT_RANGE[0], min(FONT_RANGE[1], int(px)))
         if px == self.font_px:
             return
+        if not self.follow and self._rebuild_anchor is None:
+            self._rebuild_anchor = self._read_anchor()
         self.font_px = px
         self.emote_h = round(EMOTE_H * px / DEFAULT_FONT)
         self.placeholder = QImage(self.emote_h, self.emote_h, QImage.Format.Format_ARGB32)
         self.placeholder.fill(Qt.GlobalColor.transparent)
-        for movie, _buf in self.movies.values():
-            movie.stop()
-            movie.deleteLater()
-        self.movies.clear()
+        for key in list(self.movies):
+            self._drop_movie(key)
         self.cache.clear()
         self._programmatic += 1
         try:
