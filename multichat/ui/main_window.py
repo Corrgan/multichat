@@ -9,7 +9,6 @@ import os
 import re
 import sys
 import threading
-import time
 from collections import OrderedDict
 from concurrent.futures import Future
 from pathlib import Path
@@ -24,16 +23,16 @@ from PyQt6.QtWidgets import (
     QPushButton, QSplitter, QStyle, QTabBar, QToolButton, QVBoxLayout, QWidget,
 )
 
-from ..accounts import ApiError, KickAccount, SecretStore, TwitchAccount, YouTubeAccount
+from ..accounts import KickAccount, SecretStore, TwitchAccount, YouTubeAccount
 from ..accounts.store import choose_backend
-from ..chat import ChatMessage, Deletion, EmoteStore
+from ..chat import ChatMessage, EmoteStore
 from ..core import i18n
 from ..core.config import CONF_DIR, OVERLAY_PORT, clean_groups, load_config, load_config_apps, save_config
 from .. import __version__ as APP_VERSION
-from ..core.constants import FAVICONS, LOGIN_DOCS, NAMES, PLATFORMS, REPO_SLUG, REPO_URL, version_tuple
+from ..core.constants import LOGIN_DOCS, NAMES, PLATFORMS, REPO_SLUG, REPO_URL, version_tuple
 from ..core.i18n import _
 from ..core.logsetup import LOG_DIR, LOG_FILE, asyncio_exception_handler, set_debug, tail
-from ..overlay.server import OverlayServer, deletion_payload, message_payload
+from ..overlay.server import OverlayServer
 from ..video.player import load_mpv
 from ..video.tiles import AudioHub
 from .chat_view import DEFAULT_FONT, own_pattern
@@ -45,13 +44,13 @@ from .moderation import ModActions, ModNotes
 from .watchdog import Watchdog
 from .window_connections import ConnectionsMixin
 from .window_groups import MAX_MESSAGES, GroupsMixin
+from .window_messages import FLUSH_MS, MessagesMixin
+from .window_send import SendMixin
 from ..core.config import MAX_GROUPS
 
 log = logging.getLogger("multichat")
 
 
-TRIM_STEP = 100  # new messages between two trims of the message list
-FLUSH_MS = 100  # incoming messages are shown in batches – busy chats send hundreds per second
 MAX_INPUT = 500  # longest message the platforms accept
 
 
@@ -67,7 +66,11 @@ class Bridge(QObject):
     update = pyqtSignal(str, str)  # newer version, release page
 
 
-class MainWindow(GroupsMixin, ConnectionsMixin, QMainWindow):
+class MainWindow(GroupsMixin, ConnectionsMixin, MessagesMixin, SendMixin, QMainWindow):
+    """The window itself: construction, menus, settings, accounts, overlay, shutdown. The
+    rest lives in the mixins: groups (window_groups), chat connections (window_connections),
+    the message pipeline (window_messages) and the send line (window_send)."""
+
     def __init__(self, config: dict | None = None) -> None:
         super().__init__()
         self.setWindowTitle("MultiChat")
@@ -448,199 +451,7 @@ class MainWindow(GroupsMixin, ConnectionsMixin, QMainWindow):
         if visible:
             self.show()
 
-    # ---- Connecting ------------------------------------------------------ #
-    def msg_html(self, m: ChatMessage) -> str:
-        return self.view.message_html(m)
-
-    def known_messages(self):
-        """Bounded union of live history and passages still displayed in paused groups."""
-        seen = set()
-        for messages in (self.messages, *(v.retained_messages for v in self.views())):
-            for uid, message in messages.items():
-                if uid not in seen:
-                    seen.add(uid)
-                    yield message
-
-    def message_by_uid(self, uid: int) -> ChatMessage | None:
-        message = self.messages.get(uid)
-        if message is not None:
-            return message
-        return next((v.retained_messages[uid] for v in self.views() if uid in v.retained_messages), None)
-
-    def _sync_retained_routes(self) -> None:
-        """Remove a departed source from the paused model before it can be rebuilt."""
-        for panel in self.panels:
-            view = panel.view
-            removed = [uid for uid, message in view.retained_messages.items() if panel not in self.panels_for(message)]
-            if not removed:
-                continue
-            for uid in removed:
-                del view.retained_messages[uid]
-            if not view.retained_messages:
-                view.reset_history()  # a replacement source starts following immediately
-            self.render_all(panel)
-
-    def add_message(self, msg: ChatMessage) -> None:
-        """Queues a message; _flush_messages shows the batch (one layout pass instead of one per message)."""
-        if self._closing:
-            return
-        self._incoming.put(msg)
-        self._schedule_flush()
-
-    def _schedule_flush(self, urgent: bool = False) -> None:
-        if self._closing:
-            return
-        if urgent:
-            self._flush_timer.stop()
-            self._flush_messages()
-            return
-        if not self._flush_timer.isActive():
-            self._flush_timer.start(FLUSH_MS)
-
-    def _flush_messages(self) -> None:
-        if self._closing:
-            return
-        events = self._incoming.take(MAX_MESSAGES)
-        if not events:
-            return
-        if len(self._incoming):
-            self._flush_timer.start(0)  # yield to Qt between bounded batches
-        if self._incoming.dropped > self._reported_drops and time.monotonic() >= self._loss_report_at:
-            dropped = self._incoming.dropped - self._reported_drops
-            self._reported_drops = self._incoming.dropped
-            self._loss_report_at = time.monotonic() + 5
-            log.warning("Chat overloaded: dropped %d events (%d total)", dropped, self._incoming.dropped)
-            self.statusBar().showMessage(_("Chat overloaded: {n} events dropped").format(n=dropped), 5000)
-        batch = []
-        for msg in events:
-            if isinstance(msg, Deletion):
-                self._apply_deletion(msg)
-                continue
-            batch.append(msg)
-            self.messages[msg.uid] = msg
-            if self.overlay.running:
-                groups = [i + 1 for i, pn in enumerate(self.panels) if pn in self.panels_for(msg)]
-                self.overlay.publish(message_payload(msg, self.view.alerts_cfg, groups))
-            self.mod.observe(msg)
-        self._msg_count += len(batch)
-        if len(self.messages) > self._trim_at:
-            self._trim_messages()
-        visible = self._visible_panels()
-        for panel in self.panels:
-            shown = [m for m in batch if self.filters[m.platform].isChecked() and panel in self.panels_for(m)]
-            if not shown:
-                continue
-            if panel not in visible:  # counter on the tab
-                panel.unread += len(shown)
-                panel.mentions += sum(panel.view.mentions_me(m) for m in shown)
-            v = panel.view
-            if not v.follow:
-                # scrolled up: the view stays as it is (appending would also drop lines at the top and
-                # move the text you are reading); everything is shown when you return to the bottom
-                v.note_unseen(len(shown))
-                v.held = True
-                continue
-            if self._rerender_due(panel):
-                continue  # a full re-render is due anyway
-            v.retain_messages(shown, MAX_MESSAGES)
-            v.append_many(v.items(shown))  # scrolls along
-            if v.needs_compaction:
-                self.render_all(panel)  # empties Qt's per-image format list (see COMPACT_AFTER)
-        if any(p not in visible for p in self.panels):
-            self._update_titles()
-
-    def _trim_messages(self) -> None:
-        """Keeps the union of every group's last MAX_MESSAGES messages – what a full re-render
-        (filter, font size) shows. A message stays as long as one of its groups still counts
-        it among its newest; groups sharing a channel never cost each other newer lines.
-        Runs every TRIM_STEP new messages."""
-        left = {id(pn): MAX_MESSAGES for pn in self.panels}
-        keep = set()
-        for uid in reversed(self.messages):  # newest first
-            m = self.messages[uid]
-            for pn in self.panels_for(m):
-                if left.get(id(pn), 0) > 0:
-                    left[id(pn)] -= 1
-                    keep.add(uid)
-            if not any(left.values()):
-                break
-        if len(keep) < len(self.messages):  # also drops messages no group shows any more
-            self.messages = OrderedDict((u, m) for u, m in self.messages.items() if u in keep)
-        self._trim_at = len(self.messages) + TRIM_STEP
-
-    def render_all(self, panel: GroupPanel | None = None) -> None:
-        """Requests a full re-render (filters, deletions, failed images) of all groups or of
-        one; coalesced. Hidden tabs wait until shown; visible groups yield between rebuilds."""
-        if self._closing:
-            return
-        if panel is None:
-            self._rerender = None
-        elif self._rerender is not None:
-            self._rerender.add(panel)
-        self._render_timer.start()
-
-    def _rerender_due(self, panel: GroupPanel) -> bool:
-        return panel in self._render_pending or (
-            self._render_timer.isActive() and (self._rerender is None or panel in self._rerender))
-
-    def _follow_changed(self, panel: GroupPanel, following: bool) -> None:
-        if following and (panel.view.held or panel.view.retained_messages):
-            # Filters can have hidden all arriving lines, so `held` alone is not enough
-            # to know whether the pinned model differs from the current live history.
-            panel.view.held = False
-            self.render_all(panel)  # only this group missed lines
-
-    def _render_now(self) -> None:
-        due, self._rerender = self._rerender, set()
-        self._render_pending.update(self.panels if due is None else due)
-        self._flush_messages()
-        self._render_step()
-
-    def _resume_renders(self) -> None:
-        if self._render_pending.intersection(self._visible_panels()):
-            self._render_step_timer.start()
-
-    def _render_step(self) -> None:
-        """At most one bounded document rebuild per Qt event-loop turn."""
-        self._render_pending.intersection_update(self.panels)
-        panel = next((p for p in self._visible_panels() if p in self._render_pending), None)
-        if panel is None:
-            return
-        self._render_pending.discard(panel)
-        v = panel.view
-        if v.follow:
-            v.held = False
-            messages = [m for m in self.messages.values()
-                        if self.filters[m.platform].isChecked() and panel in self.panels_for(m)][-MAX_MESSAGES:]
-            v.retain_messages(messages, MAX_MESSAGES, replace=True)
-        else:
-            messages = [m for m in v.retained_messages.values()
-                        if self.filters[m.platform].isChecked() and panel in self.panels_for(m)]
-        v.rebuild(v.items(messages))
-        self._resume_renders()
-
-    def apply_deletion(self, ev: Deletion) -> None:
-        if self._closing:
-            return
-        self._incoming.put(ev)
-        self._flush_messages()  # queued messages/deletions retain per-source order
-
-    def _apply_deletion(self, ev: Deletion) -> None:
-        changed = []
-        for m in self.known_messages():
-            if m.platform != ev.platform or m.deleted:
-                continue
-            if ev.source and m.source and m.source != ev.source:
-                continue  # a ban in one channel doesn't touch another channel of the platform
-            if ev.clear_all or (ev.msg_id and m.msg_id == ev.msg_id) or (ev.user_id and m.user_id == ev.user_id):
-                m.deleted = True
-                changed.append(m)
-        self.overlay.publish(deletion_payload(ev))
-        self.mod.apply_deletion(ev)
-        if changed:
-            self.update_lines(changed)
-            self.mod.history_changed.emit()
-
+    # ---- Statistics, window state ---------------------------------------- #
     def _perf_stats(self) -> dict:
         """For the verbose log's minute summary (see watchdog.py)."""
         n, self._msg_count = self._msg_count, 0
@@ -661,48 +472,11 @@ class MainWindow(GroupsMixin, ConnectionsMixin, QMainWindow):
                 stats[f"{name} ms/frame"] = round(ms / frames, 1)
         return stats
 
-    def _image_failed(self, key: str) -> None:
-        if any(key in urls for urls in FAVICONS.values()):  # platform icon: every line shows it
-            self.render_all()
-        else:
-            self.update_lines([m for m in self.known_messages() if any(p[1] == key for p in m.parts)])
-
     def changeEvent(self, event) -> None:  # noqa: N802
         super().changeEvent(event)
         if event.type() == QEvent.Type.WindowStateChange:
             for v in self.views():
                 v.update_animations()  # minimised: animations pause
-
-    def update_lines(self, msgs) -> None:
-        """Re-renders just these messages' lines (busy chats delete and time out all the time –
-        rebuilding the whole view each time made the window stutter)."""
-        if self._closing:
-            return
-        msgs = list(msgs)
-        for panel in self.panels:
-            if self._rerender_due(panel):
-                continue  # a full re-render of this group is due anyway
-            shown = [m for m in msgs if self.filters[m.platform].isChecked() and panel in self.panels_for(m)
-                     and (panel.view.follow or m.uid in panel.view.retained_messages)]
-            if len(shown) > 200:  # e.g. "clear chat": one rebuild is cheaper
-                self.render_all(panel)
-                continue
-            if shown:
-                panel.view.update_messages(panel.view.items(shown))
-                if panel.view.needs_compaction:
-                    panel.view.compact()
-
-    def set_selected_user(self, key) -> None:
-        """Highlight of the selected user's name in every group."""
-        for v in self.views():
-            v.selected = key
-
-    def clear_chat(self) -> None:
-        self._incoming.clear()
-        self.messages.clear()
-        self._trim_at = MAX_MESSAGES
-        for v in self.views():
-            v.reset_history()
 
     # ---- Moderation (logic in moderation/actions.py) ---------------------- #
     def on_anchor(self, url: QUrl) -> None:
@@ -717,116 +491,6 @@ class MainWindow(GroupsMixin, ConnectionsMixin, QMainWindow):
         if msg:
             self.mod.select(msg)
             self.mod.menu(msg)
-
-    def mention(self, msg: ChatMessage) -> None:
-        if self.target.isEnabled():
-            idx = self.target.findData(msg.source)
-            if idx >= 0:
-                self.target.setCurrentIndex(idx)
-        self.input.setText(f"@{msg.user} {self.input.text()}")
-        self.input.setFocus()
-
-    # ---- Sending --------------------------------------------------------- #
-    def _send_options(self) -> list[tuple[str, str, str, str]]:
-        """(key, platform, channel, label) of the active group's channels you are logged in for."""
-        return [(r.key(), r.platform, r.value(), NAMES[r.platform]) for r in self.active_panel().all_rows()
-                if r.key() and self.accounts[r.platform].logged_in]
-
-    def _refresh_targets(self) -> None:
-        if not hasattr(self, "target"):
-            return
-        current = self.target.currentData()
-        self.target.blockSignals(True)
-        self.target.clear()
-        options = self._send_options()
-        if len(options) > 1:
-            self.target.addItem(_("All in this group"), None)
-        for key, _p, _c, label in options:
-            self.target.addItem(label, key)
-        idx = self.target.findData(current)
-        if idx >= 0:
-            self.target.setCurrentIndex(idx)
-        self.target.blockSignals(False)
-        logged = any(self.accounts[p].logged_in for p in PLATFORMS)
-        enabled = bool(options)
-        for w in (self.target, self.input, self.send_btn):
-            w.setEnabled(enabled)
-        if enabled:
-            self.input.setPlaceholderText(_("Send a message … (: for emotes)"))
-            self._load_send_emotes()
-        elif logged:
-            self.input.setPlaceholderText(_("Enter a channel of a platform you are logged in to"))
-        else:
-            self.input.setPlaceholderText(_("Log in under “Accounts” to send and moderate"))
-
-    def _send_emotes(self) -> dict[str, str]:
-        """Emotes for the suggestions: the ones usable in the chosen send target(s) – your
-        Twitch emotes there, plus 7TV/BTTV/FFZ of the channel and global ones."""
-        target = self.target.currentData()
-        out: dict[str, str] = {}
-        for key, platform, channel, _label in self._send_options():
-            if target in (None, key):
-                out.update(self.emotes.available(platform, channel))
-                out.update(self._native_emotes.get(key, {}))
-        return out
-
-    def _load_send_emotes(self) -> None:
-        """Fetches the Twitch emotes you can use in the active group's Twitch channel (once)."""
-        for key, platform, channel, _label in self._send_options():
-            if platform != "twitch" or key in self._native_emotes or key in self._native_loading:
-                continue
-            self._native_loading.add(key)
-            generation = self.accounts["twitch"].session_gen
-
-            def current(generation=generation) -> bool:
-                return generation == self._native_session == self.accounts["twitch"].session_gen
-
-            def done(result, key=key, current=current) -> None:
-                if not current():
-                    return
-                self._native_loading.discard(key)
-                emotes, complete = result
-                self._native_emotes[key] = dict(emotes)
-                if not complete and not self._native_hint:
-                    self._native_hint = True
-                    self.statusBar().showMessage(
-                        _("Log in to Twitch again to get suggestions for all your emotes (subscriptions included)"), 10000)
-
-            def failed(key=key, current=current) -> None:
-                if not current():
-                    return
-                self._native_loading.discard(key)
-                self._native_emotes[key] = {}  # not again until the next login
-
-            self.run(self.accounts["twitch"].usable_emotes(channel), then=done, on_error=failed, quiet=True)
-
-    def send(self) -> None:
-        text = self.input.text().strip()
-        if not text:
-            return
-        target = self.target.currentData()
-        options = [o for o in self._send_options() if target in (None, o[0])]
-        for _key, platform, channel, label in options:
-            self.run(self.send_to(platform, channel, text),
-                     label=_("Sent to {platform}").format(platform=f"{label} · {channel}"))
-        if options:
-            self.input.clear()
-
-    async def send_to(self, platform: str, channel: str, text: str) -> None:
-        try:
-            await self.accounts[platform].send(channel, text)
-        except ApiError as e:
-            if e.status != 403:
-                raise
-            # the platforms only say "Forbidden" – explain the usual causes
-            raise ApiError(
-                _(
-                    "{platform} rejected the message ({error}). The chat may be restricted (followers or "
-                    "subscribers only, slow mode, verified accounts only) or the developer app lacks the "
-                    "permission to send."
-                ).format(platform=NAMES[platform], error=e),
-                status=403,
-            ) from e
 
     # ---- Accounts -------------------------------------------------------- #
     def refresh_accounts(self) -> None:

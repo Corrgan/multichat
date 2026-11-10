@@ -591,7 +591,7 @@ def test_video_settings_stay_bounded():
 
 
 def test_busy_group_does_not_push_out_a_quiet_one(window, app, monkeypatch):
-    from multichat.ui import main_window as mw
+    from multichat.ui import window_messages as mw
 
     monkeypatch.setattr(mw, "MAX_MESSAGES", 50)
     monkeypatch.setattr(mw, "TRIM_STEP", 10)
@@ -669,7 +669,7 @@ def test_tiles_are_cleaned_up_in_every_group(window, monkeypatch):
 def test_overlapping_groups_keep_each_groups_newest(window, monkeypatch):
     """Group A: shared + busy channel, group B: only the shared one. A keeps its newest 50,
     B its shared lines – no newer lines of A make room for older shared ones."""
-    from multichat.ui import main_window as mw
+    from multichat.ui import window_messages as mw
 
     monkeypatch.setattr(mw, "MAX_MESSAGES", 50)
     monkeypatch.setattr(mw, "TRIM_STEP", 10)
