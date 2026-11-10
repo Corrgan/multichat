@@ -134,7 +134,7 @@ def test_falls_back_to_pytchat(monkeypatch):
 
     monkeypatch.delenv("MULTICHAT_YT_CHAT", raising=False)
     monkeypatch.setattr(it.InnertubeChat, "run", broken)
-    monkeypatch.setitem(sys.modules, "pytchat", types.SimpleNamespace(create=lambda **kw: FakeChat()))
+    monkeypatch.setitem(sys.modules, "pytchat", types.SimpleNamespace(create=lambda **kw: FakeChat(), DefaultProcessor=object))
     got = []
     asyncio.run(youtube._read_chat("vid12345678", got.append, None, lambda: None))
     assert [m.text for m in got] == ["via pytchat"]

@@ -9,7 +9,9 @@ import os
 import re
 import sys
 import threading
+import time
 from collections import OrderedDict
+from concurrent.futures import Future
 from pathlib import Path
 
 import aiohttp
@@ -37,11 +39,13 @@ from ..video.tiles import AudioHub
 from .chat_view import DEFAULT_FONT, own_pattern
 from .emote_complete import EmoteCompleter
 from .groups import GroupPanel
+from .incoming import IncomingEvents
 from .dialogs import AboutDialog, AlertsDialog, AppsDialog
 from .moderation import ModActions, ModNotes
 from .watchdog import Watchdog
 from .window_connections import ConnectionsMixin
 from .window_groups import MAX_MESSAGES, GroupsMixin
+from ..core.config import MAX_GROUPS
 
 log = logging.getLogger("multichat")
 
@@ -56,6 +60,7 @@ class Bridge(QObject):
 
     message = pyqtSignal(object)
     deletion = pyqtSignal(object)
+    incoming = pyqtSignal(bool)  # coalesced mailbox wakeup; True makes moderation urgent
     status = pyqtSignal(str, str, int)  # source key ("twitch:channel"), text, connection generation
     result = pyqtSignal(object, object)
     login_url = pyqtSignal(str)  # login link to show when no browser could be opened
@@ -74,12 +79,15 @@ class MainWindow(GroupsMixin, ConnectionsMixin, QMainWindow):
         self.bridge = Bridge()
         self.bridge.message.connect(self.add_message)
         self.bridge.deletion.connect(self.apply_deletion)
+        self.bridge.incoming.connect(self._schedule_flush)
         self.bridge.status.connect(self._reader_status)
         self.bridge.result.connect(self._on_result)
 
         self.loop = asyncio.new_event_loop()
         self.loop.set_exception_handler(asyncio_exception_handler)
-        threading.Thread(target=self.loop.run_forever, daemon=True).start()
+        self._loop_thread = threading.Thread(target=self.loop.run_forever, daemon=True)
+        self._loop_thread.start()
+        self._closing = False
         self.session = asyncio.run_coroutine_threadsafe(self._make_session(), self.loop).result()
 
         backend, files = choose_backend(CONF_DIR)
@@ -104,12 +112,17 @@ class MainWindow(GroupsMixin, ConnectionsMixin, QMainWindow):
         self._route: dict[str, list[GroupPanel]] = {}  # source key → groups that show it
         self.messages: OrderedDict[int, ChatMessage] = OrderedDict()
         self._trim_at = MAX_MESSAGES  # message count that triggers the next _trim_messages()
-        self._incoming: list[ChatMessage] = []
+        self._incoming = IncomingEvents(MAX_MESSAGES, MAX_MESSAGES * MAX_GROUPS, MAX_GROUPS * len(PLATFORMS))
+        self._reported_drops = 0
+        self._loss_report_at = 0.0
         self._flush_timer = QTimer(self, singleShot=True, interval=FLUSH_MS)
         self._flush_timer.timeout.connect(self._flush_messages)
         self._render_timer = QTimer(self, singleShot=True, interval=150)  # coalesces full re-renders
         self._render_timer.timeout.connect(self._render_now)
         self._rerender: set | None = set()  # groups waiting for a full re-render; None = all of them
+        self._render_pending: set = set()
+        self._render_step_timer = QTimer(self, singleShot=True, interval=1)
+        self._render_step_timer.timeout.connect(self._render_step)
 
         self.mod = ModActions(self, ModNotes(CONF_DIR / "modnotes.json"))
         self._build_ui()
@@ -232,6 +245,7 @@ class MainWindow(GroupsMixin, ConnectionsMixin, QMainWindow):
         self.emote_complete = EmoteCompleter(self.input, self._send_emotes)  # ":kap" → Kappa
         self._native_emotes: dict[str, dict[str, str]] = {}  # source key → Twitch emotes you can use there
         self._native_loading: set[str] = set()
+        self._native_session = self.accounts["twitch"].session_gen
         self._native_hint = False
         self.send_btn = QPushButton(_("Send"))
         self.send_btn.clicked.connect(self.send)
@@ -347,6 +361,11 @@ class MainWindow(GroupsMixin, ConnectionsMixin, QMainWindow):
     def run(self, coro, then=None, label: str | None = None, on_error=None, quiet: bool = False):
         """Run a coroutine in the asyncio thread; the result arrives in the Qt thread.
         quiet: a failure is only logged (background work the user didn't start)."""
+        if self._closing:
+            coro.close()
+            future = Future()
+            future.cancel()
+            return future
         name = getattr(coro, "__qualname__", "action")  # English name for the log (the label is translated)
         fut = asyncio.run_coroutine_threadsafe(coro, self.loop)
         fut.add_done_callback(lambda f: self._deliver(then, label, on_error, name, f, quiet))
@@ -359,6 +378,8 @@ class MainWindow(GroupsMixin, ConnectionsMixin, QMainWindow):
             pass
 
     def _on_result(self, meta, fut) -> None:
+        if self._closing:
+            return
         then, label, on_error, name, quiet = meta
         if fut.cancelled():
             return
@@ -431,23 +452,77 @@ class MainWindow(GroupsMixin, ConnectionsMixin, QMainWindow):
     def msg_html(self, m: ChatMessage) -> str:
         return self.view.message_html(m)
 
+    def known_messages(self):
+        """Bounded union of live history and passages still displayed in paused groups."""
+        seen = set()
+        for messages in (self.messages, *(v.retained_messages for v in self.views())):
+            for uid, message in messages.items():
+                if uid not in seen:
+                    seen.add(uid)
+                    yield message
+
+    def message_by_uid(self, uid: int) -> ChatMessage | None:
+        message = self.messages.get(uid)
+        if message is not None:
+            return message
+        return next((v.retained_messages[uid] for v in self.views() if uid in v.retained_messages), None)
+
+    def _sync_retained_routes(self) -> None:
+        """Remove a departed source from the paused model before it can be rebuilt."""
+        for panel in self.panels:
+            view = panel.view
+            removed = [uid for uid, message in view.retained_messages.items() if panel not in self.panels_for(message)]
+            if not removed:
+                continue
+            for uid in removed:
+                del view.retained_messages[uid]
+            if not view.retained_messages:
+                view.reset_history()  # a replacement source starts following immediately
+            self.render_all(panel)
+
     def add_message(self, msg: ChatMessage) -> None:
         """Queues a message; _flush_messages shows the batch (one layout pass instead of one per message)."""
-        self._incoming.append(msg)
+        if self._closing:
+            return
+        self._incoming.put(msg)
+        self._schedule_flush()
+
+    def _schedule_flush(self, urgent: bool = False) -> None:
+        if self._closing:
+            return
+        if urgent:
+            self._flush_timer.stop()
+            self._flush_messages()
+            return
         if not self._flush_timer.isActive():
-            self._flush_timer.start()
+            self._flush_timer.start(FLUSH_MS)
 
     def _flush_messages(self) -> None:
-        batch, self._incoming = self._incoming[-MAX_MESSAGES:], []
-        if not batch:
+        if self._closing:
             return
-        self._msg_count += len(batch)
-        for msg in batch:
+        events = self._incoming.take(MAX_MESSAGES)
+        if not events:
+            return
+        if len(self._incoming):
+            self._flush_timer.start(0)  # yield to Qt between bounded batches
+        if self._incoming.dropped > self._reported_drops and time.monotonic() >= self._loss_report_at:
+            dropped = self._incoming.dropped - self._reported_drops
+            self._reported_drops = self._incoming.dropped
+            self._loss_report_at = time.monotonic() + 5
+            log.warning("Chat overloaded: dropped %d events (%d total)", dropped, self._incoming.dropped)
+            self.statusBar().showMessage(_("Chat overloaded: {n} events dropped").format(n=dropped), 5000)
+        batch = []
+        for msg in events:
+            if isinstance(msg, Deletion):
+                self._apply_deletion(msg)
+                continue
+            batch.append(msg)
             self.messages[msg.uid] = msg
             if self.overlay.running:
                 groups = [i + 1 for i, pn in enumerate(self.panels) if pn in self.panels_for(msg)]
                 self.overlay.publish(message_payload(msg, self.view.alerts_cfg, groups))
             self.mod.observe(msg)
+        self._msg_count += len(batch)
         if len(self.messages) > self._trim_at:
             self._trim_messages()
         visible = self._visible_panels()
@@ -467,6 +542,7 @@ class MainWindow(GroupsMixin, ConnectionsMixin, QMainWindow):
                 continue
             if self._rerender_due(panel):
                 continue  # a full re-render is due anyway
+            v.retain_messages(shown, MAX_MESSAGES)
             v.append_many(v.items(shown))  # scrolls along
             if v.needs_compaction:
                 self.render_all(panel)  # empties Qt's per-image format list (see COMPACT_AFTER)
@@ -494,7 +570,9 @@ class MainWindow(GroupsMixin, ConnectionsMixin, QMainWindow):
 
     def render_all(self, panel: GroupPanel | None = None) -> None:
         """Requests a full re-render (filters, deletions, failed images) of all groups or of
-        one; coalesced. A full re-render costs ~0.2 s per 1000 lines – only where needed."""
+        one; coalesced. Hidden tabs wait until shown; visible groups yield between rebuilds."""
+        if self._closing:
+            return
         if panel is None:
             self._rerender = None
         elif self._rerender is not None:
@@ -502,30 +580,54 @@ class MainWindow(GroupsMixin, ConnectionsMixin, QMainWindow):
         self._render_timer.start()
 
     def _rerender_due(self, panel: GroupPanel) -> bool:
-        return self._render_timer.isActive() and (self._rerender is None or panel in self._rerender)
+        return panel in self._render_pending or (
+            self._render_timer.isActive() and (self._rerender is None or panel in self._rerender))
 
     def _follow_changed(self, panel: GroupPanel, following: bool) -> None:
-        if following and panel.view.held:  # back at the bottom: show what arrived meanwhile
+        if following and (panel.view.held or panel.view.retained_messages):
+            # Filters can have hidden all arriving lines, so `held` alone is not enough
+            # to know whether the pinned model differs from the current live history.
             panel.view.held = False
             self.render_all(panel)  # only this group missed lines
 
     def _render_now(self) -> None:
         due, self._rerender = self._rerender, set()
+        self._render_pending.update(self.panels if due is None else due)
         self._flush_messages()
-        for panel in self.panels:
-            if due is not None and panel not in due:
-                continue
-            v = panel.view
-            if v.follow:
-                v.held = False
-            v.rebuild(v.items(
-                m for m in self.messages.values() if self.filters[m.platform].isChecked() and panel in self.panels_for(m)
-            ))
+        self._render_step()
+
+    def _resume_renders(self) -> None:
+        if self._render_pending.intersection(self._visible_panels()):
+            self._render_step_timer.start()
+
+    def _render_step(self) -> None:
+        """At most one bounded document rebuild per Qt event-loop turn."""
+        self._render_pending.intersection_update(self.panels)
+        panel = next((p for p in self._visible_panels() if p in self._render_pending), None)
+        if panel is None:
+            return
+        self._render_pending.discard(panel)
+        v = panel.view
+        if v.follow:
+            v.held = False
+            messages = [m for m in self.messages.values()
+                        if self.filters[m.platform].isChecked() and panel in self.panels_for(m)][-MAX_MESSAGES:]
+            v.retain_messages(messages, MAX_MESSAGES, replace=True)
+        else:
+            messages = [m for m in v.retained_messages.values()
+                        if self.filters[m.platform].isChecked() and panel in self.panels_for(m)]
+        v.rebuild(v.items(messages))
+        self._resume_renders()
 
     def apply_deletion(self, ev: Deletion) -> None:
-        self._flush_messages()  # the message to delete may still be queued
+        if self._closing:
+            return
+        self._incoming.put(ev)
+        self._flush_messages()  # queued messages/deletions retain per-source order
+
+    def _apply_deletion(self, ev: Deletion) -> None:
         changed = []
-        for m in self.messages.values():
+        for m in self.known_messages():
             if m.platform != ev.platform or m.deleted:
                 continue
             if ev.source and m.source and m.source != ev.source:
@@ -545,6 +647,9 @@ class MainWindow(GroupsMixin, ConnectionsMixin, QMainWindow):
         movies = [m for v in self.views() for m, _b in v.movies.values()]
         stats = {
             "messages/s": round(n / 60, 1),
+            "queued events": len(self._incoming),
+            "dropped events": self._incoming.dropped,
+            "dropped moderation events": self._incoming.dropped_deletions,
             "chat lines": sum(v.document().blockCount() for v in self.views()),
             "animations playing": sum(m.state() == m.MovieState.Running for m in movies),
             "of": len(movies),
@@ -560,7 +665,7 @@ class MainWindow(GroupsMixin, ConnectionsMixin, QMainWindow):
         if any(key in urls for urls in FAVICONS.values()):  # platform icon: every line shows it
             self.render_all()
         else:
-            self.update_lines([m for m in self.messages.values() if any(p[1] == key for p in m.parts)])
+            self.update_lines([m for m in self.known_messages() if any(p[1] == key for p in m.parts)])
 
     def changeEvent(self, event) -> None:  # noqa: N802
         super().changeEvent(event)
@@ -571,15 +676,21 @@ class MainWindow(GroupsMixin, ConnectionsMixin, QMainWindow):
     def update_lines(self, msgs) -> None:
         """Re-renders just these messages' lines (busy chats delete and time out all the time –
         rebuilding the whole view each time made the window stutter)."""
+        if self._closing:
+            return
+        msgs = list(msgs)
         for panel in self.panels:
             if self._rerender_due(panel):
                 continue  # a full re-render of this group is due anyway
-            shown = [m for m in msgs if self.filters[m.platform].isChecked() and panel in self.panels_for(m)]
+            shown = [m for m in msgs if self.filters[m.platform].isChecked() and panel in self.panels_for(m)
+                     and (panel.view.follow or m.uid in panel.view.retained_messages)]
             if len(shown) > 200:  # e.g. "clear chat": one rebuild is cheaper
                 self.render_all(panel)
                 continue
             if shown:
                 panel.view.update_messages(panel.view.items(shown))
+                if panel.view.needs_compaction:
+                    panel.view.compact()
 
     def set_selected_user(self, key) -> None:
         """Highlight of the selected user's name in every group."""
@@ -591,8 +702,7 @@ class MainWindow(GroupsMixin, ConnectionsMixin, QMainWindow):
         self.messages.clear()
         self._trim_at = MAX_MESSAGES
         for v in self.views():
-            v.rebuild([])
-            v.scroll_to_bottom()
+            v.reset_history()
 
     # ---- Moderation (logic in moderation/actions.py) ---------------------- #
     def on_anchor(self, url: QUrl) -> None:
@@ -666,8 +776,14 @@ class MainWindow(GroupsMixin, ConnectionsMixin, QMainWindow):
             if platform != "twitch" or key in self._native_emotes or key in self._native_loading:
                 continue
             self._native_loading.add(key)
+            generation = self.accounts["twitch"].session_gen
 
-            def done(result, key=key) -> None:
+            def current(generation=generation) -> bool:
+                return generation == self._native_session == self.accounts["twitch"].session_gen
+
+            def done(result, key=key, current=current) -> None:
+                if not current():
+                    return
                 self._native_loading.discard(key)
                 emotes, complete = result
                 self._native_emotes[key] = dict(emotes)
@@ -676,7 +792,9 @@ class MainWindow(GroupsMixin, ConnectionsMixin, QMainWindow):
                     self.statusBar().showMessage(
                         _("Log in to Twitch again to get suggestions for all your emotes (subscriptions included)"), 10000)
 
-            def failed(key=key) -> None:
+            def failed(key=key, current=current) -> None:
+                if not current():
+                    return
                 self._native_loading.discard(key)
                 self._native_emotes[key] = {}  # not again until the next login
 
@@ -712,8 +830,11 @@ class MainWindow(GroupsMixin, ConnectionsMixin, QMainWindow):
 
     # ---- Accounts -------------------------------------------------------- #
     def refresh_accounts(self) -> None:
-        if self._native_emotes and not self.accounts["twitch"].logged_in:
-            self._native_emotes.clear()  # logged out (or in as someone else)
+        generation = self.accounts["twitch"].session_gen
+        if self._native_session != generation or not self.accounts["twitch"].logged_in:
+            self._native_session = generation
+            self._native_emotes.clear()
+            self._native_loading.clear()
         self._native_hint = False
         self._refresh_targets()
         own = {p: (own_pattern(a.user_name), a.user_id, a.user_name.lower())
@@ -794,10 +915,18 @@ class MainWindow(GroupsMixin, ConnectionsMixin, QMainWindow):
         self.save_config()
 
     def logout(self, platform: str) -> None:
-        self.accounts[platform].logout()
+        try:
+            saved = self.accounts[platform].logout()
+        except Exception:
+            saved = False
+            log.exception("%s: could not persist logout", platform)
         self.refresh_accounts()
         self.mod.account_changed(platform)
-        self.statusBar().showMessage(_("Logged out of {platform}").format(platform=NAMES[platform]), 5000)
+        if saved:
+            self.statusBar().showMessage(_("Logged out of {platform}").format(platform=NAMES[platform]), 5000)
+        else:
+            self.statusBar().showMessage(_("Logged out of {platform}, but could not save the logout. "
+                                          "The account may return after restarting.").format(platform=NAMES[platform]), 15000)
 
     def edit_alerts(self) -> None:
         dlg = AlertsDialog(self, self.config["alerts"])
@@ -842,23 +971,46 @@ class MainWindow(GroupsMixin, ConnectionsMixin, QMainWindow):
 
     # ---- Shutdown -------------------------------------------------------- #
     def closeEvent(self, event) -> None:  # noqa: N802
+        if self._closing:
+            super().closeEvent(event)
+            return
+        self._closing = True
+        self._flush_timer.stop()
+        self._render_timer.stop()
+        self._render_step_timer.stop()
+        self._render_pending.clear()
+        if hasattr(self, "_save_timer"):
+            self._save_timer.stop()
+        self.emote_complete.shutdown()
         self.save_config()
         self.mod.notes.save()
         for t in self.readers.values():
             t.cancel()
         for panel in [*self.panels, *self._spare]:
+            panel.view.shutdown()
             if panel.video is not None:
                 panel.video.shutdown()
 
         async def shutdown() -> None:
+            # This event loop belongs exclusively to this window. Finish cancellation
+            # before closing its HTTP session/loop, including pending account queries.
+            tasks = asyncio.all_tasks() - {asyncio.current_task()}
+            for task in tasks:
+                task.cancel()
+            if tasks:
+                await asyncio.gather(*tasks, return_exceptions=True)
             await self.overlay.stop()
             await self.session.close()
+            await self.loop.shutdown_asyncgens()
 
         try:
             asyncio.run_coroutine_threadsafe(shutdown(), self.loop).result(3)
         except Exception:  # noqa: BLE001
             pass
         self.loop.call_soon_threadsafe(self.loop.stop)
+        self._loop_thread.join(timeout=1)
+        if not self._loop_thread.is_alive():
+            self.loop.close()
         super().closeEvent(event)
 
 

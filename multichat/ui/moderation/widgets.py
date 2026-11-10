@@ -81,7 +81,7 @@ class ActionBar(QWidget):
             return
         color = BADGES[m.platform][0]
         self.label.setText(f"<b style='color:{color}'>{html.escape(m.user)}</b> "
-                           f"<span style='color:#888'>· {NAMES[m.platform]}</span>")
+                           f"<span style='color:#888'>· {NAMES[m.platform]} · {html.escape(m.channel)}</span>")
         self.label.setToolTip(self.mod.mod_hint(m))
         for b in (self.card, self.mention, self.clear):
             b.setEnabled(True)
@@ -206,8 +206,8 @@ class UserCard(QDockWidget):
         self.msg = m
         color = m.color or BADGES[m.platform][0]
         self.title.setText(f"<span style='font-size:16px;font-weight:bold;color:{color}'>{html.escape(m.user)}</span>"
-                           f" <span style='color:#888'>· {NAMES[m.platform]}</span>")
-        self.setWindowTitle(_("User card") + f" – {m.user}")
+                           f" <span style='color:#888'>· {NAMES[m.platform]} · {html.escape(m.channel)}</span>")
+        self.setWindowTitle(_("User card") + f" – {m.user} · {NAMES[m.platform]} · {m.channel}")
         for key in ("created", "following", "sub", "banned"):
             self.info_labels[key].setText("…")
         self.notes.blockSignals(True)
@@ -222,6 +222,15 @@ class UserCard(QDockWidget):
         self._info_req += 1
         req = self._info_req
         self.mod.user_info(m, lambda info: self._show_info(req, info))
+
+    def account_changed(self, platform: str) -> None:
+        if self.msg and self.msg.platform == platform:
+            self._info_req += 1
+            for key in ("created", "following", "sub", "banned"):
+                self.info_labels[key].setText("–")
+            self._refresh_buttons()
+            if self.isVisible():
+                self._load_info(self.msg)
 
     def _show_info(self, req: int, info: dict) -> None:
         if req != self._info_req:
@@ -245,7 +254,7 @@ class UserCard(QDockWidget):
         m = self.msg
         if not m or not self.isVisible():  # show_user() refreshes when it opens again
             return
-        self.msg = m = self.mod.history.latest(m)  # newest message of this user
+        self.msg = m = self.mod.history.latest(m)  # newest message in the card's fixed channel
         msgs = self.mod.messages_of(m)
         roles = [role_label(r) for r in m.badges]
         self.info_labels["roles"].setText(", ".join(roles) or "–")
@@ -256,7 +265,8 @@ class UserCard(QDockWidget):
             text = html.escape(msg.text)
             if msg.deleted:
                 text = f"<s style='color:#777'>{text}</s>"
-            rows.append(f"<span style='color:#888'>{ts}</span> {text}")
+            channel = html.escape(msg.channel)
+            rows.append(f"<span style='color:#888'>{ts} · {channel}</span> {text}")
         empty = f"<span style='color:#888'>{html.escape(_('No messages seen yet'))}</span>"
         self.history.setHtml("<br>".join(rows) or empty)
         bar = self.history.verticalScrollBar()

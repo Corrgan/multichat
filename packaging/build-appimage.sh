@@ -5,7 +5,7 @@
 #
 #   packaging/build-appimage.sh
 #
-# Requirements: python3 (with the venv module), curl, ~1 GB of free space.
+# Requirements: Python 3.12 (with the venv module), curl, ~1 GB of free space.
 # The video tiles need libmpv on the machine the app runs on:
 #   Ubuntu/Debian: sudo apt install libmpv2   Fedora: sudo dnf install mpv-libs
 #   Arch: sudo pacman -S mpv
@@ -47,15 +47,20 @@ download() {
 }
 
 echo "==> Python environment"
+# The release lock is compiled/tested for Python 3.12; source installs support other versions.
+"${PYTHON:-python3}" -c 'import sys; sys.exit(0 if sys.version_info[:2] == (3, 12) else "ERROR: the AppImage release lock requires Python 3.12; set PYTHON=python3.12")'
 mkdir -p "$BUILD" "$TOOLS"
 # PYTHON=python3.12 packaging/build-appimage.sh uses a specific interpreter (e.g. in CI)
 [ -d "$BUILD/venv" ] || "${PYTHON:-python3}" -m venv "$BUILD/venv"
 # shellcheck disable=SC1091
 . "$BUILD/venv/bin/activate"
-pip install -q --upgrade pip
+python3 -c 'import sys; sys.exit(0 if sys.version_info[:2] == (3, 12) else "ERROR: existing build-appimage/venv uses another Python; recreate it with Python 3.12")'
 # exact, hash-checked versions of all dependencies and build tools
 # (the app itself is taken from the source tree)
 pip install -q --require-hashes -r packaging/requirements-lock.txt
+# The published lxml wheel contains older static libxml2; replace it with our
+# verified source build, keeping its source/version/license evidence in the wheel.
+python3 packaging/build-secure-lxml.py --work "$BUILD/secure-lxml" --output "$BUILD/secure-lxml/wheels" --install --reuse-verified-wheel
 
 echo "==> PyInstaller"
 # python-mpv is NOT analysed (otherwise PyInstaller would bundle the build machine's
@@ -91,28 +96,7 @@ DOC="$APPDIR/usr/share/doc/multichat"
 mkdir -p "$DOC/licenses"
 cp LICENSE THIRD_PARTY_NOTICES.md README.md AUTHORS.md docs/LOGIN.md "$DOC/"
 # License files of all bundled Python packages (MIT/BSD/Apache require shipping them)
-python3 - "$DOC/licenses" <<'PYEOF'
-import re, shutil, sys
-from importlib.metadata import distributions
-from pathlib import Path
-out = Path(sys.argv[1])
-skip = {"pip", "setuptools", "wheel", "pyinstaller", "pyinstaller-hooks-contrib", "altgraph", "packaging"}
-pat = re.compile(r"(LICEN[CS]E|COPYING|NOTICE|AUTHORS)", re.I)
-n = 0
-for d in distributions():
-    name = d.metadata["Name"]
-    if name.lower() in skip:
-        continue
-    for f in d.files or []:
-        if pat.search(f.name) and ".dist-info" in str(f):
-            src = Path(d.locate_file(f))
-            if src.is_file():
-                dst = out / name / f.name
-                dst.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy(src, dst)
-                n += 1
-print(f"    {n} license files copied")
-PYEOF
+python3 packaging/collect-licenses.py "$DOC/licenses" --toc "$BUILD/work/multichat/Analysis-00.toc" --pyinstaller-bootloader
 # Default: the AppImage uses the system's libmpv (small, matches the graphics drivers).
 # With MPV_BUNDLE=1, libmpv and FFmpeg are bundled (runs without mpv installed, but ~270 MB).
 LIBMPV=""
@@ -143,6 +127,13 @@ HERE="$(dirname "$(readlink -f "$0")")"
 exec "$HERE/usr/bin/multichat" "$@"
 EOF
 chmod +x "$APPDIR/AppRun"
+
+echo "==> Actual artifact components and license verification"
+# Probe the frozen application's own modules/libraries, never the build venv's versions.
+"$APPDIR/usr/bin/multichat" --component-probe > "$DOC/runtime-components.json"
+python3 packaging/inventory-artifact.py --root "$APPDIR" --kind appimage --output "$DOC" \
+  --runtime-evidence "$DOC/runtime-components.json" --capture-build-context \
+  --export-system-licenses "$DOC/licenses"
 
 echo "==> appimagetool"
 download "$APPIMAGETOOL_URL" "$APPIMAGETOOL_SHA256" "$TOOL"

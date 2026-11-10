@@ -57,3 +57,80 @@ def test_non_https_urls_are_dropped():
                                              {"name": "B", "urls": {"2": "//cdn.example/b"}}]}}) == {"B": "https://cdn.example/b"}
     assert s._7tv_url({"data": {"host": {"url": "file:///etc", "files": [{"name": "2x.png"}]}}}) is None
     assert s._bttv_parse([{"id": "../../x", "code": "C"}]) == {}
+
+
+def test_channel_metadata_lru_ttl_and_entry_budgets(monkeypatch):
+    from multichat.chat import emotes
+    monkeypatch.setattr(emotes, "MAX_CHANNELS", 3)
+    monkeypatch.setattr(emotes, "MAX_CHANNEL_EMOTES", 2)
+    monkeypatch.setattr(emotes, "MAX_CACHED_EMOTES", 5)
+    clock = [100.0]
+    monkeypatch.setattr(emotes.time, "monotonic", lambda: clock[0])
+    async def run():
+        s = EmoteStore(lambda: None)
+        async def fake_user(platform, ext_id):
+            return {f"E{i}": f"https://example.test/{ext_id}/{i}" for i in range(20)}
+        s._7tv_user = fake_user
+        for name in ("a", "b"):
+            await s.load_channel("kick", name, "1")
+        s.available("kick", "a")  # recent access protects A, not B
+        await s.load_channel("kick", "c", "1")
+        assert list(s.channels) == [("kick", "a"), ("kick", "c")]
+        assert all(len(v) == 2 for v in s.channels.values())
+        assert set(s._loaded_at) == set(s.channels)
+        for i in range(100):
+            await s.load_channel("kick", str(i), "1")
+        assert len(s.channels) <= 3
+        assert sum(map(len, s.channels.values())) <= 5
+        assert len(s._loaded_at) <= 3
+        clock[0] += emotes.CHANNEL_TTL
+        assert s.available("kick", "99") == {}
+        assert not s.channels and not s._loaded_at and not s._empty_since
+    asyncio.run(run())
+
+
+def test_channel_load_scheduling_is_bounded_and_deduplicated():
+    from multichat.chat.emotes import MAX_LOADS, MAX_PENDING_LOADS
+    async def run():
+        s = EmoteStore(lambda: None)
+        gate = asyncio.Event()
+        calls = []
+        async def fake_user(platform, ext_id):
+            calls.append(ext_id)
+            await gate.wait()
+            return {}
+        s._7tv_user = fake_user
+        for i in range(1000):
+            s.schedule_channel("kick", str(i // 2), str(i // 2))
+        assert len(s._tasks) == MAX_PENDING_LOADS
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        assert len(calls) == MAX_LOADS
+        assert len(set(calls)) == MAX_LOADS
+        gate.set()
+        await asyncio.gather(*s._tasks)
+        await asyncio.sleep(0)
+        assert not s._scheduled and not s._loading and not s._tasks
+        assert len(calls) == MAX_PENDING_LOADS  # queued channels were not silently lost
+    asyncio.run(run())
+
+
+def test_metadata_stream_aborts_before_reading_unbounded_body(monkeypatch):
+    from multichat.chat import emotes
+    monkeypatch.setattr(emotes, "MAX_JSON_BYTES", 16)
+    chunks_read = []
+    class Content:
+        async def iter_chunked(self, size):
+            for i in range(100):
+                chunks_read.append(i)
+                yield b" " * 9
+    class Response:
+        status, content_length, content = 200, None, Content()
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): pass
+    class Session:
+        def get(self, *args, **kwargs): return Response()
+    import pytest
+    with pytest.raises(ValueError, match="byte limit"):
+        asyncio.run(EmoteStore(Session)._json("https://example.test"))
+    assert len(chunks_read) == 2

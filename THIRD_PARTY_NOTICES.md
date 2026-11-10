@@ -59,7 +59,7 @@ The AppImage contains the license texts of all bundled Python packages under
 | isodate | BSD-3-Clause | https://github.com/gweis/isodate |
 | lxml | BSD-3-Clause | https://lxml.de/ |
 | pycountry | LGPL-2.1-only | https://github.com/pycountry/pycountry |
-| pycryptodome | BSD-2-Clause, partly public domain | https://www.pycryptodome.org |
+| pycryptodome | BSD-2-Clause AND Unlicense AND MIT | https://www.pycryptodome.org |
 | PySocks | BSD-3-Clause | https://github.com/Anorov/PySocks |
 | trio | MIT OR Apache-2.0 | https://github.com/python-trio/trio |
 | trio-websocket | MIT | https://github.com/python-trio/trio-websocket |
@@ -75,6 +75,8 @@ The AppImage contains the license texts of all bundled Python packages under
 |---|---|
 | Python runtime (CPython) | PSF-2.0 |
 | Qt 6 (via PyQt6-Qt6) | LGPL-3.0-only |
+| libxml2 2.15.4 (statically linked into the Linux lxml source build) | MIT |
+| libxslt/libexslt 1.1.45 (statically linked into the Linux lxml source build) | MIT |
 | curl-impersonate / libcurl and BoringSSL (in curl_cffi) | MIT or curl license, BoringSSL: ISC/OpenSSL |
 | PyInstaller bootloader | GPL-2.0-or-later with bootloader exception |
 | AppImage runtime | MIT |

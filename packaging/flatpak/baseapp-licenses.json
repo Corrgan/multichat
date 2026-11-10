@@ -1,0 +1,37 @@
+{
+  "schema": 1,
+  "scope": "Original relocated license files and reviewed RECORD-owned source license headers from com.riverbankcomputing.PyQt.BaseApp; not replacement license texts",
+  "mappings": [
+    {
+      "name": "PyQt6-sip",
+      "version": "13.13.0",
+      "license_file": "LICENSE",
+      "source": "share/licenses/com.riverbankcomputing.PyQt.BaseApp/pyqt-sip/LICENSE",
+      "sha256": "3e6f5b427c36f94ecf86bc01698af7030a1ed6eb3748110d5dbb8d142d804611",
+      "origin": "PyQt BaseApp's pyqt-sip module license export, also byte-identical to sipbuild/module/source/13/13/LICENSE in the same BaseApp",
+      "reason": "BaseApp installs legacy PyQt6_sip egg-info declaring LICENSE, but retains the original text under share/licenses instead of egg-info"
+    }
+  ],
+  "source_headers": [
+    {
+      "name": "ply",
+      "version": "3.11",
+      "source": "ply/lex.py",
+      "source_sha256": "6da6d12129c801fcc7a3b5aa2d8176a86092687d1bb4cf1ddf3b601da2b7480d",
+      "lines": [1, 32],
+      "header_sha256": "94f17e3b32beebc0b96944e41487255bc0d60a6b661126b9c96181258a04fab8",
+      "origin": "Original PLY 3.11 lex.py copyright, three redistribution/nonendorsement clauses and full disclaimer",
+      "reason": "This installed distribution has no separate license file or License-File declaration; complete original license text is retained in its source header"
+    },
+    {
+      "name": "ply",
+      "version": "3.11",
+      "source": "ply/yacc.py",
+      "source_sha256": "105d38deb207ad72581ba8dc6f5e5323648bc1d0a834e4195c237fd4cdfe2389",
+      "lines": [1, 32],
+      "header_sha256": "c4738a683ccaa006cec9871af987fcf5cbef46536b9de086bd2f4283da4b6f00",
+      "origin": "Original PLY 3.11 yacc.py copyright, three redistribution/nonendorsement clauses and full disclaimer",
+      "reason": "This installed distribution has no separate license file or License-File declaration; complete original license text is retained in its source header"
+    }
+  ]
+}

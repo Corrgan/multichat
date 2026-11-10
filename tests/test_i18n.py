@@ -15,7 +15,7 @@ def source_strings() -> set[str]:
     """All texts passed to _() plus the reader status templates and label tables."""
     keys = set()
     for f in PKG.rglob("*.py"):
-        for n in ast.walk(ast.parse(f.read_text())):
+        for n in ast.walk(ast.parse(f.read_text(encoding="utf-8"))):
             if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.args:
                 a = n.args[0] if n.func.id == "_" else (n.args[1] if n.func.id == "status" and len(n.args) > 1 else None)
                 if isinstance(a, ast.Constant) and isinstance(a.value, str):

@@ -135,7 +135,11 @@ async def _read_pytchat(vid: str, emit: Emit, emotes) -> None:
     """Reads the chat with pytchat until the stream ends."""
     import pytchat  # type: ignore
 
-    chat = await asyncio.to_thread(pytchat.create, video_id=vid, interruptable=False)
+    # pytchat's default processor is a shared default argument with mutable renderers.
+    # Readers can parse concurrently on worker threads and must own their processor state.
+    chat = await asyncio.to_thread(
+        pytchat.create, video_id=vid, interruptable=False, processor=pytchat.DefaultProcessor()
+    )
     try:
         while chat.is_alive():
             items = await asyncio.to_thread(lambda: list(chat.get().sync_items()))

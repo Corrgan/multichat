@@ -1,6 +1,9 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Secret storage: keyring, migration from the old files, fallback."""
 import json
+import os
+
+import pytest
 
 from multichat.accounts.store import FileBackend, KeyringBackend, SecretStore
 
@@ -21,13 +24,19 @@ class FakeKeyring:
         self.items.pop((service, key))
 
 
-def test_file_backend_is_private(tmp_path):
+def test_file_backend_roundtrip(tmp_path):
     s = SecretStore("tokens", FileBackend(tmp_path))
     s.update("twitch", access_token="x")
     path = tmp_path / "tokens.json"
-    assert oct(path.stat().st_mode & 0o777) == "0o600"
     assert json.loads(path.read_text()) == {"twitch": {"access_token": "x"}}
     assert SecretStore("tokens", FileBackend(tmp_path)).get("twitch") == {"access_token": "x"}
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX permission bits require a POSIX filesystem")
+def test_file_backend_is_private(tmp_path):
+    s = SecretStore("tokens", FileBackend(tmp_path))
+    s.update("twitch", access_token="x")
+    assert (tmp_path / "tokens.json").stat().st_mode & 0o777 == 0o600
 
 
 def test_migrates_file_into_keyring(tmp_path):
