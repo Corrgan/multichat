@@ -7,5 +7,6 @@ MultiChat is made by these people (and one AI):
 - **[nepunuk](https://github.com/nepunuk)** – code review and code:
   - 0.80: found the memory and UI-blocking issues, the logout/keyring races, the overlay deletion scope and the group history bugs
   - 0.90: moderation bound to the selected channel, session guards for logins and API calls, bounded chat intake and image loading, paused reading that keeps its place, clean shutdown; FFmpeg security backports, the rebuilt XML libraries, artifact inventories and license checks for the Linux packages
+  - 1.1: automatic quality (stalls that begin during start-up or ads, quality levels a stream does not have), single start under concurrent starts and from source on Windows, image retry timing, account name when a name is clicked.
 
 Thanks also to everyone who reports bugs and sends logs.

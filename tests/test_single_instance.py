@@ -10,7 +10,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from PyQt6.QtCore import QLockFile, QStandardPaths
+from PyQt6.QtCore import QStandardPaths
 from PyQt6.QtWidgets import QApplication
 
 from multichat.core import single_instance
@@ -114,22 +114,81 @@ def test_windows_path_needs_no_posix_user_id(tmp_path, monkeypatch):
         instance.release()
 
 
-def test_busy_owner_without_a_server_does_not_allow_another_window(tmp_path, monkeypatch):
-    """An owner can be paused between acquiring its lock and creating the socket."""
+def test_lock_holder_that_never_answers_does_not_keep_the_app_from_starting(tmp_path, monkeypatch):
+    """A holder listens within milliseconds, so this must not happen – but if it does, the
+    app starts without the check instead of not starting at all, and leaves the holder's
+    files alone."""
     _app()
     path = str(tmp_path / "instance.sock")
-    owner = QLockFile(path + ".lock")
-    owner.setStaleLockTime(0)
-    assert owner.tryLock(0)
+    owner = single_instance.ProcessLock(path + ".lock")
+    assert owner.take() is True
+    (tmp_path / "instance.sock").write_text("")  # stands for the holder's socket
     monkeypatch.setattr(single_instance, "LOCK_WAIT_MS", 50)
     try:
         contender = SingleInstance(path)
-        assert contender.acquire() is False
-        assert contender.server is None
+        assert contender.acquire() is True  # starts …
+        assert contender.server is None  # … without taking over
         contender.release()
-        assert owner.isLocked()
+        assert (tmp_path / "instance.sock").exists()  # only the lock holder may clean up
+        assert single_instance.ProcessLock(path + ".lock").take() is False  # still the owner's
     finally:
-        owner.unlock()
+        owner.release()
+
+
+def test_unusable_lock_or_socket_does_not_keep_the_app_from_starting(tmp_path, monkeypatch):
+    _app()
+    # the lock cannot be created: the plain check still works
+    monkeypatch.setattr(single_instance.ProcessLock, "take", lambda self: None)
+    first = SingleInstance(str(tmp_path / "a"))
+    assert first.acquire() is True and first.server is not None
+    assert SingleInstance(str(tmp_path / "a")).acquire() is False
+    first.release()
+    monkeypatch.undo()
+    # the socket cannot be created (here: its name is too long): start, without the check
+    long_path = str(tmp_path / ("x" * 120))
+    instance = SingleInstance(long_path)
+    assert instance.acquire() is True and instance.server is None
+    assert single_instance.ProcessLock(long_path + ".lock").take() is True  # nothing left locked
+
+
+@pytest.mark.skipif(os.name == "nt", reason="flock and PID namespaces are specific to Linux")
+def test_lock_dies_with_its_process_in_another_pid_namespace(tmp_path):
+    """Every Flatpak sandbox counts its processes from 1. A lock that names its owner by
+    process ID looks alive to the next start after a crash (it sees itself) – with Qt's
+    QLockFile the app then never started again until the next login. The kernel's lock
+    needs no such guess."""
+    with tempfile.TemporaryDirectory(prefix="mc-ns-") as temporary:
+        path = os.path.join(temporary, "instance")
+        child = (
+            "import os, sys\n"
+            "from PyQt6.QtCore import QCoreApplication\n"
+            "from multichat.core.single_instance import SingleInstance\n"
+            "app = QCoreApplication([])\n"
+            "instance = SingleInstance(sys.argv[1])\n"
+            "ok = instance.acquire() and instance.server is not None\n"
+            "print('pid', os.getpid(), 'owner', ok, flush=True)\n"
+            "os.kill(os.getpid(), 9) if sys.argv[2] == 'crash' else sys.exit(0 if ok else 2)\n"
+        )
+        namespace = None
+        for flags in (["--pid", "--fork", "--mount-proc"],
+                      ["--user", "--map-root-user", "--pid", "--fork", "--mount-proc"]):
+            try:
+                if subprocess.run(["unshare", *flags, "true"], capture_output=True, timeout=10).returncode == 0:
+                    namespace = ["unshare", *flags]
+                    break
+            except (OSError, subprocess.TimeoutExpired):
+                pass
+        if namespace is None:
+            pytest.skip("cannot create a PID namespace here")
+        crashed = subprocess.run([*namespace, sys.executable, "-c", child, path, "crash"],
+                                 capture_output=True, text=True, timeout=20)
+        assert "owner True" in crashed.stdout, crashed.stderr
+        assert os.path.exists(path + ".lock")  # left behind by the killed owner
+        again = subprocess.run([*namespace, sys.executable, "-c", child, path, "stay"],
+                               capture_output=True, text=True, timeout=20)
+        assert again.returncode == 0 and "owner True" in again.stdout, again.stdout + again.stderr
+        # same process ID in both sandboxes – that is what misled the ID-based lock
+        assert crashed.stdout.split()[1] == again.stdout.split()[1]
 
 
 _CONCURRENT_START = r'''

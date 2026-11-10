@@ -302,3 +302,22 @@ Regression coverage includes real competing processes, crash recovery, grace-cro
 stalls, duplicate intermediate resolutions, image scheduling, and mention insertion.
 POSIX-only socket/permission checks are marked accordingly; JSON replacement and
 Windows named-pipe behavior retain their own platform-independent/native coverage.
+
+### Adjustments made when the follow-up was merged
+
+The single-instance lock was changed in two respects; the other corrections were taken
+as submitted.
+
+- **The lock is the kernel's (`flock`) on Linux, not `QLockFile`.** `QLockFile` decides
+  by the process ID stored in the file whether its owner is alive. Every Flatpak sandbox
+  has its own process IDs, starting at 1: after a crash or a hard kill the next start
+  found "its" ID alive – it was looking at itself – and could never take the lock again.
+  `flock` is released by the kernel when the process ends, however it ends, and works
+  between the sandboxes. Windows keeps `QLockFile`. `tests/test_single_instance.py`
+  reproduces the case with real PID namespaces.
+- **Problems with the lock or the socket do not keep the app from starting.** As
+  submitted, a lock that could not be taken, a holder that did not answer or a socket
+  that could not be created ended the start with nothing but a log line. Showing one
+  window is a convenience; in these cases the app now starts without the check (and
+  says so in the log). A second start still never removes the socket of a running
+  instance – only the lock holder cleans up.
