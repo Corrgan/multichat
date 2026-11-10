@@ -17,8 +17,9 @@ the current manifest does not use the affected use-git-am patch option.
 
 The inventory is still explicit about its limits: an unidentified static/vendored
 component or missing runtime SBOM is a coverage gap, not a clean security result.
-The release policy fails closed on unresolved coverage gaps; pull-request reports
-can expose gaps without pretending they are complete. Provenance covers the final
+License and evidence errors fail the build and thereby block a release. Unresolved
+coverage gaps are reported with every build and published as part of the (then
+explicitly partial) inventory; they do not block a release. Provenance covers the final
 artifact and its inventory. A passing component test or an OSV query without a match
 does not establish complete vulnerability coverage.
 

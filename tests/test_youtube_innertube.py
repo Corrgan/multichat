@@ -180,7 +180,7 @@ def test_changed_response_shape_falls_back_to_pytchat(monkeypatch):
         monkeypatch.setattr(it.asyncio, "sleep", fast_sleep)
         monkeypatch.delenv("MULTICHAT_YT_CHAT", raising=False)
         monkeypatch.setitem(sys.modules, "pytchat", types.SimpleNamespace(
-            create=lambda **kw: created.append(kw) or FakeChat()))
+            create=lambda **kw: created.append(kw) or FakeChat(), DefaultProcessor=object))
         try:
             await youtube._read_chat("vid12345678", lambda ev: None, None, lambda: None)
         finally:

@@ -246,3 +246,20 @@ validation evidence, not a publication or a complete vendor/runtime SBOM claim.
 The repository's host-builder helper pins and verifies flatpak-builder 1.4.12.
 Its real source build passed locally; its CI prerequisite packages were checked
 against Ubuntu 24.04. No GitHub workflow was run from this unpushed local branch.
+
+## Adjustments made when this work was merged
+
+The audit corrections above were merged as submitted. Four project decisions differ from
+the text above and from the pull request; the files in the repository are authoritative:
+
+- **Release tags:** the project's existing rule stays (`vX.Y` with Y a single digit or
+  ending in 0, plus the listed exceptions). Patch tags do not build a release.
+- **Inventory coverage gaps:** reported with every build and published in the (explicitly
+  partial) inventories, but they do not block a tagged release. License and evidence
+  errors still fail the build.
+- **Repository rules:** `.github/rulesets/` holds two mild rulesets (no deletion or
+  force-push of `main`; release tags cannot be moved or deleted) instead of required pull
+  requests and status checks. See REPOSITORY_RULES.md for the stricter option.
+- **Animated emotes:** decoded frames are cached again (QMovie.CacheAll) within a separate
+  byte budget; only animations that do not fit are decoded frame by frame. Measured with
+  12 emotes playing, uncached decoding cost about three times the CPU.

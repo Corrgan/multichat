@@ -136,11 +136,14 @@ def test_failed_advisory_refresh_removes_previous_clean_report(tmp_path, monkeyp
 
 
 @pytest.mark.parametrize("tag,expected", [
-    ("v0.80", True), ("v0.80.1", True), ("v1.2.3", True), ("v0.25", True),
+    # the project's release rule: vX.Y with Y a single digit or ending in 0
+    ("v0.80", True), ("v0.90", True), ("v1.6", True), ("v2.0", True), ("v0.100", True),
+    ("v0.81", False), ("v0.25", False), ("v0.80.1", False), ("v1.2.3", False),
     ("v0.80.1-rc1", False), ("v1", False), ("v1.2.3.4", False), ("v1.2;echo x", False),
 ])
-def test_release_gate_accepts_numeric_patch_tags_and_rejects_unexpected_tags(tag, expected):
+def test_release_gate_follows_the_release_rule_and_rejects_unexpected_tags(tag, expected):
     source = (ROOT / ".github/workflows/build.yml").read_text(encoding="utf-8")
     expression = re.search(r'elif \[\[ "\$TAG" =~ (.+) \]\]; then', source).group(1)
     assert bool(re.fullmatch(expression, tag)) is expected
+    assert "EXTRA_RELEASES: v0.25" in source  # the one listed exception
 

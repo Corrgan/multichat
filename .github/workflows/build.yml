@@ -4,7 +4,9 @@
 #
 # - Manual (Actions → Build → "Run workflow"): both as downloadable artifacts.
 # - Pushing a tag (e.g. `git tag v0.20 && git push origin v0.20`): additionally a GitHub release
-#   with both files and checksums for numeric vMAJOR.MINOR or vMAJOR.MINOR.PATCH tags.
+#   with both files and checksums – but only for tags of the form vX.Y where Y is a single digit
+#   or ends in 0 (v0.10, v0.20, v1.6, v2.0), plus the exceptions in EXTRA_RELEASES (v0.25).
+#   Other tags (v0.11, v0.15, v0.10.1 …) build nothing.
 #   The tag must also match __version__ in multichat/__init__.py.
 #
 # The AppImage is built in an Ubuntu 22.04 container (glibc 2.35), so it runs on all systems
@@ -40,14 +42,18 @@ jobs:
         env:
           EVENT: ${{ github.event_name }}
           TAG: ${{ github.ref_name }}
+          EXTRA_RELEASES: v0.25  # one-off exceptions to the rule (v0.25: first Flatpak)
         run: |
           if [ "$EVENT" = "workflow_dispatch" ] || [ "$EVENT" = "pull_request" ]; then
             echo "build=true" >> "$GITHUB_OUTPUT"
-          elif [[ "$TAG" =~ ^v[0-9]+\.[0-9]+(\.[0-9]+)?$ ]]; then
+          elif [[ "$TAG" =~ ^v[0-9]+\.([0-9]|[0-9]+0)$ ]]; then
             echo "Tag $TAG matches the release rule"
             echo "build=true" >> "$GITHUB_OUTPUT"
+          elif [[ " $EXTRA_RELEASES " == *" $TAG "* ]]; then
+            echo "Tag $TAG is an extra release"
+            echo "build=true" >> "$GITHUB_OUTPUT"
           else
-            echo "::notice::Tag $TAG is not a numeric vMAJOR.MINOR[.PATCH] release tag – no build"
+            echo "::notice::Tag $TAG is not a release tag (only vX.Y with Y a single digit or ending in 0) – no build"
             echo "build=false" >> "$GITHUB_OUTPUT"
           fi
 
@@ -303,9 +309,11 @@ jobs:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
         with:
           merge-multiple: true
-      - name: Incomplete coverage cannot be published as a complete release inventory
-        env:
-          REF: ${{ github.ref }}
+      # License/evidence errors (a license text missing or changed, a library version that
+      # differs from what was built) fail the build and so block a release. Coverage gaps –
+      # parts of the artifact the inventory cannot attribute yet – are reported, not blocking:
+      # the inventories are published as what they are, partial.
+      - name: License and evidence errors fail, coverage gaps are reported
         run: |
           python3 - <<'PY'
           import json, os, pathlib, tarfile
@@ -321,8 +329,10 @@ jobs:
               reports.append(data)
           if len(reports) != 2:
               raise SystemExit('Both final artifact inventories are mandatory')
-          if os.environ['REF'].startswith('refs/tags/') and not all(r['coverage']['complete'] for r in reports):
-              raise SystemExit('Release blocked: native/static/runtime composition still has explicit coverage gaps; resolve them before claiming complete coverage')
+          for report in reports:
+              gaps = report['coverage'].get('gaps') or []
+              if gaps or not report['coverage'].get('complete'):
+                  print(f"::warning::Inventory is partial: {len(gaps)} coverage gap(s) – see the inventory summary")
           PY
 
   release:
