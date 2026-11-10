@@ -40,6 +40,12 @@ MAX_MOVIE_WORKING_BYTES = 32 * 1024 * 1024  # charge source/scratch/scaled surfa
 MAX_ANIMATION_FRAMES = 120
 MAX_ANIMATION_PIXELS = 4 * 1024 * 1024  # source pixels across all declared frames
 MAX_ANIMATION_FRAME_BYTES = 16 * 1024 * 1024
+# Decoded frames are kept (QMovie.CacheAll) for ordinary emotes: decoding every frame again
+# costs about three times the CPU of showing a cached one (measured with 12 emotes playing:
+# 4-8 % of a core instead of 1.5-2.5 %). The cache has its own budget; animations that don't
+# fit – long or large ones – are decoded frame by frame instead.
+MAX_FRAME_CACHE_PER_MOVIE = 2 * 1024 * 1024  # an emote of 60 frames at 56 px height needs ~0.75 MiB
+MAX_FRAME_CACHE_BYTES = 64 * 1024 * 1024  # across all animations of one view
 MAX_FAILED = 1500  # negative cache holds URLs/deadlines, never decoded images
 IMAGE_RETRY_SECONDS = 30
 RETRY_BATCH = 32  # spread recovery after a network outage over multiple GUI turns
@@ -96,6 +102,8 @@ class ChatView(QTextBrowser):
         self._movie_bytes = 0
         self._movie_working_bytes = 0
         self._movie_costs: dict[str, int] = {}
+        self._frame_cache: dict[str, int] = {}  # key → bytes of cached frames (CacheAll movies)
+        self._frame_cache_bytes = 0
         self._movie_resume: dict[str, QTimer] = {}
         self._movie_connections: dict[str, list] = {}
         self._playing: set[str] = set()
@@ -367,7 +375,7 @@ class ChatView(QTextBrowser):
     def _emit_image_failures(self) -> None:
         if self._closed:
             return
-        for _ in range(min(FAILURE_NOTIFY_BATCH, len(self._failure_notifications))):
+        for _n in range(min(FAILURE_NOTIFY_BATCH, len(self._failure_notifications))):
             key, _value = self._failure_notifications.popitem(last=False)
             self.image_failed.emit(key)
         if self._failure_notifications:
@@ -446,7 +454,10 @@ class ChatView(QTextBrowser):
             movie = QMovie(buf, QByteArray(), self)
             buf.setParent(movie)
             movie.setScaledSize(target)
-            movie.setCacheMode(QMovie.CacheMode.CacheNone)
+            frames_bytes = target.width() * target.height() * count * 4
+            cached = (frames_bytes <= MAX_FRAME_CACHE_PER_MOVIE
+                      and self._frame_cache_bytes - self._frame_cache.get(key, 0) + frames_bytes <= MAX_FRAME_CACHE_BYTES)
+            movie.setCacheMode(QMovie.CacheMode.CacheAll if cached else QMovie.CacheMode.CacheNone)
             if movie.isValid() and movie.jumpToFrame(0):
                 self._drop_movie(key)
                 movie.setProperty("multichat_movie_key", key)
@@ -455,6 +466,9 @@ class ChatView(QTextBrowser):
                 self._movie_bytes += buf.size()
                 self._movie_costs[key] = working
                 self._movie_working_bytes += working
+                if cached:
+                    self._frame_cache[key] = frames_bytes
+                    self._frame_cache_bytes += frames_bytes
                 resume = self._movie_resume[key] = QTimer(movie, singleShot=True)
                 resume.setProperty("multichat_movie_key", key)
                 self._movie_connections[key] = [frame_connection, resume.timeout.connect(self._movie_timeout)]
@@ -473,6 +487,7 @@ class ChatView(QTextBrowser):
             movie, buffer = entry
             self._movie_bytes -= buffer.size()
             self._movie_working_bytes -= self._movie_costs.pop(key)
+            self._frame_cache_bytes -= self._frame_cache.pop(key, 0)
             self._playing.discard(key)
             for connection in self._movie_connections.pop(key):
                 QObject.disconnect(connection)

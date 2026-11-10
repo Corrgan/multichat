@@ -258,7 +258,7 @@ def test_unknown_or_excessive_animation_frames_use_static_first_frame(app, monke
     view.close()
 
 
-def test_normal_animation_uses_cache_none_and_total_animation_bytes_are_bounded(app, monkeypatch):
+def test_normal_animation_caches_frames_and_total_animation_bytes_are_bounded(app, monkeypatch):
     monkeypatch.setattr(chat_view, "MAX_MOVIE_BYTES", len(GIF2))
     view = chat_view.ChatView()
     first = view._decode("https://cdn.invalid/a.gif", QByteArray(GIF2))
@@ -266,9 +266,30 @@ def test_normal_animation_uses_cache_none_and_total_animation_bytes_are_bounded(
     assert first is not None and second is not None
     assert len(view.movies) == 1 and view._movie_bytes == len(GIF2)
     movie, _buffer = view.movies["https://cdn.invalid/a.gif"]
-    assert movie.cacheMode() == QMovie.CacheMode.CacheNone and movie.frameCount() == 2
+    # an ordinary emote keeps its decoded frames (a third of the CPU of decoding each again)
+    assert movie.cacheMode() == QMovie.CacheMode.CacheAll and movie.frameCount() == 2
+    assert view._frame_cache_bytes == view._frame_cache["https://cdn.invalid/a.gif"] > 0
     view.set_font_px(view.font_px + 1)
-    assert not view.movies and view._movie_bytes == 0
+    assert not view.movies and view._movie_bytes == 0 and view._frame_cache_bytes == 0
+    view.close()
+
+
+def test_frame_cache_has_a_budget(app, monkeypatch):
+    """Animations that don't fit the frame-cache budget still play, decoded frame by frame."""
+    view = chat_view.ChatView()
+    monkeypatch.setattr(chat_view, "MAX_FRAME_CACHE_PER_MOVIE", 1)  # nothing fits
+    assert view._decode("https://cdn.invalid/big.gif", QByteArray(GIF2)) is not None
+    movie, _buffer = view.movies["https://cdn.invalid/big.gif"]
+    assert movie.cacheMode() == QMovie.CacheMode.CacheNone and view._frame_cache_bytes == 0
+    monkeypatch.setattr(chat_view, "MAX_FRAME_CACHE_PER_MOVIE", 2 * 1024 * 1024)
+    assert view._decode("https://cdn.invalid/a.gif", QByteArray(GIF2)) is not None
+    one = view._frame_cache_bytes
+    monkeypatch.setattr(chat_view, "MAX_FRAME_CACHE_BYTES", one)  # the total budget is used up
+    assert view._decode("https://cdn.invalid/b.gif", QByteArray(GIF2)) is not None
+    assert view.movies["https://cdn.invalid/b.gif"][0].cacheMode() == QMovie.CacheMode.CacheNone
+    assert view._frame_cache_bytes == one
+    view._drop_movie("https://cdn.invalid/a.gif")
+    assert view._frame_cache_bytes == 0
     view.close()
 
 
