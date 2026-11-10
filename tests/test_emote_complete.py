@@ -170,3 +170,93 @@ def test_twitch_usable_emotes_pages_and_fallback(tmp_path):
     acc.request = old_login
     emotes, complete = asyncio.run(acc.usable_emotes("examplechan"))
     assert not complete and dict(emotes) == {"Kappa": "https://e/kappa", "exampleChan": "https://e/chan"}
+
+
+# ---- "@" suggestions: the people in the chat --------------------------------- #
+NAMES_RECENT = [("Carol", "Carol"), ("alice", "alice"), ("Bob", "Bob"), ("Alina", "Alina"), ("Malice", "Malice")]
+
+
+def make_mentions(app, names=None):
+    from multichat.ui.emote_complete import EmoteCompleter as Completer
+
+    edit = QLineEdit()
+    sent = []
+    edit.returnPressed.connect(lambda: sent.append(edit.text()))
+    c = Completer(edit, lambda: EMOTES, lambda: names if names is not None else NAMES_RECENT)
+    edit.show()
+    edit.activateWindow()
+    edit.setFocus()
+    app.processEvents()
+    return edit, c, sent
+
+
+def shown(c):
+    return [c.model.item(i).text() for i in range(c.model.rowCount())]
+
+
+def test_rank_names_keeps_most_recent_first():
+    from multichat.ui.emote_complete import rank_names
+
+    assert [n for n, _m in rank_names("al", NAMES_RECENT)] == ["alice", "Alina", "Malice"]  # prefix, then contains
+    assert rank_names("zz", NAMES_RECENT) == []
+    # a name shown differently from the account is found by both
+    twitch = [("表示名 (examplelogin)", "examplelogin")]
+    assert rank_names("exa", twitch) == twitch and rank_names("表", twitch) == twitch
+    assert rank_names("han", [("@handle", "@handle")]) == [("@handle", "@handle")]  # YouTube handles
+
+
+def test_at_lists_the_people_in_the_chat_and_inserts_the_name(app):
+    edit, c, sent = make_mentions(app)
+    QTest.keyClicks(edit, "hi @")
+    assert not c.visible()  # "@" alone: nothing yet
+    QTest.keyClicks(edit, "a")
+    assert c.visible() and shown(c) == ["alice", "Alina", "Carol", "Malice"]
+    QTest.keyClicks(edit, "li")
+    assert shown(c) == ["alice", "Alina", "Malice"]
+    QTest.keyClick(c.completer.popup(), Qt.Key.Key_Down)
+    QTest.keyClick(c.completer.popup(), Qt.Key.Key_Return)
+    assert edit.text() == "hi @Alina " and sent == [] and not c.visible()  # picked, not sent
+    QTest.keyClicks(edit, "and @bo")
+    QTest.keyClick(c.completer.popup(), Qt.Key.Key_Tab)
+    assert edit.text() == "hi @Alina and @Bob "
+    QTest.keyClick(edit, Qt.Key.Key_Return)
+    assert sent == ["hi @Alina and @Bob "]
+
+
+def test_at_inserts_the_account_name_and_never_doubles_the_at_sign(app):
+    names = [("表示名 (examplelogin)", "examplelogin"), ("@some.handle", "@some.handle"), ("Ünïcödé", "Ünïcödé")]
+    edit, c, _sent = make_mentions(app, names)
+    QTest.keyClicks(edit, "@exa")
+    assert shown(c) == ["表示名 (examplelogin)"]
+    QTest.keyClick(c.completer.popup(), Qt.Key.Key_Return)
+    assert edit.text() == "@examplelogin "  # what Twitch recognises, not the shown name
+    QTest.keyClicks(edit, "@some.h")
+    assert shown(c) == ["@some.handle"]
+    QTest.keyClick(c.completer.popup(), Qt.Key.Key_Return)
+    assert edit.text() == "@examplelogin @some.handle "
+    event = QInputMethodEvent()  # QTest's key clicks only do ASCII
+    event.setCommitString("@ün")
+    app.sendEvent(edit, event)
+    assert shown(c) == ["Ünïcödé"]
+    QTest.keyClick(c.completer.popup(), Qt.Key.Key_Return)
+    assert edit.text() == "@examplelogin @some.handle @Ünïcödé "
+
+
+def test_at_inside_a_word_and_unknown_names_show_nothing(app):
+    edit, c, _sent = make_mentions(app)
+    QTest.keyClicks(edit, "mail@al")
+    assert not c.visible()  # not a mention
+    edit.clear()
+    QTest.keyClicks(edit, "@zzz")
+    assert not c.visible()
+    QTest.keyClick(edit, Qt.Key.Key_Return)  # Enter sends as usual
+    edit.clear()
+    QTest.keyClicks(edit, "@al")
+    assert c.visible()
+    QTest.keyClicks(edit, " ")
+    assert not c.visible()  # the name was typed out
+    edit.clear()
+    QTest.keyClicks(edit, ":kap")  # emotes still work next to it
+    assert shown(c)[:2] == ["Kappa", "KappaPride"]
+    QTest.keyClick(c.completer.popup(), Qt.Key.Key_Return)
+    assert edit.text() == "Kappa "

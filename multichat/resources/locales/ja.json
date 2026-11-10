@@ -116,7 +116,7 @@
   "Right-click → copy": "右クリック → コピー",
   "Roles": "ロール",
   "Send": "送信",
-  "Send a message … (: for emotes)": "メッセージを送信 …（: でエモート）",
+  "Send a message … (: for emotes, @ for names)": "メッセージを送信 …（: でエモート、@ で名前）",
   "Sent to {platform}": "{platform} に送信しました",
   "Set up developer apps …": "開発者アプリを設定 …",
   "Show / hide the channel list": "チャンネル一覧の表示 / 非表示",

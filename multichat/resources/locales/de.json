@@ -116,7 +116,7 @@
   "Right-click → copy": "Rechtsklick → kopieren",
   "Roles": "Rollen",
   "Send": "Senden",
-  "Send a message … (: for emotes)": "Nachricht senden … (: für Emotes)",
+  "Send a message … (: for emotes, @ for names)": "Nachricht senden … (: für Emotes, @ für Namen)",
   "Sent to {platform}": "An {platform} gesendet",
   "Set up developer apps …": "Entwickler-Apps einrichten …",
   "Show / hide the channel list": "Kanalliste ein-/ausblenden",

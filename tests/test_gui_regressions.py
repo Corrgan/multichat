@@ -86,3 +86,56 @@ def test_unicode_completion_preserves_the_text_sent_by_main_window(window, app, 
     QTest.keyClick(w.input, Qt.Key.Key_Return)
     assert sent == [("twitch", "chan", "😀🚀 Kappa hello")]
     w.logout("twitch")
+
+
+def test_at_suggestions_come_from_the_chat_you_send_to(window, app, monkeypatch):
+    """Names after "@": the people who wrote in the send target, most recent first, without
+    yourself; Twitch names shown in another script are mentioned by their account name."""
+    from multichat.chat.models import ChatMessage
+
+    w = window
+    w.accounts["twitch"].store.replace_all({})
+    w.panels[0].rows["twitch"].edit.setText("chan")
+    w.panels[0].rows["kick"].edit.setText("examplekick")
+    w.accounts["twitch"].store.update("twitch", access_token="test", expires_at=9e12, user_name="Me", user_id="42")
+    w.accounts["kick"].store.update("kick", access_token="test", expires_at=9e12, user_name="MeOnKick", user_id="7")
+    w.refresh_accounts()
+
+    def say(platform, channel, user, user_id, **kw):
+        m = ChatMessage(platform, channel, user, "hello", user_id=user_id, source=f"{platform}:{channel}", **kw)
+        w.add_message(m)
+        w._flush_messages()  # one at a time: the mailbox takes turns between channels
+
+    say("twitch", "chan", "Alice", "1", login="alice")
+    say("twitch", "chan", "表示名", "2", login="examplelogin")
+    say("twitch", "otherchan", "Elsewhere", "3", login="elsewhere")  # not a channel of this group
+    say("kick", "examplekick", "KickUser", "4")
+    say("twitch", "chan", "Me", "42", login="me")  # yourself
+    say("kick", "examplekick", "alice", "5")  # same name on the other platform
+    say("twitch", "chan", "Bob", "6", login="bob")
+    say("twitch", "chan", "Alice", "1", login="alice")  # wrote again: moves to the front
+
+    w.target.setCurrentIndex(w.target.findData(None))  # all channels of the group
+    assert w._send_mentions() == [("Alice", "Alice"), ("Bob", "Bob"), ("KickUser", "KickUser"),
+                                  ("表示名 (examplelogin)", "examplelogin")]
+    w.target.setCurrentIndex(w.target.findData("kick:examplekick"))
+    assert w._send_mentions() == [("alice", "alice"), ("KickUser", "KickUser")]
+
+    w.target.setCurrentIndex(w.target.findData("twitch:chan"))
+    sent = []
+
+    async def send_to(platform, channel, text):
+        sent.append((platform, channel, text))
+
+    monkeypatch.setattr(w, "send_to", send_to)
+    monkeypatch.setattr(w, "run", lambda coro, **kwargs: asyncio.run(coro))
+    w.show()
+    w.input.setFocus()
+    QTest.keyClicks(w.input, "@exa")
+    assert w.emote_complete.visible()
+    QTest.keyClick(w.emote_complete.completer.popup(), Qt.Key.Key_Return)
+    QTest.keyClicks(w.input, "hi")
+    QTest.keyClick(w.input, Qt.Key.Key_Return)
+    assert sent == [("twitch", "chan", "@examplelogin hi")]
+    w.logout("twitch")
+    w.logout("kick")

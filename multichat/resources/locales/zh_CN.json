@@ -116,7 +116,7 @@
   "Right-click → copy": "右键 → 复制",
   "Roles": "身份",
   "Send": "发送",
-  "Send a message … (: for emotes)": "发送消息 …（输入 : 选择表情）",
+  "Send a message … (: for emotes, @ for names)": "发送消息 …（输入 : 选择表情，@ 选择用户名）",
   "Sent to {platform}": "已发送到 {platform}",
   "Set up developer apps …": "设置开发者应用 …",
   "Show / hide the channel list": "显示 / 隐藏频道列表",

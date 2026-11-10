@@ -39,12 +39,16 @@ class ChatMessage:
     # which connection it came from: "platform:channel" as entered (set by the UI per reader,
     # needed because one platform can have several channels – YouTube's channel is a video ID)
     source: str = ""
+    # account name where it differs from the shown name (Twitch: display names in other
+    # scripts or with different spelling) – it is what an @mention needs, see mention_name()
+    login: str = ""
 
     def __post_init__(self) -> None:
         # Everything here comes from a platform's servers. They limit lengths themselves
         # (200-500 characters), but nothing downstream (chat view, overlay, history, notes)
         # should depend on that: clamp once, here.
         self.user = _CONTROL_RE.sub("", _SPOOF_RE.sub("", str(self.user)))[:MAX_USER].strip() or "?"
+        self.login = _LOGIN_RE.sub("", str(self.login or ""))[:MAX_USER]
         self.text = _clean_text(self.text)[:MAX_TEXT]
         self.event_text = _clean_text(self.event_text)[:MAX_EVENT_TEXT]
         if self.parts:
@@ -63,6 +67,7 @@ MAX_PARTS = 600  # text pieces and emotes of one message
 _CONTROL_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")  # control characters (not tab/newline)
 # direction overrides/isolates: in a name they can make it read as another name
 _SPOOF_RE = re.compile("[\u202a-\u202e\u2066-\u2069\r\n\t]")
+_LOGIN_RE = re.compile(r"[^\w.\-]")  # account names are letters, digits, "_", ".", "-"
 
 
 def _clean_text(value) -> str:
@@ -158,6 +163,15 @@ class TTLCache:
             self._data[key] = (time.monotonic() + self.ttl, value)
             while len(self._data) > self.size:
                 self._data.pop(next(iter(self._data)))
+
+
+def mention_name(m: "ChatMessage") -> str:
+    """What to write after "@" to address this chatter: the shown name – or the account
+    name where the two differ in more than upper/lower case (the platform only recognises
+    that one)."""
+    if m.login and m.login.lower() != m.user.lower():
+        return m.login
+    return m.user
 
 
 def user_key(m: "ChatMessage") -> str:

@@ -1,10 +1,13 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 Corrgan
-"""Emote suggestions in the send line, like on the Twitch website.
+"""Suggestions in the send line, like on the Twitch website: emotes and names.
 
 Typing ":" and at least two letters opens a list of matching emotes (with their images);
 ↑/↓ choose, Tab/Enter/click insert the emote's code followed by a space, Esc closes. A
 complete ":code:" is replaced right away when there is such an emote.
+
+Typing "@" and a letter lists the people who wrote in the chat you are sending to – whoever
+wrote last comes first – and inserts "@name ".
 """
 from __future__ import annotations
 
@@ -12,7 +15,7 @@ import re
 from collections import OrderedDict
 from typing import Callable
 
-from PyQt6.QtCore import QEvent, QObject, QSize, Qt
+from PyQt6.QtCore import QEvent, QModelIndex, QObject, QSize, Qt
 from PyQt6.QtGui import QIcon, QPixmap, QStandardItem, QStandardItemModel
 from PyQt6.QtWidgets import QCompleter, QLineEdit
 
@@ -25,8 +28,10 @@ MAX_ICON_ACTIVE = 6
 MAX_ICON_WAITING = 64
 MAX_ICON_BYTES = 2_000_000
 URL_ROLE = Qt.ItemDataRole.UserRole + 1
+INSERT_ROLE = Qt.ItemDataRole.UserRole + 2  # text an entry inserts (without the space that follows)
 _QUERY = re.compile(r"(?:^|(?<=\s)):([\w\-]{%d,})$" % MIN_CHARS)  # ":kap" right before the cursor
 _DONE = re.compile(r"(?:^|(?<=\s)):([\w\-]+):$")  # ":kappa:" right before the cursor
+_MENTION = re.compile(r"(?:^|(?<=\s))@([\w.\-]+)$")  # "@ka" right before the cursor
 
 
 def _python_index(text: str, qt_position: int) -> int:
@@ -54,21 +59,38 @@ def rank(query: str, names, limit: int = MAX_SHOWN) -> list[str]:
     return (starts + contains)[:limit]
 
 
-class EmoteCompleter(QObject):
-    """provider() → {code: image URL} of the emotes usable with the current send target."""
+def rank_names(query: str, names, limit: int = MAX_SHOWN) -> list[tuple[str, str]]:
+    """names: (shown, name to mention), whoever wrote last first. → those starting with the
+    query, then those containing it; the order (most recent first) is kept within both."""
+    q = query.lower().lstrip("@")
+    starts, contains = [], []
+    for shown, mention in names:
+        keys = {shown.lower().lstrip("@"), mention.lower().lstrip("@")}
+        if any(k.startswith(q) for k in keys):
+            starts.append((shown, mention))
+        elif any(q in k for k in keys):
+            contains.append((shown, mention))
+    return (starts + contains)[:limit]
 
-    def __init__(self, edit: QLineEdit, provider: Callable[[], dict[str, str]]) -> None:
+
+class EmoteCompleter(QObject):
+    """provider() → {code: image URL} of the emotes usable with the current send target;
+    mentions() → [(shown, name to mention)] of the people in that chat, most recent first."""
+
+    def __init__(self, edit: QLineEdit, provider: Callable[[], dict[str, str]],
+                 mentions: Callable[[], list[tuple[str, str]]] | None = None) -> None:
         super().__init__(edit)
         self._closed = False
         self.edit = edit
         self.provider = provider
+        self.mentions = mentions or (lambda: [])
         self.model = QStandardItemModel(self)
         self.completer = QCompleter(self)
         self.completer.setModel(self.model)
         self.completer.setWidget(edit)
         self.completer.setCompletionMode(QCompleter.CompletionMode.UnfilteredPopupCompletion)
         self.completer.setMaxVisibleItems(8)
-        self._connections = [self.completer.activated[str].connect(self.insert)]
+        self._connections = [self.completer.activated[QModelIndex].connect(self._activated)]
         popup = self.completer.popup()
         popup.setIconSize(QSize(28, 28))
         popup.setUniformItemSizes(True)
@@ -104,6 +126,7 @@ class EmoteCompleter(QObject):
         self.completer.popup().removeEventFilter(self)
         self.completer.setWidget(None)
         self.provider = lambda: {}
+        self.mentions = lambda: []
 
     # ---- typing ------------------------------------------------------------ #
     def eventFilter(self, obj, event) -> bool:  # noqa: N802
@@ -117,8 +140,8 @@ class EmoteCompleter(QObject):
                 Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Tab):
             index = self.completer.popup().currentIndex()
             if index.isValid():
-                self.insert(index.data())
-                return True  # consumed: picks the emote, doesn't send
+                self._activated(index)
+                return True  # consumed: picks the entry, doesn't send
         return super().eventFilter(obj, event)
 
     def _edited(self, _text: str = "") -> None:
@@ -137,24 +160,31 @@ class EmoteCompleter(QObject):
                 self.insert(code)
                 return
         m = _QUERY.search(before)
-        if not m:
-            self.hide()
-            return
-        emotes = self.provider()
-        names = rank(m.group(1), emotes)
-        if not names:
+        items = []
+        if m:
+            emotes = self.provider()
+            for name in rank(m.group(1), emotes):
+                item = QStandardItem(name)
+                url = emotes[name]
+                item.setData(url, URL_ROLE)
+                item.setData(name, INSERT_ROLE)
+                item.setIcon(self._icon(url))
+                item.setToolTip(name)
+                items.append(item)
+        else:
+            m = _MENTION.search(before)
+            for shown, mention in (rank_names(m.group(1), self.mentions()) if m else []):
+                item = QStandardItem(shown)
+                item.setData(mention if mention.startswith("@") else "@" + mention, INSERT_ROLE)
+                items.append(item)
+        if not items:
             self.hide()
             return
         self._span = (m.start(), pos)
         self._span_text = text
         self.model.clear()
-        for name in names:
-            item = QStandardItem(name)
+        for item in items:
             item.setEditable(False)
-            url = emotes[name]
-            item.setData(url, URL_ROLE)
-            item.setIcon(self._icon(url))
-            item.setToolTip(name)
             self.model.appendRow(item)
         rect = self.edit.cursorRect()
         rect.setWidth(max(240, self.completer.popup().sizeHintForColumn(0) + 40))
@@ -178,8 +208,13 @@ class EmoteCompleter(QObject):
     def visible(self) -> bool:
         return self.completer.popup().isVisible()
 
+    def _activated(self, index: QModelIndex) -> None:
+        text = index.data(INSERT_ROLE) or index.data()
+        if text:
+            self.insert(text)
+
     def insert(self, code: str) -> None:
-        """Replaces the ":query" with the emote code and a space."""
+        """Replaces the ":query" or "@query" with the emote code or "@name", and a space."""
         if self._closed or self._span is None:
             return
         start, end = self._span

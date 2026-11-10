@@ -246,7 +246,8 @@ class MainWindow(GroupsMixin, ConnectionsMixin, MessagesMixin, SendMixin, QMainW
         self.input = QLineEdit()
         self.input.setMaxLength(MAX_INPUT)
         self.input.returnPressed.connect(self.send)
-        self.emote_complete = EmoteCompleter(self.input, self._send_emotes)  # ":kap" → Kappa
+        # ":kap" → Kappa, "@na" → @name
+        self.emote_complete = EmoteCompleter(self.input, self._send_emotes, self._send_mentions)
         self._native_emotes: dict[str, dict[str, str]] = {}  # source key → Twitch emotes you can use there
         self._native_loading: set[str] = set()
         self._native_session = self.accounts["twitch"].session_gen

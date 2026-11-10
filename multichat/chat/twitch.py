@@ -137,6 +137,7 @@ async def run_twitch(channel: str, emit: Emit, status: Status, emotes=None) -> N
                                     platform="twitch",
                                     channel=channel,
                                     user=tags.get("display-name") or prefix.split("!")[0],
+                                    login=prefix.split("!")[0],
                                     text=text,
                                     parts=_extra(emotes, "twitch", channel, twitch_parts(text, tags.get("emotes"))),
                                     color=tags.get("color") or None,
@@ -154,6 +155,7 @@ async def run_twitch(channel: str, emit: Emit, status: Status, emotes=None) -> N
                                     channel=channel,
                                     user=tags.get("msg-param-displayName") or tags.get("display-name")
                                     or tags.get("login") or "?",
+                                    login=tags.get("login") or "",
                                     text=text,
                                     parts=_extra(emotes, "twitch", channel, twitch_parts(text, tags.get("emotes")))
                                     if text else [],

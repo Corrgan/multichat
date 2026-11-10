@@ -6,8 +6,12 @@ from __future__ import annotations
 
 from ..accounts import ApiError
 from ..chat import ChatMessage
+from ..chat.models import mention_name, user_key
 from ..core.constants import NAMES, PLATFORMS
 from ..core.i18n import _
+
+
+MAX_MENTION_NAMES = 500  # chatters offered after "@"
 
 
 class SendMixin:
@@ -47,7 +51,7 @@ class SendMixin:
         for w in (self.target, self.input, self.send_btn):
             w.setEnabled(enabled)
         if enabled:
-            self.input.setPlaceholderText(_("Send a message … (: for emotes)"))
+            self.input.setPlaceholderText(_("Send a message … (: for emotes, @ for names)"))
             self._load_send_emotes()
         elif logged:
             self.input.setPlaceholderText(_("Enter a channel of a platform you are logged in to"))
@@ -63,6 +67,30 @@ class SendMixin:
             if target in (None, key):
                 out.update(self.emotes.available(platform, channel))
                 out.update(self._native_emotes.get(key, {}))
+        return out
+
+    def _send_mentions(self) -> list[tuple[str, str]]:
+        """(shown, name to mention) of the people who wrote in the chosen send target(s),
+        whoever wrote last first – for the "@" suggestions. Without yourself."""
+        target = self.target.currentData()
+        keys = {key for key, _p, _c, _label in self._send_options() if target in (None, key)}
+        seen, names, out = set(), set(), []
+        for m in reversed(self.messages.values()):
+            if m.source not in keys or m.user == "?":
+                continue
+            who = (m.platform, user_key(m))
+            if who in seen:
+                continue
+            seen.add(who)
+            if self.mod._is_own(self.accounts[m.platform], m):
+                continue
+            mention = mention_name(m)
+            if mention.lower() in names:  # the same name on two platforms: one entry
+                continue
+            names.add(mention.lower())
+            out.append((m.user if mention == m.user else f"{m.user} ({mention})", mention))
+            if len(out) >= MAX_MENTION_NAMES:
+                break
         return out
 
     def _load_send_emotes(self) -> None:
