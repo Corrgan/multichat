@@ -157,7 +157,7 @@ def test_only_https_streams_reach_mpv(monkeypatch):
     with pytest.raises(RuntimeError, match="unexpected stream address"):
         streams.resolve("youtube", "@examplechannel", "best")
     # our own Streamlink pipe and ordinary https pass
-    monkeypatch.setattr(streams, "_twitch", lambda channel, max_h: streams.Stream("fdclose://7", pipe_fd=7))
+    monkeypatch.setattr(streams, "_twitch", lambda channel, max_h, low_latency=False: streams.Stream("fdclose://7", pipe_fd=7))
     assert streams.resolve("twitch", "examplechan", "best").url == "fdclose://7"
     monkeypatch.setattr(streams, "_youtube", lambda value, max_h: streams.Stream("https://www.youtube.com/watch?v=abcdefghijk"))
     assert streams.resolve("youtube", "@examplechannel", "best").url.startswith("https://")

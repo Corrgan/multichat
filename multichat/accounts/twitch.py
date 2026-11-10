@@ -45,16 +45,21 @@ class TwitchAccount(Account):
             self._cache[login] = data[0]["id"]
         return self._cache[login]
 
-    async def live_channels(self, logins: list[str]) -> set[str]:
-        """Which of these channels (logins) are live right now – one request per 100."""
+    async def live_streams(self, logins: list[str]) -> dict[str, str]:
+        """Which of these channels (logins) are live right now → {login: start of the stream
+        as Twitch states it ("" if it doesn't)}. One request per 100."""
         logins = sorted({login.lower() for login in logins})
-        live: set[str] = set()
+        live: dict[str, str] = {}
         for i in range(0, len(logins), 100):
             params = [("user_login", login) for login in logins[i:i + 100]] + [("first", "100")]
             res = await self.request("GET", f"{self.API}/streams", params=params)
-            live.update(str(s.get("user_login", "")).lower() for s in (res or {}).get("data") or []
-                        if isinstance(s, dict) and s.get("type", "live") == "live")
+            for s in (res or {}).get("data") or []:
+                if isinstance(s, dict) and s.get("type", "live") == "live" and s.get("user_login"):
+                    live[str(s["user_login"]).lower()] = str(s.get("started_at") or "")
         return live
+
+    async def live_channels(self, logins: list[str]) -> set[str]:
+        return set(await self.live_streams(logins))
 
     async def send(self, channel: str, text: str) -> None:
         bid = await self.broadcaster_id(channel)

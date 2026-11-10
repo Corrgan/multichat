@@ -139,3 +139,42 @@ def test_at_suggestions_come_from_the_chat_you_send_to(window, app, monkeypatch)
     assert sent == [("twitch", "chan", "@examplelogin hi")]
     w.logout("twitch")
     w.logout("kick")
+
+
+def test_dragging_a_tab_reorders_the_groups(window, app):
+    """The tab bar is movable; the groups follow in everything that goes by their order."""
+    w = window
+    for name in ("One", "Two", "Three"):
+        panel = w.panels[0] if name == "One" else w.add_group()
+        panel.name.setText(name)
+        panel.rows["twitch"].edit.setText(f"chan{name.lower()}")
+    assert w.tabs.isMovable()
+    first, second, third = w.panels
+    w.tabs.setCurrentIndex(0)
+    third.unread = 4
+    w._update_titles()
+
+    w.tabs.moveTab(0, 2)  # what dragging the first tab to the end does
+    assert w.panels == [second, third, first]
+    assert [w.tabs.tabText(i) for i in range(3)] == ["Two", "Three (4)", "One"]
+    assert w.tabs.currentIndex() == 2 and w.active_panel() is first  # the dragged tab stays the active one
+    assert first.isVisibleTo(w) and not second.isVisibleTo(w)
+    assert [w.side.indexOf(p) for p in w.panels] == [0, 1, 2]  # side by side shows the same order
+    # saved in the new order, and the overlay's group numbers follow the tabs
+    w.save_config()
+    assert [g["name"] for g in w.config["groups"]] == ["Two", "Three", "One"]
+    from types import SimpleNamespace
+
+    def numbers(source):  # as computed for the overlay's "group=N"
+        shown = w.panels_for(SimpleNamespace(source=source))
+        return [i + 1 for i, pn in enumerate(w.panels) if pn in shown]
+
+    assert numbers("twitch:chanone") == [3] and numbers("twitch:chantwo") == [1]
+
+    w.tabs.moveTab(1, 0)
+    assert w.panels == [third, second, first] and w.tabs.tabText(0) == "Three (4)"
+    # a group added afterwards still goes to the end, removing one keeps the order
+    fourth = w.add_group()
+    assert w.panels[-1] is fourth
+    w.remove_group(fourth)
+    assert w.panels == [third, second, first]

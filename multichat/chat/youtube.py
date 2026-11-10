@@ -81,6 +81,10 @@ def _get(url: str):
         return requests.get(url, timeout=20, headers=YT_HEADERS, cookies=YT_COOKIES)
 
 
+_YT_START_RE = re.compile(r'"startTimestamp"\s*:\s*"([^"]{10,40})"')
+LIVE_STARTED: dict[str, str] = {}  # channel URL → start of its live stream as the page states it
+
+
 def live_now(channel_url: str) -> tuple[str, str] | None:
     """(video ID, title) of the channel's live stream, None if not live. Blocking; chat and
     video tile share one request (LIVE_CACHE). ValueError if the channel doesn't exist."""
@@ -93,7 +97,13 @@ def live_now(channel_url: str) -> tuple[str, str] | None:
             raise RuntimeError(f"YouTube page HTTP {r.status_code}")
         if "consent." in str(r.url):
             raise RuntimeError("YouTube cookie consent page blocks the lookup")
-        return parse_live_page(r.text)
+        found = parse_live_page(r.text)
+        started = _YT_START_RE.search(r.text) if found else None
+        if started:
+            LIVE_STARTED[channel_url] = started.group(1)
+        else:
+            LIVE_STARTED.pop(channel_url, None)
+        return found
 
     return LIVE_CACHE.fetch(channel_url, load)
 

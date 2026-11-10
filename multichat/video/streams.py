@@ -46,6 +46,11 @@ class Offline(Exception):
     pass
 
 
+# mpv options for a Kick or YouTube stream with "Low video delay": FFmpeg's HLS reader
+# starts three segments behind the newest by default; two is one segment less delay.
+LOW_LATENCY_MPV = {"demuxer-lavf-o": "live_start_index=-2"}
+
+
 @dataclass
 class Stream:
     url: str
@@ -277,9 +282,11 @@ def _streamlink_heights(names) -> tuple:
     return tuple(sorted({int(m.group(1)) for m in (re.fullmatch(r"(\d+)p(\d+)?", n) for n in names) if m}))
 
 
-def _twitch(channel: str, max_h: int) -> Stream:
+def _twitch(channel: str, max_h: int, low_latency: bool = False) -> Stream:
     """Twitch via Streamlink: ad breaks are filtered out (disable-ads).
-    The data goes to mpv through a pipe ("fdclose://N")."""
+    The data goes to mpv through a pipe ("fdclose://N").
+    low_latency: Twitch's low latency mode – Streamlink starts two segments behind the
+    newest instead of three and passes on segments while they are still being produced."""
     try:
         from streamlink import Streamlink  # type: ignore
         from streamlink.options import Options  # type: ignore
@@ -291,7 +298,8 @@ def _twitch(channel: str, max_h: int) -> Stream:
     session = Streamlink()
     try:
         _name, plugin_cls, resolved = session.resolve_url(url)
-        plugin = plugin_cls(session, resolved, options=Options({"disable-ads": True}))
+        plugin = plugin_cls(session, resolved,
+                            options=Options({"disable-ads": True, "low-latency": bool(low_latency)}))
         streams = plugin.streams()
     except Exception as e:  # noqa: BLE001
         msg = str(e)
@@ -318,7 +326,8 @@ def _twitch(channel: str, max_h: int) -> Stream:
     except Exception as e:  # noqa: BLE001
         logging.getLogger("streamlink").removeHandler(ads)
         raise RuntimeError(_("Streamlink: the stream cannot be opened ({error})").format(error=e)) from e
-    log.info("Twitch %s: Streamlink variant %s (ad filter on)", channel, name)
+    log.info("Twitch %s: Streamlink variant %s (ad filter on%s)", channel, name,
+             ", low latency" if low_latency else "")
 
     rfd, wfd = os.pipe()
     stop = threading.Event()
@@ -367,14 +376,15 @@ def _https_only(url: str | None, what: str) -> None:
         raise RuntimeError(_("unexpected stream address"))
 
 
-def resolve(platform: str, value: str, quality: str) -> Stream:
+def resolve(platform: str, value: str, quality: str, low_latency: bool = False) -> Stream:
     """Returns the stream or raises Offline / RuntimeError. quality: a fixed level (a tile
-    set to "Automatic" passes the level it is at)."""
+    set to "Automatic" passes the level it is at). low_latency: start closer to "now"
+    (Twitch here; for Kick and YouTube the tile tells mpv, see LOW_LATENCY_MPV)."""
     max_h = quality_height(quality)
     value = value.strip()
     log.debug("Looking for stream: %s %r (%s)", platform, value, quality)
     if platform == "twitch":
-        stream = _twitch(twitch_channel(value), max_h)
+        stream = _twitch(twitch_channel(value), max_h, low_latency)
     elif platform == "kick":
         stream = _kick(value, max_h)
     else:

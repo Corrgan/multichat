@@ -12,9 +12,10 @@ from test_window_lifecycle import spin
 
 class FakeTwitch:
     def __init__(self, logged_in=True, live=(), fail=False):
-        self.logged_in, self._live, self.fail, self.asked = logged_in, set(live), fail, []
+        self.logged_in, self.fail, self.asked = logged_in, fail, []
+        self._live = live if isinstance(live, dict) else {name: "" for name in live}
 
-    async def live_channels(self, logins):
+    async def live_streams(self, logins):
         self.asked.append(list(logins))
         if self.fail:
             raise RuntimeError("Helix down")
@@ -156,3 +157,113 @@ def test_a_group_tab_shows_live_when_any_of_its_channels_is(window, app, monkeyp
     assert w.tabs.tabIcon(0).isNull() and not w.tabs.tabIcon(1).isNull()
     tip = w.tabs.tabToolTip(1)
     assert "Kick · examplekick" in tip and "YouTube · @examplelive" in tip
+
+
+# ---- how long the stream has been running ------------------------------------ #
+def test_start_times_are_read_from_what_the_platforms_send():
+    import time
+    from datetime import datetime, timedelta, timezone
+
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    two_hours = now - timedelta(hours=2)
+    for text in (two_hours.strftime("%Y-%m-%dT%H:%M:%SZ"),  # Twitch
+                 two_hours.strftime("%Y-%m-%d %H:%M:%S"),  # Kick: UTC without saying so
+                 two_hours.isoformat(),  # YouTube: with offset
+                 two_hours.astimezone(timezone(timedelta(hours=1))).isoformat()):  # same moment, local offset
+        assert abs(live.started(text) - (time.time() - 7200)) < 5, text
+    for text in ("", None, 123, "yesterday", "2019-01-01T00:00:00Z",  # weeks ago: not a running stream
+                 (now + timedelta(days=1)).isoformat()):  # in the future
+        assert live.started(text) is None, text
+
+
+def test_check_reports_since_when_a_channel_is_live(monkeypatch):
+    import time
+    from datetime import datetime, timedelta, timezone
+
+    def ago(minutes, fmt="%Y-%m-%dT%H:%M:%SZ"):
+        return (datetime.now(timezone.utc) - timedelta(minutes=minutes)).strftime(fmt)
+
+    monkeypatch.setattr(live, "fetch_kick_json", lambda slug: {
+        "examplekick": {"livestream": {"id": 1, "created_at": ago(30, "%Y-%m-%d %H:%M:%S")}},
+        "nostartkick": {"livestream": {"id": 2}}, "quietkick": {"livestream": None}}[slug])
+    monkeypatch.setattr(live, "live_now", lambda url: ("vid12345678", "title") if "examplelive" in url else None)
+    monkeypatch.setitem(live.LIVE_STARTED, "https://www.youtube.com/@examplelive", ago(90))
+    monkeypatch.setitem(live.LIVE_STARTED, "https://www.youtube.com/@quiet", ago(5))  # stale: it is not live
+    targets = [("twitch:examplechan", "twitch", "examplechan"), ("twitch:nostart", "twitch", "nostart"),
+               ("twitch:quietchan", "twitch", "quietchan"), ("kick:examplekick", "kick", "examplekick"),
+               ("kick:nostartkick", "kick", "nostartkick"), ("kick:quietkick", "kick", "quietkick"),
+               ("youtube:@examplelive", "youtube", "@examplelive"), ("youtube:@quiet", "youtube", "@quiet")]
+    result = asyncio.run(live.check(targets, FakeTwitch(live={"examplechan": ago(125), "nostart": ""})))
+    assert [key for key, state in result.items() if state] == [
+        "twitch:examplechan", "twitch:nostart", "kick:examplekick", "kick:nostartkick", "youtube:@examplelive"]
+    minutes = {key: round((time.time() - at) / 60) for key, at in result.since.items()}
+    assert minutes == {"twitch:examplechan": 125, "kick:examplekick": 30, "youtube:@examplelive": 90}
+
+
+def test_twitch_live_streams_carry_the_start(tmp_path):
+    from multichat.accounts import FileBackend, SecretStore, TwitchAccount
+
+    store = SecretStore("tokens", FileBackend(tmp_path))
+    acc = TwitchAccount(store, lambda p: ("CID", "SECRET"), lambda: None)
+    store.replace("twitch", {"access_token": "x", "expires_at": 9e12, "user_id": "42", "user_name": "Me"})
+
+    async def fake_request(method, url, params=None, **kw):
+        return {"data": [{"user_login": "ExampleChan", "type": "live", "started_at": "2026-11-10T21:04:11Z"},
+                         {"user_login": "nostart", "type": "live"}, "junk", {"type": "live"}]}
+
+    acc.request = fake_request
+    assert asyncio.run(acc.live_streams(["examplechan", "nostart", "quiet"])) == {
+        "examplechan": "2026-11-10T21:04:11Z", "nostart": ""}
+    assert asyncio.run(acc.live_channels(["examplechan", "nostart"])) == {"examplechan", "nostart"}
+
+
+def test_tab_shows_how_long_the_streamer_has_been_live(window, app, monkeypatch):  # noqa: F811
+    """One channel's answer is enough for the group; the tooltips say it per channel."""
+    import time
+
+    from multichat.ui.groups import uptime_text
+
+    assert [uptime_text(s) for s in (0, 59, 7 * 60, 83 * 60, 12 * 3600 + 5 * 60)] == ["0:00", "0:00", "0:07", "1:23", "12:05"]
+    w = window
+    watch = w.live_watch
+    panel = w.panels[0]
+    panel.name.setText("Main")
+    panel.rows["twitch"].edit.setText("examplechan")
+    panel.rows["kick"].edit.setText("examplekick")
+    panel.rows["youtube"].edit.setText("@examplelive")
+    now = time.time()
+
+    async def check(targets, twitch):
+        result = live.Result()
+        result.update({key: True for key, _p, _v in targets})
+        result.since.update({"kick:examplekick": now - 30 * 60, "youtube:@examplelive": now - 83 * 60})
+        return result
+
+    monkeypatch.setattr(live_watch.live, "check", check)
+    watch.check()
+    assert spin(app, lambda: len(watch.live) == 3)
+    # Twitch is live but did not say since when: the next channel that knows it is used
+    assert w.tabs.tabText(0) == "Main · 0:30"
+    tip = w.tabs.tabToolTip(0)
+    assert "Twitch · examplechan," in tip and "Kick · examplekick (0:30 h)" in tip and "(1:23 h)" in tip
+    assert "0:30" in panel.rows["kick"].live.toolTip() and panel.rows["twitch"].live.toolTip() == "Live now"
+    # a minute later the display has counted on (the watch's clock refreshes it)
+    watch.since["kick:examplekick"] -= 60
+    watch._clock.timeout.emit()
+    assert w.tabs.tabText(0) == "Main · 0:31"
+    # unread messages still show next to it
+    panel.unread = 3
+    w._update_titles()
+    assert w.tabs.tabText(0) == "Main · 0:31 (3)"
+    panel.unread = 0
+    # offline again: no time, no dot
+    async def offline(targets, twitch):
+        result = live.Result()
+        result.update({key: False for key, _p, _v in targets})
+        return result
+
+    monkeypatch.setattr(live_watch.live, "check", offline)
+    watch._due.clear()
+    watch.check()
+    assert spin(app, lambda: watch.live.get("kick:examplekick") is False)
+    assert w.tabs.tabText(0) == "Main" and not watch.since and w.tabs.tabIcon(0).isNull()

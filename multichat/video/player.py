@@ -185,9 +185,11 @@ class MpvWidget(QOpenGLWidget):
         # thread: only append/assign here, the tile reads it on the UI thread.
         self.stalls: deque[tuple[float, bool]] = deque(maxlen=64)  # (time, waiting for data?)
         self.video_height = 0  # height of the picture being decoded
+        self.buffered: deque[tuple[float, float]] = deque(maxlen=256)  # (time, seconds buffered ahead)
         try:
             self.player.observe_property("paused-for-cache", self._on_stall)
             self.player.observe_property("height", self._on_height)
+            self.player.observe_property("demuxer-cache-duration", self._on_buffered)  # see catch_up.py
         except Exception as e:  # noqa: BLE001 – without it "Automatic" just stays at its level
             mlog.debug("mpv property observers not available: %s", e)
         self.ctx = None
@@ -202,6 +204,16 @@ class MpvWidget(QOpenGLWidget):
     def _on_stall(self, _name, value) -> None:
         self.stalls.append((time.monotonic(), bool(value)))
 
+    def _on_buffered(self, _name, value) -> None:
+        if isinstance(value, (int, float)):
+            self.buffered.append((time.monotonic(), float(value)))
+
+    def set_speed(self, speed: float) -> None:
+        try:  # async like every call into the player: it may be busy stopping
+            self.player.command_async("set", "speed", f"{speed:.2f}")
+        except Exception:  # noqa: BLE001
+            pass
+
     def _on_height(self, _name, value) -> None:
         self.video_height = int(value) if isinstance(value, (int, float)) and value > 0 else 0
 
@@ -210,7 +222,9 @@ class MpvWidget(QOpenGLWidget):
         opts: mpv options for this stream only, e.g. {"user-agent": …, "audio-file": …}."""
         self.last_error = ""
         self.stalls.clear()
+        self.buffered.clear()
         self.video_height = 0
+        self.set_speed(1.0)  # a speed set while catching up stays with the player otherwise
         if self.ctx is None:
             self._pending = (url, opts)
         else:

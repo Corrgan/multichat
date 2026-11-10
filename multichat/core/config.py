@@ -69,7 +69,8 @@ def load_config() -> dict:
         "active_group": 0,
         "side_by_side": False,
         "alerts": dict(DEFAULT_ALERTS),
-        "video": {"enabled": True, "quality": {}, "volume": {}, "audio": None, "sizes": [440, 860]},
+        "video": {"enabled": True, "low_latency": True, "quality": {}, "volume": {}, "audio": None,
+                  "sizes": [440, 860]},
         "overlay": {"enabled": False, "port": OVERLAY_PORT},
         "_warnings": [],
     }
@@ -118,6 +119,7 @@ def load_config() -> dict:
     vid = data.get("video") if isinstance(data.get("video"), dict) else {}
     v = cfg["video"]
     v["enabled"] = pick(vid.get("enabled"), True)
+    v["low_latency"] = pick(vid.get("low_latency"), True)
     # per platform ("twitch") or per channel ("twitch:somechannel")
     v["quality"] = _newest({k: q for k, q in pick(vid.get("quality"), {}).items() if _video_key(k) and isinstance(q, str)})
     v["volume"] = _newest({k: max(0, min(100, n)) for k, n in pick(vid.get("volume"), {}).items()

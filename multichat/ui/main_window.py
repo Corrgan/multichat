@@ -182,6 +182,9 @@ class MainWindow(GroupsMixin, ConnectionsMixin, MessagesMixin, SendMixin, QMainW
         for v in self.views():
             v.set_font_px(self.config["chat_font"])
             v.alerts_cfg = self.config["alerts"]
+        self.latency_action.blockSignals(True)  # the panels read the setting themselves
+        self.latency_action.setChecked(bool(self.config["video"].get("low_latency", True)))
+        self.latency_action.blockSignals(False)
         video_on = bool(self.config["video"].get("enabled", True))
         self.video_action.setChecked(video_on)
         self.toggle_video(video_on, resize=False)
@@ -223,6 +226,8 @@ class MainWindow(GroupsMixin, ConnectionsMixin, MessagesMixin, SendMixin, QMainW
         self.audio.changed.connect(self._schedule_save)
         self.side_by_side = False
         self.tabs = QTabBar()
+        self.tabs.setMovable(True)  # drag a tab to sort the groups
+        self.tabs.tabMoved.connect(self._tab_moved)
         self.tabs.setDocumentMode(True)
         self.tabs.setExpanding(False)
         self.tabs.setDrawBase(False)
@@ -303,6 +308,12 @@ class MainWindow(GroupsMixin, ConnectionsMixin, MessagesMixin, SendMixin, QMainW
         self.video_action = view.addAction(_("Video tiles"))
         self.video_action.setCheckable(True)
         self.video_action.toggled.connect(self.toggle_video)
+        self.latency_action = view.addAction(_("Low video delay"))
+        self.latency_action.setCheckable(True)
+        self.latency_action.setToolTip(_("Keeps the videos close to the chat: starts nearer to the live moment "
+                                         "and catches up after waits. Turn it off if the videos stall often."))
+        view.setToolTipsVisible(True)
+        self.latency_action.toggled.connect(self.toggle_low_latency)
         view.addAction(_("Alerts …")).triggered.connect(self.edit_alerts)
         font = view.addMenu(_("Chat font size"))
         for label, keys, step in ((_("Larger"), ("Ctrl++", "Ctrl+="), 2), (_("Smaller"), ("Ctrl+-",), -2),

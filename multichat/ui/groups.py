@@ -39,6 +39,12 @@ def default_group_name(index: int) -> str:
     return _("Group {n}").format(n=index + 1)
 
 
+def uptime_text(seconds: float) -> str:
+    """7 min → "0:07", 83 min → "1:23"."""
+    minutes = max(0, int(seconds // 60))
+    return f"{minutes // 60}:{minutes % 60:02d}"
+
+
 class ChannelRow(QWidget):
     """One channel: name field, status, video checkbox, connect button."""
 
@@ -76,9 +82,13 @@ class ChannelRow(QWidget):
     def value(self) -> str | None:
         return normalize_channel(self.platform, self.edit.text())
 
-    def set_live(self, live: bool) -> None:
+    def set_live(self, live: bool, uptime: float | None = None) -> None:
+        """uptime: seconds the stream has been running, if the platform says when it started."""
         self.live.setText("●" if live else "")
-        self.live.setToolTip(_("Live now") if live else "")
+        if live and uptime is not None:
+            self.live.setToolTip(_("Live for {duration} h").format(duration=uptime_text(uptime)))
+        else:
+            self.live.setToolTip(_("Live now") if live else "")
 
     def key(self) -> str:
         """Source key ("twitch:channel"), "" if empty or invalid."""

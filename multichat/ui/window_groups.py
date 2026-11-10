@@ -15,7 +15,7 @@ from ..core.constants import NAMES
 from ..core.i18n import _
 from ..video.tiles import VideoPanel
 from .chat_view import ChatView
-from .groups import GroupPanel, normalize_channel
+from .groups import GroupPanel, normalize_channel, uptime_text
 from .moderation import ActionBar
 
 log = logging.getLogger("multichat")
@@ -231,26 +231,52 @@ class GroupsMixin:
     def _update_titles(self) -> None:
         for i, panel in enumerate(self.panels):
             text = panel.title()
+            live = [(r, self._uptime(r.key())) for r in panel.all_rows() if self._is_live(r.key())]
+            # how long the streamer has been live: one channel's answer is enough (the rows
+            # are in the order Twitch, Kick, YouTube)
+            running = next((up for _r, up in live if up is not None), None)
+            if running is not None:
+                text += f" · {uptime_text(running)}"
             if panel.unread:
                 text += f" ({'@' if panel.mentions else ''}{min(panel.unread, 999)})"
             if i < self.tabs.count():
                 self.tabs.setTabText(i, text)
                 self.tabs.setTabTextColor(i, QColor("#ff9a3c") if panel.mentions else QColor())
-                live = [f"{NAMES[r.platform]} · {r.value()}" for r in panel.all_rows() if self._is_live(r.key())]
+                names = [f"{NAMES[r.platform]} · {r.value()}"
+                         + (" (" + _("{duration} h").format(duration=uptime_text(up)) + ")" if up is not None else "")
+                         for r, up in live]
                 self.tabs.setTabIcon(i, live_icon() if live else QIcon())
-                self.tabs.setTabToolTip(i, _("Live: {channels}").format(channels=", ".join(live)) if live else "")
+                self.tabs.setTabToolTip(i, _("Live: {channels}").format(channels=", ".join(names)) if live else "")
             panel.remove_btn.setVisible(len(self.panels) > 1)
 
     def _is_live(self, key: str) -> bool:
         watch = getattr(self, "live_watch", None)
         return bool(key) and watch is not None and bool(watch.live.get(key))
 
+    def _uptime(self, key: str) -> float | None:
+        watch = getattr(self, "live_watch", None)
+        return watch.uptime(key) if watch is not None and key else None
+
     def _live_changed(self) -> None:
-        """A channel went live or offline: the dots next to the channels and on the tabs."""
+        """A channel went live or offline, or a minute has passed: the dots next to the
+        channels, and the dots and running times on the tabs."""
         for panel in self.panels:
             for row in panel.all_rows():
-                row.set_live(self._is_live(row.key()))
+                row.set_live(self._is_live(row.key()), self._uptime(row.key()))
         self._update_titles()
+
+    def _tab_moved(self, source: int, target: int) -> None:
+        """A tab was dragged to another place: the groups follow – in the list (what is
+        saved, the order side by side and the overlay's group numbers go by it)."""
+        if not (0 <= source < len(self.panels) and 0 <= target < len(self.panels)):
+            return
+        self.panels.insert(target, self.panels.pop(source))
+        for j, panel in enumerate(self.panels):
+            panel.set_index(j)
+            self.side.insertWidget(j, panel)  # same parent: only its place changes
+        self._rows_changed()
+        self._show_panels()
+        self._schedule_save()
 
     def _rows_changed(self) -> None:
         """A channel was edited: routing, titles, buttons and send targets follow."""
@@ -258,7 +284,7 @@ class GroupsMixin:
             self.live_watch.rows_changed()
             for panel in self.panels:
                 for row in panel.all_rows():
-                    row.set_live(self._is_live(row.key()))
+                    row.set_live(self._is_live(row.key()), self._uptime(row.key()))
         self._route = {}
         for panel in self.panels:
             for key in panel.keys():
@@ -290,6 +316,13 @@ class GroupsMixin:
         if msg.source:
             return self._route.get(msg.source, [])
         return [self.panels[0]]
+
+    def toggle_low_latency(self, on: bool) -> None:
+        """View → Low video delay: running streams are opened again with the new setting."""
+        self.config["video"]["low_latency"] = on
+        for panel in self.panels:
+            if panel.video is not None:
+                panel.video.set_low_latency(on)
 
     def toggle_video(self, on: bool, resize: bool = True) -> None:
         for panel in self.panels:

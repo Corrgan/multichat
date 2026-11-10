@@ -21,7 +21,8 @@ from ..ui.widgets import CopyLabel
 from . import player
 from .player import DEFAULT_UA, MpvWidget, load_mpv
 from .auto_quality import AutoQuality
-from .streams import AUTO, DEFAULT_QUALITY, QUALITIES, Offline, normalize_quality, resolve
+from .catch_up import CatchUp
+from .streams import AUTO, DEFAULT_QUALITY, LOW_LATENCY_MPV, QUALITIES, Offline, normalize_quality, resolve
 
 log = logging.getLogger("multichat.video")
 
@@ -47,6 +48,8 @@ class VideoTile(QFrame):
         self.value = ""
         self.quality = normalize_quality(quality)
         self.auto = AutoQuality()  # the level while the quality is "Automatic"
+        self.low_latency = True  # "Low video delay" (set by the panel from the settings)
+        self.catch_up = CatchUp()  # plays a little faster while more is buffered than needed
         self.gen = 0
         self.state = "idle"
         self.muted = True
@@ -239,7 +242,7 @@ class VideoTile(QFrame):
 
     async def _resolve(self):
         try:
-            return "ok", await asyncio.to_thread(resolve, self.platform, self.value, self.level())
+            return "ok", await asyncio.to_thread(resolve, self.platform, self.value, self.level(), self.low_latency)
         except Offline:
             return "offline", None
         except Exception as e:  # noqa: BLE001
@@ -276,6 +279,9 @@ class VideoTile(QFrame):
                 opts["audio-file"] = data.audio_url
             if data.ytdl_format:
                 opts["ytdl-format"] = data.ytdl_format
+            if self.low_latency and data.pipe_fd is None:  # Kick, YouTube (Twitch: see streams._twitch)
+                opts.update(LOW_LATENCY_MPV)
+            self.catch_up.reset()
             self.stack.setCurrentIndex(1)
             self._closer, self._ads, self._title = data.closer, data.ads, data.title
             self.video.play(data.url, **opts)
@@ -364,8 +370,10 @@ class VideoTile(QFrame):
             self.auto_timer.stop()
             return
         stalls = self.video.stalls
+        waited = False
         while stalls:
             at, stalled = stalls.popleft()
+            waited = True
             self.auto.stall(stalled, at)
             if stalled and self._stall_from is None:
                 self._stall_from = at
@@ -373,6 +381,7 @@ class VideoTile(QFrame):
                 # in the verbose log for every quality: shows whether the line keeps up
                 log.debug("Video %s: waited %.1f s for data (%s)", self.platform, at - self._stall_from, self.level())
                 self._stall_from = None
+        self._catch_up(waited)
         if self.quality != AUTO:
             return
         target = self.auto.poll(ads_active=bool(self._ads is not None and self._ads.active),
@@ -381,6 +390,38 @@ class VideoTile(QFrame):
         if target:
             log.info("Video %s: automatic quality %s", self.platform, self.auto.reason)
             self.start()
+
+    def _catch_up(self, waited: bool) -> None:
+        """Low video delay: a little faster while more is buffered than needed (catch_up.py)."""
+        samples = self.video.buffered
+        if not self.low_latency:
+            samples.clear()
+            if self.catch_up.speed != 1.0:
+                self.catch_up.reset()
+                self.video.set_speed(1.0)
+            return
+        if waited or self._stall_from is not None:  # the buffer ran dry: measure anew, at normal speed
+            samples.clear()
+            self.catch_up.reset()
+            self.video.set_speed(1.0)
+            return
+        while samples:
+            at, seconds = samples.popleft()
+            self.catch_up.sample(seconds, at)
+        speed = self.catch_up.poll()
+        if speed is not None:
+            low = self.catch_up.lowest()
+            log.debug("Video %s: %s (at least %.1f s buffered) – speed %.2f", self.platform,
+                      "catching up with the stream" if speed > 1.0 else "close to the stream again",
+                      low if low is not None else 0.0, speed)
+            self.video.set_speed(speed)
+
+    def set_low_latency(self, on: bool) -> None:
+        if on == self.low_latency:
+            return
+        self.low_latency = on
+        if self.state in ("playing", "resolving"):
+            self.start()  # the stream is opened differently
 
     def _on_volume(self, value: int) -> None:
         self.volume = value
@@ -507,11 +548,13 @@ class VideoPanel(QWidget):
             tile = self.retired.pop(platform)
             tile.retarget(key, channel, self._setting("quality", key, platform, DEFAULT_QUALITY),
                           self._setting("volume", key, platform, 100))
+            tile.low_latency = bool(self.config.get("low_latency", True))
             self.tiles[key] = tile
         if tile is None:
             tile = VideoTile(platform, NAMES[platform], BADGES[platform][0],
                              self._setting("quality", key, platform, DEFAULT_QUALITY), self.runner,
                              volume=self._setting("volume", key, platform, 100), key=key, channel=channel)
+            tile.low_latency = bool(self.config.get("low_latency", True))
             tile.idle_stop = QTimer(tile, singleShot=True)
             tile.idle_stop.timeout.connect(tile.stop)
             tile.audio_requested.connect(lambda t: self.hub.toggle(self, t.key))
@@ -570,6 +613,12 @@ class VideoPanel(QWidget):
     def stop_all(self) -> None:
         for tile in self.tiles.values():
             tile.stop()
+
+    def set_low_latency(self, on: bool) -> None:
+        """"Low video delay" was switched: running streams are opened again accordingly."""
+        self.config["low_latency"] = on
+        for tile in [*self.tiles.values(), *self.retired.values()]:
+            tile.set_low_latency(on)
 
     def stop_hidden(self, keep: set[str]) -> None:
         """Stops tiles of channels that are no longer connected (instead of letting them run)."""
