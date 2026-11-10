@@ -14,11 +14,16 @@ from ..chat import live
 
 log = logging.getLogger("multichat")
 
-CHECK_SECONDS = 120  # between two looks at a channel
-MAX_BACKOFF_SECONDS = 900  # a channel whose lookup keeps failing (blocked, no login) is asked less often
+# Seconds between two looks at a channel. Twitch is one small request for all channels, so
+# it is asked often: Twitch's own answer already lags a stream's start by a minute or more.
+# Kick and YouTube cost a request (YouTube: a whole page) per channel.
+CHECK_SECONDS = {"twitch": 30, "kick": 120, "youtube": 120}
+MAX_BACKOFF_SECONDS = 300  # a channel whose lookup keeps failing (blocked, no login) is asked less often
 SETTLE_MS = 2500  # after the last change of a channel field (not for every letter typed)
-TICK_MS = 15_000
+TICK_MS = 5000
 CLOCK_MS = 30_000  # how often the "live for …" displays are refreshed (they show minutes)
+BUSY_SECONDS = 60  # a lookup that has not answered by then no longer holds up the next one
+HOLD_SECONDS = 300  # a video that plays proves "live"; a lagging "not live" answer is ignored that long
 FORGET_AFTER = 2  # failed lookups in a row after which "live" is no longer claimed
 
 
@@ -32,7 +37,8 @@ class LiveWatch(QObject):
         self.since: dict[str, float] = {}  # source key → start of the stream (epoch), where known
         self._due: dict[str, float] = {}
         self._errors: dict[str, int] = {}
-        self._busy = False
+        self._hold: dict[str, float] = {}  # source key → until when a playing video vouches for "live"
+        self._busy: dict[str, float] = {}  # platform → when its running lookup started
         self._tick = QTimer(self, interval=TICK_MS)
         self._tick.timeout.connect(self.check)
         self._settle = QTimer(self, singleShot=True, interval=SETTLE_MS)
@@ -70,13 +76,14 @@ class LiveWatch(QObject):
     def rows_changed(self) -> None:
         """A channel field was edited: forget channels that are gone, look at new ones soon."""
         present = self.targets().keys()
-        gone = [key for key in {*self.live, *self._due, *self._errors} if key not in present]
+        gone = [key for key in {*self.live, *self._due, *self._errors, *self._hold} if key not in present]
         was_live = any(self.live.get(key) for key in gone)
         for key in gone:
             self.live.pop(key, None)
             self.since.pop(key, None)
             self._due.pop(key, None)
             self._errors.pop(key, None)
+            self._hold.pop(key, None)
         if was_live:
             self.changed.emit()
         if self._tick.isActive():
@@ -90,25 +97,43 @@ class LiveWatch(QObject):
         if self._tick.isActive():
             self._settle.start()
 
+    def _playing(self) -> set[str]:
+        """Channels whose video tile plays right now – the quickest proof that they are live
+        (the stream lookup of a tile is real time, the platforms' "is live" answers lag)."""
+        keys = set()
+        for panel in self.win.panels:
+            for tile in getattr(getattr(panel, "video", None), "tiles", {}).values():
+                if getattr(tile, "state", "") == "playing":
+                    keys.add(tile.key)
+        return keys
+
     def check(self) -> None:
-        if self._busy or getattr(self.win, "_closing", False):
+        if getattr(self.win, "_closing", False):
             return
         now = time.monotonic()
-        due = [(key, platform, value) for key, (platform, value) in self.targets().items()
-               if self._due.get(key, 0) <= now]
-        if not due:
-            return
-        self._busy = True
-        for key, _platform, _value in due:
-            self._due[key] = now + CHECK_SECONDS  # also when the answer never comes
-        self.win.run(live.check(due, self.win.accounts.get("twitch")), then=self._done, on_error=self._failed,
-                     quiet=True)
+        targets = self.targets()
+        before = dict(self.live)
+        for key in self._playing() & targets.keys():
+            self.live[key] = True
+            self._hold[key] = now + HOLD_SECONDS
+        self._announce(before)
+        # each platform on its own: a slow Kick or YouTube lookup must not delay Twitch
+        for platform in CHECK_SECONDS:
+            if now - self._busy.get(platform, -BUSY_SECONDS) < BUSY_SECONDS:
+                continue
+            due = [(key, p, value) for key, (p, value) in targets.items()
+                   if p == platform and self._due.get(key, 0) <= now]
+            if not due:
+                continue
+            self._busy[platform] = now
+            for key, _p, _value in due:
+                self._due[key] = now + CHECK_SECONDS[platform]  # also when the answer never comes
+            self.win.run(live.check(due, self.win.accounts.get("twitch")),
+                         then=lambda results, platform=platform: self._done(platform, results),
+                         on_error=lambda platform=platform: self._busy.pop(platform, None), quiet=True)
 
-    def _failed(self) -> None:
-        self._busy = False
-
-    def _done(self, results: dict) -> None:
-        self._busy = False
+    def _done(self, platform: str, results: dict) -> None:
+        self._busy.pop(platform, None)
         now = time.monotonic()
         present = self.targets().keys()
         before, since_before = dict(self.live), dict(self.since)
@@ -116,21 +141,26 @@ class LiveWatch(QObject):
         for key, state in results.items():
             if key not in present:
                 continue  # the field was changed while the lookup ran
+            every = CHECK_SECONDS[platform]
             if state is None:
                 errors = self._errors[key] = self._errors.get(key, 0) + 1
-                self._due[key] = now + min(MAX_BACKOFF_SECONDS, CHECK_SECONDS * 2 ** errors)
-                if errors >= FORGET_AFTER:
+                self._due[key] = now + min(MAX_BACKOFF_SECONDS, every * 2 ** errors)
+                if errors >= FORGET_AFTER and self._hold.get(key, 0) <= now:
                     self.live.pop(key, None)
                     self.since.pop(key, None)
             else:
                 self._errors.pop(key, None)
-                self._due[key] = now + CHECK_SECONDS
-                self.live[key] = bool(state)
+                self._due[key] = now + every
+                if state or self._hold.get(key, 0) <= now:  # "not live" while its video plays: the answer lags
+                    self.live[key] = bool(state)
                 if state and key in since:
                     self.since[key] = since[key]
-                elif not state:
+                elif not self.live.get(key):
                     self.since.pop(key, None)
-        if self.live != before or self.since != since_before:
+        self._announce(before, since_before)
+
+    def _announce(self, before: dict, since_before: dict | None = None) -> None:
+        if self.live != before or (since_before is not None and self.since != since_before):
             went_live = sorted(k for k, v in self.live.items() if v and not before.get(k))
             if went_live:
                 log.info("Live now: %s", ", ".join(went_live))
