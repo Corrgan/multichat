@@ -64,6 +64,8 @@
   "Kick channel “{channel}” not found": "Kick-Kanal „{channel}“ nicht gefunden",
   "Language": "Sprache",
   "Larger": "Größer",
+  "Live now": "Jetzt live",
+  "Live: {channels}": "Live: {channels}",
   "Log copied (tokens/secrets redacted) – file: {path}": "Log kopiert (Tokens/Secrets geschwärzt) – Datei: {path}",
   "Log in": "Anmelden",
   "Log in to Twitch again to get suggestions for all your emotes (subscriptions included)": "Melde dich erneut bei Twitch an, um Vorschläge für alle deine Emotes zu bekommen (auch aus Abos)",

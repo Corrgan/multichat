@@ -42,6 +42,7 @@ from .groups import GroupPanel
 from .incoming import IncomingEvents
 from .dialogs import AboutDialog, AlertsDialog, AppsDialog
 from .moderation import ModActions, ModNotes
+from .live_watch import LiveWatch
 from .watchdog import Watchdog
 from .window_connections import ConnectionsMixin
 from .window_groups import MAX_MESSAGES, GroupsMixin
@@ -144,6 +145,9 @@ class MainWindow(GroupsMixin, ConnectionsMixin, MessagesMixin, SendMixin, QMainW
             )
         self._msg_count = 0
         self.watchdog = Watchdog(self, self._perf_stats)
+        self.live_watch = LiveWatch(self)  # which entered channels are live – dots on rows and tabs
+        self.live_watch.changed.connect(self._live_changed)
+        self.live_watch.start()
         if self.config.get("check_updates", True) and not os.environ.get("MULTICHAT_NO_UPDATE_CHECK"):
             self.run(self._check_update())
 
@@ -504,6 +508,8 @@ class MainWindow(GroupsMixin, ConnectionsMixin, MessagesMixin, SendMixin, QMainW
             self._native_loading.clear()
         self._native_hint = False
         self._refresh_targets()
+        if getattr(self, "live_watch", None) is not None:
+            self.live_watch.recheck("twitch")  # the Twitch check needs the login
         own = {p: (own_pattern(a.user_name), a.user_id, a.user_name.lower())
                for p, a in self.accounts.items() if a.logged_in and a.user_name}
         if any(v.own.keys() != own.keys() or any(v.own[p][2] != own[p][2] for p in own) for v in self.views()):
@@ -643,6 +649,7 @@ class MainWindow(GroupsMixin, ConnectionsMixin, MessagesMixin, SendMixin, QMainW
             return
         self._closing = True
         release_active()  # a start from now on opens a new window (also restart_app)
+        self.live_watch.stop()
         self._flush_timer.stop()
         self._render_timer.stop()
         self._render_step_timer.stop()

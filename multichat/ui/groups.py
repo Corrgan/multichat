@@ -52,6 +52,9 @@ class ChannelRow(QWidget):
         lay.setContentsMargins(0, 0, 0, 0)
         self.label = QLabel(f"<b style='color:{BADGES[platform][0]}'>{NAMES[platform]}</b>")
         self.label.setFixedWidth(64)
+        self.live = QLabel()  # red dot while the channel is live (see ui/live_watch.py)
+        self.live.setFixedWidth(12)
+        self.live.setStyleSheet("color:#eb0400")
         self.edit = QLineEdit(value, placeholderText=_("@channel – or video URL") if platform == "youtube"
                               else _("Channel name"))
         self.edit.setMaxLength(MAX_CHANNEL_LEN)
@@ -65,13 +68,17 @@ class ChannelRow(QWidget):
         self.button = QToolButton()
         self.button.setToolTip(_("Connect / disconnect this channel"))
         self.button.clicked.connect(lambda: self.toggle_requested.emit(self))
-        for w in (self.label, self.edit, self.status, self.video, self.button):
+        for w in (self.label, self.live, self.edit, self.status, self.video, self.button):
             lay.addWidget(w, 1 if w is self.edit else 0)
         self.edit.textChanged.connect(self.changed)
         self.video.toggled.connect(self.changed)
 
     def value(self) -> str | None:
         return normalize_channel(self.platform, self.edit.text())
+
+    def set_live(self, live: bool) -> None:
+        self.live.setText("●" if live else "")
+        self.live.setToolTip(_("Live now") if live else "")
 
     def key(self) -> str:
         """Source key ("twitch:channel"), "" if empty or invalid."""

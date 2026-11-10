@@ -7,10 +7,11 @@ from __future__ import annotations
 import logging
 
 from PyQt6.QtCore import QTimer
-from PyQt6.QtGui import QColor
+from PyQt6.QtGui import QColor, QIcon, QPainter, QPixmap
 from PyQt6.QtWidgets import QMessageBox
 
 from ..core.config import MAX_GROUPS
+from ..core.constants import NAMES
 from ..core.i18n import _
 from ..video.tiles import VideoPanel
 from .chat_view import ChatView
@@ -20,6 +21,23 @@ from .moderation import ActionBar
 log = logging.getLogger("multichat")
 
 MAX_MESSAGES = 1000  # chat lines per group
+_live_icon: QIcon | None = None
+
+
+def live_icon() -> QIcon:
+    """Red dot for the tab of a group with a live channel."""
+    global _live_icon
+    if _live_icon is None:
+        pix = QPixmap(20, 20)
+        pix.fill(QColor(0, 0, 0, 0))
+        painter = QPainter(pix)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(QColor(0, 0, 0, 0))
+        painter.setBrush(QColor("#eb0400"))
+        painter.drawEllipse(4, 4, 12, 12)
+        painter.end()
+        _live_icon = QIcon(pix)
+    return _live_icon
 
 
 class GroupsMixin:
@@ -218,10 +236,29 @@ class GroupsMixin:
             if i < self.tabs.count():
                 self.tabs.setTabText(i, text)
                 self.tabs.setTabTextColor(i, QColor("#ff9a3c") if panel.mentions else QColor())
+                live = [f"{NAMES[r.platform]} · {r.value()}" for r in panel.all_rows() if self._is_live(r.key())]
+                self.tabs.setTabIcon(i, live_icon() if live else QIcon())
+                self.tabs.setTabToolTip(i, _("Live: {channels}").format(channels=", ".join(live)) if live else "")
             panel.remove_btn.setVisible(len(self.panels) > 1)
+
+    def _is_live(self, key: str) -> bool:
+        watch = getattr(self, "live_watch", None)
+        return bool(key) and watch is not None and bool(watch.live.get(key))
+
+    def _live_changed(self) -> None:
+        """A channel went live or offline: the dots next to the channels and on the tabs."""
+        for panel in self.panels:
+            for row in panel.all_rows():
+                row.set_live(self._is_live(row.key()))
+        self._update_titles()
 
     def _rows_changed(self) -> None:
         """A channel was edited: routing, titles, buttons and send targets follow."""
+        if getattr(self, "live_watch", None) is not None:
+            self.live_watch.rows_changed()
+            for panel in self.panels:
+                for row in panel.all_rows():
+                    row.set_live(self._is_live(row.key()))
         self._route = {}
         for panel in self.panels:
             for key in panel.keys():

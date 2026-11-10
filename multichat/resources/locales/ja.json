@@ -64,6 +64,8 @@
   "Kick channel “{channel}” not found": "Kick チャンネル「{channel}」が見つかりません",
   "Language": "言語",
   "Larger": "大きく",
+  "Live now": "配信中",
+  "Live: {channels}": "配信中: {channels}",
   "Log copied (tokens/secrets redacted) – file: {path}": "ログをコピーしました（トークン/シークレットは伏せ字）– ファイル：{path}",
   "Log in": "ログイン",
   "Log in to Twitch again to get suggestions for all your emotes (subscriptions included)": "すべてのエモート（サブスク含む）の候補を表示するには、Twitch に再ログインしてください",

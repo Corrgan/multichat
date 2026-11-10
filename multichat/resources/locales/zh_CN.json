@@ -64,6 +64,8 @@
   "Kick channel “{channel}” not found": "未找到 Kick 频道“{channel}”",
   "Language": "语言",
   "Larger": "放大",
+  "Live now": "正在直播",
+  "Live: {channels}": "正在直播：{channels}",
   "Log copied (tokens/secrets redacted) – file: {path}": "日志已复制（令牌/密钥已隐去）– 文件：{path}",
   "Log in": "登录",
   "Log in to Twitch again to get suggestions for all your emotes (subscriptions included)": "重新登录 Twitch 即可获得你所有表情（包括订阅表情）的建议",

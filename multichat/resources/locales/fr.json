@@ -64,6 +64,8 @@
   "Kick channel “{channel}” not found": "Chaîne Kick « {channel} » introuvable",
   "Language": "Langue",
   "Larger": "Plus grand",
+  "Live now": "En direct",
+  "Live: {channels}": "En direct : {channels}",
   "Log copied (tokens/secrets redacted) – file: {path}": "Journal copié (jetons/secrets masqués) – fichier : {path}",
   "Log in": "Connexion",
   "Log in to Twitch again to get suggestions for all your emotes (subscriptions included)": "Reconnecte-toi à Twitch pour obtenir des suggestions pour toutes tes emotes (abonnements compris)",
