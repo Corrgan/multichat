@@ -23,7 +23,7 @@ class SendMixin:
             idx = self.target.findData(msg.source)
             if idx >= 0:
                 self.target.setCurrentIndex(idx)
-        self.input.setText(f"@{msg.user} {self.input.text()}")
+        self.input.setText(f"@{mention_name(msg)} {self.input.text()}")
         self.input.setFocus()
 
     def _send_options(self) -> list[tuple[str, str, str, str]]:

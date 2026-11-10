@@ -15,14 +15,16 @@ import logging
 import os
 import stat
 import tempfile
+import time
 from pathlib import Path
 
-from PyQt6.QtCore import QObject, pyqtSignal
+from PyQt6.QtCore import QLockFile, QObject, QStandardPaths, pyqtSignal
 from PyQt6.QtNetwork import QLocalServer, QLocalSocket
 
 log = logging.getLogger("multichat")
 
 _active: "SingleInstance | None" = None  # the one that holds the socket in this process
+LOCK_WAIT_MS = 3000  # allow another process to finish creating its server
 
 
 def release_active() -> None:
@@ -35,7 +37,14 @@ def release_active() -> None:
 
 def socket_path() -> str:
     runtime = os.environ.get("XDG_RUNTIME_DIR")
-    if runtime and os.environ.get("FLATPAK_ID"):
+    if os.name == "nt":
+        # Qt uses a named pipe on Windows. Keep its name and the acquisition lock in
+        # the user's cache directory; POSIX user IDs and mode bits do not exist here.
+        cache = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.GenericCacheLocation)
+        if not cache:
+            return ""
+        base = Path(cache) / "multichat"
+    elif runtime and os.environ.get("FLATPAK_ID"):
         base = Path(runtime) / "app" / os.environ["FLATPAK_ID"]  # shared by the app's sandboxes
     elif runtime:
         base = Path(runtime) / "multichat"
@@ -46,7 +55,8 @@ def socket_path() -> str:
         info = base.lstat()
         # Without a runtime directory the socket lives under /tmp, where another user of
         # this machine could have created the directory first and answer in our place.
-        if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o022:
+        if not stat.S_ISDIR(info.st_mode) or (os.name != "nt" and
+                (info.st_uid != os.getuid() or info.st_mode & 0o022)):
             log.warning("Single instance: %s is not a private directory of this user – check skipped", base)
             return ""
     except OSError:
@@ -64,30 +74,60 @@ class SingleInstance(QObject):
         super().__init__()
         self.path = socket_path() if path is None else path
         self.server: QLocalServer | None = None
+        self._lock: QLockFile | None = None
 
-    def acquire(self) -> bool:
-        if not self.path:
-            return True  # no safe place for the socket: start as if there were no check
+    def _notify_existing(self, timeout_ms: int = 500) -> bool:
         probe = QLocalSocket()
         probe.connectToServer(self.path)
-        if probe.waitForConnected(500):
+        if probe.waitForConnected(timeout_ms):
             probe.write(b"show\n")
-            probe.waitForBytesWritten(500)
+            probe.waitForBytesWritten(timeout_ms)
             probe.disconnectFromServer()
-            return False
-        # nobody answers: a socket file left by a crash would block listen()
-        QLocalServer.removeServer(self.path)
-        server = QLocalServer(self)
-        server.setSocketOptions(QLocalServer.SocketOption.UserAccessOption)  # this user only
-        if not server.listen(self.path):
-            log.warning("Single instance: cannot listen on %s (%s) – continuing without the check",
-                        self.path, server.errorString())
             return True
-        server.newConnection.connect(self._on_connection)
-        self.server = server
-        global _active
-        _active = self
-        return True
+        return False
+
+    def acquire(self) -> bool:
+        if not self.path or self.server is not None:
+            return True
+        lock = QLockFile(self.path + ".lock")
+        # A live instance may run for days: never expire its lock by age. Qt still
+        # recovers a lock whose owning process died (including after a crash).
+        lock.setStaleLockTime(0)
+        deadline = time.monotonic() + LOCK_WAIT_MS / 1000
+        while not lock.tryLock(0):
+            if lock.error() != QLockFile.LockError.LockFailedError:
+                log.warning("Single instance: cannot lock %s (%s); no second window opened",
+                            self.path, lock.error())
+                return False
+            if self._notify_existing(100):
+                return False
+            if time.monotonic() >= deadline:
+                log.warning("Single instance: another process holds %s but does not answer; no second window opened",
+                            self.path)
+                return False
+            # A contender must not remove the socket while its owner is starting.
+            if lock.tryLock(100):
+                break
+        try:
+            # Also recognize an instance from before the acquisition lock existed.
+            if self._notify_existing():
+                return False
+            QLocalServer.removeServer(self.path)  # only the lock owner may clean up a stale socket
+            server = QLocalServer(self)
+            server.setSocketOptions(QLocalServer.SocketOption.UserAccessOption)  # this user only
+            if not server.listen(self.path):
+                log.warning("Single instance: cannot listen on %s (%s); no second window opened",
+                            self.path, server.errorString())
+                server.deleteLater()
+                return False
+            server.newConnection.connect(self._on_connection)
+            self.server, self._lock = server, lock  # hold ownership until the socket is closed
+            global _active
+            _active = self
+            return True
+        finally:
+            if self._lock is not lock:
+                lock.unlock()
 
     def _on_connection(self) -> None:
         while self.server is not None and self.server.hasPendingConnections():
@@ -103,3 +143,6 @@ class SingleInstance(QObject):
         if self.server is not None:
             self.server.close()  # also removes the socket file
             self.server = None
+        if self._lock is not None:
+            self._lock.unlock()
+            self._lock = None
