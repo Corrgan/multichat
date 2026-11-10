@@ -119,7 +119,7 @@ multichat/            the application (Python package)
   accounts/           logins (OAuth), sending and moderating per platform
   video/              stream lookup (Streamlink, yt-dlp, Kick API) and the mpv video tiles
   overlay/            local web server for the OBS overlay
-  ui/                 main window, chat view, dialogs
+  ui/                 main window (main_window.py plus its parts window_*.py), chat view, dialogs
   resources/          icon, overlay page, translations (locales/)
 packaging/            AppImage build script, Flatpak manifest, .desktop and metainfo files
 tests/                automated tests (pytest)
@@ -230,6 +230,7 @@ The overlay only answers requests from this computer (`127.0.0.1` / `localhost`)
 - Right-click a status text (next to the channel fields or in a video tile) → **Copy status** copies the full text.
 - Tokens, secrets and login codes are redacted in the log automatically.
 - If the app crashes, `coredumpctl info multichat` (Fedora, systemd) shows a backtrace that helps with debugging.
+- MultiChat runs once per user: starting it again brings the running window to the front (two windows would overwrite each other's settings and compete for the overlay and login ports). `MULTICHAT_ALLOW_MULTIPLE=1` allows a second window anyway.
 - Hardware decoding problems with the videos: start with `MULTICHAT_HWDEC=no`, e.g. `MULTICHAT_HWDEC=no ./MultiChat-x86_64.AppImage` or `flatpak run --env=MULTICHAT_HWDEC=no io.github.Corrgan.MultiChat`.
 - AppImage: "libmpv could not be loaded" is followed by the reason from the dynamic linker. "TLS certificates" in the log shows which CA certificates are used.
 

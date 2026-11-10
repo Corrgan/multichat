@@ -31,6 +31,7 @@ from ..core.config import CONF_DIR, OVERLAY_PORT, clean_groups, load_config, loa
 from .. import __version__ as APP_VERSION
 from ..core.constants import LOGIN_DOCS, NAMES, PLATFORMS, REPO_SLUG, REPO_URL, version_tuple
 from ..core.i18n import _
+from ..core.single_instance import release_active
 from ..core.logsetup import LOG_DIR, LOG_FILE, asyncio_exception_handler, set_debug, tail
 from ..overlay.server import OverlayServer
 from ..video.player import load_mpv
@@ -639,6 +640,7 @@ class MainWindow(GroupsMixin, ConnectionsMixin, MessagesMixin, SendMixin, QMainW
             super().closeEvent(event)
             return
         self._closing = True
+        release_active()  # a start from now on opens a new window (also restart_app)
         self._flush_timer.stop()
         self._render_timer.stop()
         self._render_step_timer.stop()

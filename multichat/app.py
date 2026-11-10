@@ -142,6 +142,21 @@ def selftest_net(url: str = "https://api.github.com/") -> None:
     sys.exit(0)
 
 
+def bring_to_front(win) -> None:
+    """Another start asked for the window (see core/single_instance.py)."""
+    from PyQt6.QtCore import Qt
+
+    log.info("MultiChat was started again: showing this window")
+    if win.isMinimized():
+        win.setWindowState(win.windowState() & ~Qt.WindowState.WindowMinimized)
+    win.show()
+    win.raise_()
+    win.activateWindow()  # Wayland compositors may only flash the task bar entry – that is their rule
+    from PyQt6.QtWidgets import QApplication
+
+    QApplication.alert(win)
+
+
 def main() -> None:
     if len(sys.argv) > 1 and sys.argv[1] == "--component-probe":
         from .core.component_probe import main as component_probe
@@ -174,8 +189,20 @@ def main() -> None:
     for warning in config.get("_warnings", []):
         log.warning("Settings: %s", warning)
     log.info("Language: %s (setting: %s)", lang, config["language"])
+    instance = None
+    if not os.environ.get("MULTICHAT_ALLOW_MULTIPLE"):
+        from .core.single_instance import SingleInstance
+
+        instance = SingleInstance()
+        if not instance.acquire():
+            log.info("MultiChat is already running – its window was brought to the front; this start ends "
+                     "(MULTICHAT_ALLOW_MULTIPLE=1 allows a second window)")
+            sys.exit(0)
     from .ui.main_window import MainWindow
 
     win = MainWindow(config)
+    if instance is not None:
+        instance.raise_requested.connect(lambda: bring_to_front(win))
+        app.aboutToQuit.connect(instance.release)
     win.show()
     sys.exit(app.exec())
