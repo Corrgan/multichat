@@ -66,9 +66,13 @@ class SendMixin:
         return out
 
     def _load_send_emotes(self) -> None:
-        """Fetches the Twitch emotes you can use in the active group's Twitch channel (once)."""
+        """Fetches the Twitch emotes you can use in the active group's Twitch channel (once).
+        Only for a connected channel: the send options follow the channel field while it
+        is typed, and every prefix ("e", "ex", "exa" …) would be looked up otherwise –
+        a dozen requests each and a warning for names that don't exist."""
         for key, platform, channel, _label in self._send_options():
-            if platform != "twitch" or key in self._native_emotes or key in self._native_loading:
+            if (platform != "twitch" or key not in self.readers
+                    or key in self._native_emotes or key in self._native_loading):
                 continue
             self._native_loading.add(key)
             generation = self.accounts["twitch"].session_gen

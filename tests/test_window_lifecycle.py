@@ -3,6 +3,7 @@
 import asyncio
 import threading
 import time
+from concurrent.futures import Future
 from urllib.parse import parse_qs, urlparse
 from urllib.request import urlopen
 
@@ -152,6 +153,7 @@ def test_old_emote_response_cannot_replace_new_login_request(window, app, monkey
         return [(f"{who}_emote", f"https://example.invalid/{who}")], True
     monkeypatch.setattr(acc, "usable_emotes", usable)
     w.panels[0].rows["twitch"].edit.setText("chan")
+    w.readers["twitch:chan"] = Future()  # emotes are loaded for connected channels
     w.refresh_accounts()
     assert entered.wait(3)
     try:
@@ -167,3 +169,29 @@ def test_old_emote_response_cannot_replace_new_login_request(window, app, monkey
         assert set(w._send_emotes()) == {"B_emote"}
     finally:
         release.set()
+
+
+def test_typing_a_channel_name_does_not_look_up_emotes_for_every_prefix(window, app, monkeypatch):
+    """The send options follow the channel field while it is typed. Loading your Twitch
+    emotes for each prefix cost about a hundred requests per name and logged warnings
+    for the prefixes that are no channels."""
+    w = window
+    acc = install_account(w)
+    asked = []
+
+    async def usable(channel):
+        asked.append(channel)
+        return [("Kappa", "https://example.invalid/kappa")], True
+
+    monkeypatch.setattr(acc, "usable_emotes", usable)
+    w.refresh_accounts()
+    edit = w.panels[0].rows["twitch"].edit
+    for n in range(1, len("examplechan") + 1):
+        edit.setText("examplechan"[:n])
+    app.processEvents()
+    assert asked == [] and not w._native_loading
+    w.readers["twitch:examplechan"] = Future()  # connected
+    w._after_connection_change()
+    assert spin(app, lambda: "Kappa" in w._native_emotes.get("twitch:examplechan", {}))
+    w._after_connection_change()  # once per channel
+    assert asked == ["examplechan"]
