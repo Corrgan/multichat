@@ -282,7 +282,8 @@ def test_image_that_never_loads_leaves_an_idle_chat_alone(app, monkeypatch):
         app.processEvents()
     assert len(requests) == 9  # it is still tried …
     assert signals == ["failed"] and v.toHtml() == shown  # … but the chat stays as it is
-    assert waits[:3] == [30, 60, 120] and waits[-1] == chat_view.IMAGE_RETRY_MAX_SECONDS  # less and less often
+    # less and less often
+    assert waits[:3] == pytest.approx([30, 60, 120]) and waits[-1] == pytest.approx(chat_view.IMAGE_RETRY_MAX_SECONDS)
     v.close()
 
 
