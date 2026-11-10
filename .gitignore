@@ -1,9 +1,14 @@
 # Build
 build-appimage/
+build-secure-lxml/
+build-flatpak/
+build-flatpak-builder/
+.flatpak-builder/
 *.AppImage
 
 # Python
 __pycache__/
+.pytest_cache/
 *.pyc
 .venv/
 venv/

@@ -34,9 +34,10 @@ class ModActions(QObject):
         self.notes = notes
         self.state = ModState()
         self.history = UserHistory()
-        self.selected: ChatMessage | None = None  # latest message of the selected user
+        self.selected: ChatMessage | None = None  # latest message in the selected user's channel
         self.card = None  # UserCard, created on first use
-        self._info: dict[tuple[str, str], tuple[float, dict]] = {}
+        self._info: dict[tuple, tuple[float, dict]] = {}
+        self._account_gen: dict[str, int] = {}
 
     # ---- incoming messages ---------------------------------------------- #
     def observe(self, m: ChatMessage) -> None:
@@ -46,9 +47,15 @@ class ModActions(QObject):
             if self._is_own(acc, m) and MOD_ROLES & set(m.badges):
                 self.state.set(m.platform, m.channel, True)
             self._ask(m.platform, m.channel)
-        if self.selected and self.history.key(self.selected) == self.history.key(m):
-            self.selected = m
+        selected = self.selected
+        if selected and self.history.context_key(selected) == self.history.context_key(m):
+            self.selected = m  # new messages in other channels never move the action target
+        card_msg = self.card.msg if self.card else None
+        if any(context and self.history.key(context) == self.history.key(m) for context in (selected, card_msg)):
             self.history_changed.emit()
+
+    def _generation(self, platform: str) -> tuple[int, int]:
+        return self._account_gen.get(platform, 0), self.win.accounts[platform].session_gen
 
     @staticmethod
     def _is_own(acc, m: ChatMessage) -> bool:
@@ -63,6 +70,7 @@ class ModActions(QObject):
             return
         self.state.asked.add(key)
         acc = self.win.accounts[platform]
+        generation = self._generation(platform)
 
         async def ask():
             try:
@@ -71,13 +79,20 @@ class ModActions(QObject):
                 log.info("%s: moderator check failed: %s", NAMES[platform], e)
                 return None
 
-        self.win.run(ask(), then=lambda value: self.state.set(platform, channel, value))
+        def done(value) -> None:
+            if self._generation(platform) == generation:
+                self.state.set(platform, channel, value)
+
+        self.win.run(ask(), then=done)
 
     def account_changed(self, platform: str) -> None:
         """Login or logout: the answers so far belong to the other account."""
+        self._account_gen[platform] = self._account_gen.get(platform, 0) + 1
         self.state.reset(platform)
         self._info = {k: v for k, v in self._info.items() if k[0] != platform}
         self.selection_changed.emit()
+        if self.card:
+            self.card.account_changed(platform)
 
     def apply_deletion(self, ev: Deletion) -> None:
         if self.history.apply_deletion(ev):
@@ -85,14 +100,14 @@ class ModActions(QObject):
 
     # ---- selection -------------------------------------------------------- #
     def select(self, m: ChatMessage | None) -> None:
-        m = self.history.latest(m) if m is not None else None  # newest message of that user
+        m = self.history.latest(m) if m is not None else None  # newest message in the chosen channel
         old = self.win.view.selected
         self.selected = m
         new = self.history.key(m) if m else None
         self.win.set_selected_user(new)  # highlighted in every group
         if new != old:  # move the highlight: only the lines of the old and the new user change
             keys = {k for k in (old, new) if k}
-            self.win.update_lines([x for x in self.win.messages.values() if self.history.key(x) in keys])
+            self.win.update_lines([x for x in self.win.known_messages() if self.history.key(x) in keys])
         self.selection_changed.emit()
         if m and self.card and self.card.isVisible():
             self.card.show_user(m)
@@ -101,10 +116,12 @@ class ModActions(QObject):
         return self.history.of(m)
 
     def last_deletable(self, m: ChatMessage) -> ChatMessage | None:
-        for msg in reversed(self.history.of(m)):
-            if msg.msg_id and not msg.deleted:
-                return msg
-        return None
+        context = self.history.context_key(m)
+        candidates = {msg.uid: msg for msg in self.history.in_context(m)}
+        candidates.update((msg.uid, msg) for msg in self.win.known_messages()
+                          if self.history.context_key(msg) == context)
+        return max((msg for msg in candidates.values() if msg.msg_id and not msg.deleted),
+                   key=lambda msg: (msg.timestamp, msg.uid), default=None)
 
     # ---- permissions ------------------------------------------------------ #
     def logged_in(self, m: ChatMessage) -> bool:
@@ -130,7 +147,9 @@ class ModActions(QObject):
     # ---- account info (user card) ------------------------------------------ #
     def user_info(self, m: ChatMessage, then) -> None:
         """Calls then(info) with the platform's facts about the user (cached a few minutes)."""
-        key = self.history.key(m)
+        generation = self._generation(m.platform)
+        # Follow/subscription/ban facts depend on the channel as well as the viewer account.
+        key = (*self.history.context_key(m), generation)
         hit = self._info.get(key)
         if hit and hit[0] > time.monotonic():
             then(hit[1])
@@ -149,6 +168,8 @@ class ModActions(QObject):
                 return {"_hint": _("not available"), "_failed": True}
 
         def done(info: dict) -> None:
+            if self._generation(m.platform) != generation:
+                return
             if not info.get("_failed"):
                 self._info[key] = (time.monotonic() + INFO_TTL, info)
                 while len(self._info) > 500:
@@ -179,7 +200,9 @@ class ModActions(QObject):
             answer = QMessageBox.question(
                 self.win,
                 _("Ban"),
-                _("Permanently ban {user} on {platform}?").format(user=msg.user, platform=NAMES[msg.platform]),
+                _("Permanently ban {user} on {platform}?").format(
+                    user=msg.user, platform=f"{NAMES[msg.platform]} · {msg.channel}"
+                ),
             )
             if answer != QMessageBox.StandardButton.Yes:
                 return
@@ -234,7 +257,7 @@ class ModActions(QObject):
     def menu(self, msg: ChatMessage) -> None:
         """Right-click menu on a name."""
         menu = QMenu(self.win)
-        menu.addSection(f"{msg.user} · {NAMES[msg.platform]}")
+        menu.addSection(f"{msg.user} · {NAMES[msg.platform]} · {msg.channel}")
         menu.addAction(_("Open user card")).triggered.connect(lambda: self.open_card(msg))
         menu.addAction(_("Mention (@)")).triggered.connect(lambda: self.win.mention(msg))
         menu.addAction(_("Copy text")).triggered.connect(lambda: QApplication.clipboard().setText(msg.text))
@@ -263,6 +286,6 @@ class ModActions(QObject):
         if url.scheme() != "msg":
             return None
         try:
-            return self.win.messages.get(int(url.path()))
+            return self.win.message_by_uid(int(url.path()))
         except ValueError:
             return None

@@ -14,6 +14,7 @@ import hashlib
 import json
 import logging
 import secrets
+import threading
 import time
 import webbrowser
 from typing import Callable
@@ -98,6 +99,9 @@ class Account:
         # bumped on every logout/login: a token response that arrives afterwards belongs to
         # the old session and must not write tokens back (logged in again by accident)
         self.session_gen = 0
+        # Logout runs on Qt's thread; refresh/login run on the asyncio thread.
+        # Generation checks and their token mutations must be one transaction.
+        self._state_lock = threading.RLock()
         # called with the login URL if no browser could be opened (set by the UI)
         self.show_url: Callable[[str], None] | None = None
 
@@ -122,10 +126,11 @@ class Account:
     def user_id(self) -> str:
         return str(self.tokens.get("user_id", ""))
 
-    def logout(self) -> None:
-        self.session_gen += 1
-        self.store.delete(self.platform)
-        self._cache.clear()
+    def logout(self) -> bool:
+        with self._state_lock:
+            self.session_gen += 1
+            self._cache.clear()
+            return self.store.delete(self.platform)
 
     def extra_headers(self) -> dict:
         return {}
@@ -151,6 +156,9 @@ class Account:
             params.update(code_challenge=challenge, code_challenge_method="S256")
 
         await _take_over_login()
+        with self._state_lock:
+            self.session_gen += 1
+            gen = self.session_gen
         loop = asyncio.get_running_loop()
         code_fut: asyncio.Future = loop.create_future()
 
@@ -197,15 +205,25 @@ class Account:
         if verifier:
             data["code_verifier"] = verifier
         tokens = await self._token_request(data)
-        self.session_gen += 1  # a refresh of an earlier session still under way must not overwrite these
-        self.store.replace(self.platform, tokens)
-        self._cache.clear()
+        with self._state_lock:
+            if gen != self.session_gen:
+                raise ApiError(_("Login cancelled"))
+            self.session_gen += 1  # a refresh started while the browser waited still belongs to the old account
+            gen = self.session_gen
+            self.store.replace(self.platform, tokens)
+            self._cache.clear()
         try:
             who = await self.whoami()
         except Exception:
-            self.store.delete(self.platform)
+            with self._state_lock:
+                if gen == self.session_gen:
+                    self.session_gen += 1
+                    self.store.delete(self.platform)
             raise
-        self.store.update(self.platform, **who)
+        with self._state_lock:
+            if gen != self.session_gen:
+                raise ApiError(_("Login cancelled"))
+            self.store.update(self.platform, **who)
         return who
 
     async def _token_request(self, data: dict) -> dict:
@@ -233,48 +251,64 @@ class Account:
         if self._refresh_lock is None:
             self._refresh_lock = asyncio.Lock()
         async with self._refresh_lock:
-            tok = self.tokens
-            if tok.get("access_token") != stale_token and tok.get("expires_at", 0) > time.time() + 60:
-                return  # another request refreshed it meanwhile
+            with self._state_lock:
+                tok = self.tokens
+                gen = self.session_gen
+                if tok.get("access_token") != stale_token and tok.get("expires_at", 0) > time.time() + 60:
+                    return  # another request refreshed it meanwhile
             rt = tok.get("refresh_token")
             expired = ApiError(_("{platform} session expired – please log in again").format(platform=self.name), status=401)
             if not rt:
                 raise expired
             cid, secret = self.creds(self.platform)
-            gen = self.session_gen
             try:
                 new = await self._token_request(
                     {"grant_type": "refresh_token", "refresh_token": rt, "client_id": cid, "client_secret": secret}
                 )
             except ApiError as e:
-                if gen != self.session_gen:
-                    raise expired from e  # logged out (or in again) meanwhile – nothing to clean up
-                if e.status in (400, 401):  # refresh token revoked or expired → log out cleanly
-                    log.warning("%s: refresh token rejected – logging out", self.name)
-                    self.logout()
-                    raise expired from e
+                with self._state_lock:
+                    if gen != self.session_gen or self.tokens.get("refresh_token") != rt:
+                        raise expired from e  # a different session owns the store now
+                    if e.status in (400, 401):
+                        log.warning("%s: refresh token rejected – logging out", self.name)
+                        self.logout()
+                        raise expired from e
                 raise
-            if gen != self.session_gen or self.tokens.get("refresh_token") != rt:
-                log.info("%s: logged out during a token refresh – discarding the new token", self.name)
-                raise expired
-            self.store.update(self.platform, **new)
+            with self._state_lock:
+                if gen != self.session_gen or self.tokens.get("refresh_token") != rt:
+                    log.info("%s: logged out during a token refresh – discarding the new token", self.name)
+                    raise expired
+                self.store.update(self.platform, **new)
 
-    async def request(self, method: str, url: str, *, _retry: bool = True, **kw):
-        if not self.logged_in:
-            raise ApiError(_("Not logged in to {platform}").format(platform=self.name))
-        if self.tokens.get("expires_at", 0) < time.time() + 60:
-            await self._refresh(self.tokens.get("access_token"))
+    async def request(self, method: str, url: str, *, _retry: bool = True,
+                      _generation: int | None = None, **kw):
+        expired = ApiError(_("{platform} session expired – please log in again").format(platform=self.name), status=401)
+        with self._state_lock:
+            gen = self.session_gen if _generation is None else _generation
+            if gen != self.session_gen:
+                raise expired
+            tok = self.tokens
+            if not tok.get("access_token"):
+                raise ApiError(_("Not logged in to {platform}").format(platform=self.name))
+        if tok.get("expires_at", 0) < time.time() + 60:
+            await self._refresh(tok.get("access_token"))
         extra = kw.pop("headers", {})
-        token = self.tokens.get("access_token")
-        if not token:
-            raise ApiError(_("Not logged in to {platform}").format(platform=self.name))
-        headers = {"Authorization": f"Bearer {token}", **self.extra_headers(), **extra}
+        with self._state_lock:
+            if gen != self.session_gen:
+                raise expired
+            token = self.tokens.get("access_token")
+            if not token:
+                raise expired
+            headers = {"Authorization": f"Bearer {token}", **self.extra_headers(), **extra}
         async with self.session.request(method, url, headers=headers, **kw) as r:
             text = await r.text()
             status = r.status
+        with self._state_lock:
+            if gen != self.session_gen:
+                raise expired  # never retry an old action with a newly logged-in account
         if status == 401 and _retry:
             await self._refresh(token)
-            return await self.request(method, url, _retry=False, headers=extra, **kw)
+            return await self.request(method, url, _retry=False, _generation=gen, headers=extra, **kw)
         if status >= 400:
             log.warning("%s %s %s → HTTP %s: %s", self.name, method, url.split("?")[0], status, text[:300])
             raise ApiError(f"{self.name} ({status}): {_short_error(text)}", status=status)

@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Main window without network: chat rendering, filters, moderation menu, languages."""
 import asyncio
+import os
 
 import pytest
 from PyQt6.QtCore import QUrl
@@ -655,11 +656,14 @@ def test_tiles_are_cleaned_up_in_every_group(window, monkeypatch):
     monkeypatch.setattr(VideoPanel, "forget", lambda self, keep: calls.append((self, frozenset(keep))))
     w = window
     w.add_group()
+    if any(pn.video is None for pn in w.panels):
+        if os.environ.get("MULTICHAT_REQUIRE_MPV") == "1":
+            pytest.fail("Native video panels are required in this test environment")
+        pytest.skip("libmpv unavailable: no native video panels")
     calls.clear()
     w.panels[0].rows["kick"].edit.setText("examplekick")
     panels_seen = {pn for pn, _keep in calls}
-    if all(pn.video is not None for pn in w.panels):
-        assert panels_seen == {pn.video for pn in w.panels}  # not just the last group
+    assert panels_seen == {pn.video for pn in w.panels}  # not just the last group
 
 
 def test_overlapping_groups_keep_each_groups_newest(window, monkeypatch):
@@ -745,7 +749,7 @@ def test_mentions_are_highlighted(window):
     assert bg("hey @me") is None
 
 
-def test_back_at_the_bottom_rebuilds_only_that_group(window):
+def test_back_at_the_bottom_rebuilds_only_that_group(window, app):
     w = window
     other = w.add_group()
     rebuilt = []
@@ -753,6 +757,7 @@ def test_back_at_the_bottom_rebuilds_only_that_group(window):
         pn.view.rebuild = lambda items, pn=pn: rebuilt.append(pn)
     w._render_timer.stop()
     first = w.panels[0]
+    w.tabs.setCurrentIndex(0)
     first.view.held = True
     w._follow_changed(first, True)
     w._render_now()
@@ -760,7 +765,98 @@ def test_back_at_the_bottom_rebuilds_only_that_group(window):
     rebuilt.clear()
     w.render_all()  # e.g. a filter: all groups
     w._render_now()
+    assert rebuilt == [first]  # hidden tabs defer their rebuild until activation
+    assert other in w._render_pending
+    w.tabs.setCurrentIndex(1)
+    from PyQt6.QtTest import QTest
+    for _ in range(100):
+        QTest.qWait(10)
+        if other in rebuilt:
+            break
     assert rebuilt == [first, other]
+
+
+def test_full_rebuild_yields_between_visible_groups(window, app):
+    from PyQt6.QtCore import QTimer
+    from PyQt6.QtTest import QTest
+    w = window
+    for _ in range(9):
+        w.add_group()
+    w.toggle_side_by_side(True)
+    w._render_timer.stop()
+    w._render_pending.clear()
+    rebuilt, heartbeats = [], []
+    for pn in w.panels:
+        pn.view.rebuild = lambda items, pn=pn: rebuilt.append(pn)
+    pulse = QTimer(interval=0)
+    pulse.timeout.connect(lambda: heartbeats.append(len(rebuilt)))
+    pulse.start()
+    w.render_all()
+    w._render_now()
+    assert len(rebuilt) == 1
+    for _ in range(100):
+        QTest.qWait(10)
+        if len(rebuilt) == 10:
+            break
+    pulse.stop()
+    assert len(rebuilt) == 10 and len(set(rebuilt)) == 10
+    assert any(0 < n < 10 for n in heartbeats)
+
+
+def test_close_finishes_background_cancellation_and_stops_rendering(window):
+    import threading
+    w = window
+    started, cancelled = threading.Event(), threading.Event()
+    async def pending_query():
+        started.set()
+        try:
+            await asyncio.sleep(3600)
+        finally:
+            cancelled.set()
+    future = w.run(pending_query())
+    assert started.wait(1)
+    w.render_all()
+    w.close()
+    assert cancelled.is_set() and future.cancelled()
+    assert w.session.closed and not w._loop_thread.is_alive() and w.loop.is_closed()
+    assert not w._render_timer.isActive() and not w._render_step_timer.isActive()
+    late = w.run(pending_query())
+    assert late.cancelled()
+    before = len(w._incoming)
+    message = ChatMessage("twitch", "chan", "Late", "after close")
+    w.bridge.message.emit(message)
+    w._emit(message, "twitch:chan")
+    w.bridge.incoming.emit(False)
+    w.bridge.incoming.emit(True)
+    w.apply_deletion(Deletion("twitch", clear_all=True))
+    w.render_all()
+    assert len(w._incoming) == before
+    assert not w._flush_timer.isActive() and not w._render_timer.isActive()
+
+
+def test_deferred_rebuild_observes_latest_deletion_and_route(window, app):
+    from PyQt6.QtTest import QTest
+    w = window
+    first, other = w.panels[0], w.add_group()
+    for pn in (first, other):
+        pn.rows["twitch"].edit.setText("chan")
+    w.tabs.setCurrentIndex(0)
+    message = ChatMessage("twitch", "chan", "Alice", "visible before deletion", msg_id="m", source="twitch:chan")
+    w.add_message(message)
+    w.render_all()
+    w._render_now()
+    assert other in w._render_pending
+    w.apply_deletion(Deletion("twitch", msg_id="m", source="twitch:chan"))
+    w.tabs.setCurrentIndex(1)
+    for _ in range(100):
+        QTest.qWait(10)
+        if "visible before deletion (deleted)" in other.view.toPlainText():
+            break
+    assert message.deleted
+    assert "visible before deletion (deleted)" in other.view.toPlainText()
+    other.rows["twitch"].edit.setText("different")
+    w._render_now()
+    assert not other.view.retained_messages
 
 
 def test_enter_on_an_emote_suggestion_does_not_send(window, app):

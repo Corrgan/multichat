@@ -71,7 +71,10 @@ def main() -> None:
             key = parse_wheel_filename(f["filename"])[3]
             key = ",".join(sorted({f"{t.interpreter}-{t.abi}" for t in key}))
             chosen.setdefault(key, f)
-        picked = list(chosen.values()) or [f for f in files if f["packagetype"] == "sdist"][:1]
+        # secure-lxml is built before this module from pinned native sources.
+        # Never offer its upstream binary wheels, which embed an older libxml2.
+        picked = ([f for f in files if f["packagetype"] == "sdist"][:1] if name == "lxml" else
+                  list(chosen.values()) or [f for f in files if f["packagetype"] == "sdist"][:1])
         if not picked:
             raise SystemExit(f"no usable file for {name}=={version}")
         for f in picked:

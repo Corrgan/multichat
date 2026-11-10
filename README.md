@@ -34,7 +34,7 @@ sha256sum -c MultiChat-x86_64.AppImage.sha256   # optional: verify the download
 
 ### Verifying a download
 
-Every release file comes with a SHA256 checksum and a **build provenance attestation** signed by GitHub: it proves the file was built by this repository's workflow from a specific commit.
+AppImage and Flatpak downloads come with SHA256 checksums and a **build provenance attestation** signed by GitHub: it proves the file was built by this repository's workflow from a specific commit. The separate dependency inventories are covered by provenance attestations as well.
 
 ```bash
 gh attestation verify MultiChat-x86_64.AppImage --repo Corrgan/multichat
@@ -85,11 +85,11 @@ multichat            # or: python -m multichat
 
 ```bash
 cd multichat
-packaging/build-appimage.sh
+PYTHON=python3.12 packaging/build-appimage.sh
 ./MultiChat-x86_64.AppImage
 ```
 
-The script creates its own Python environment in `build-appimage/` with the exact, hash-checked versions from `packaging/requirements-lock.txt`, bundles the app with PyInstaller and packs it with a pinned `appimagetool` release (downloaded automatically and verified by checksum). The result is a single file of about 100 MB; `packaging/prune-bundle.py` removes the build machine's system libraries from it (see above). `PYTHON=python3.12 packaging/build-appimage.sh` selects a specific Python interpreter.
+The script requires Python 3.12, a C compiler, make, pkg-config, binutils and zlib development headers. It creates its own environment in `build-appimage/` with the exact, hash-checked versions from `packaging/requirements-lock.txt` and builds lxml against the corrected, pinned XML libraries in `packaging/native-sources.json`. It bundles the app with PyInstaller and packs it with a pinned `appimagetool` release (downloaded automatically and verified by checksum). `packaging/prune-bundle.py` removes the build machine's system libraries from it (see above). Source installations support other Python versions separately; an ordinary pip installation does not apply this native XML rebuild.
 
 - **libmpv** is taken from the system by default (see Requirements) – small, and guaranteed to match your graphics drivers. `MPV_BUNDLE=1 packaging/build-appimage.sh` bundles libmpv and FFmpeg (~270 MB, then runs without mpv installed).
 - The AppImage runs on systems with **at least the glibc version of the build machine**, so build on the oldest distribution you want to support.
@@ -98,14 +98,16 @@ The script creates its own Python environment in `build-appimage/` with the exac
 
 ### Automatic builds (GitHub Actions)
 
-- [`tests.yml`](.github/workflows/tests.yml) runs the test suite on every push and pull request (including Dependabot's) and checks that the Flatpak's Python packages match the lock file.
+- [`tests.yml`](.github/workflows/tests.yml) runs the hash-checked Python 3.12 test suite on every push and pull request (including Dependabot's), checks that the Flatpak's Python packages match the lock file, and separately tests resolved source dependencies on Python 3.10 and 3.14. Native CI requires libmpv instead of silently passing without it.
 - [`build.yml`](.github/workflows/build.yml) builds the AppImage in an Ubuntu 22.04 container and the Flatpak with `flatpak-builder` ([`packaging/flatpak/`](packaging/flatpak)). Both run `--selftest`, `--selftest-net` (an HTTPS request) and `--selftest-video` (decodes a short clip with libmpv); the AppImage additionally in Fedora, Debian and Arch containers.
-- [`flatpak-upstream.yml`](.github/workflows/flatpak-upstream.yml) compares the Flatpak's self-built libraries (mpv, FFmpeg …) with Flathub's mpv package every week and opens an issue when they fall behind.
+- [`flatpak-upstream.yml`](.github/workflows/flatpak-upstream.yml) compares the Flatpak's self-built libraries (mpv, FFmpeg …) with Flathub's mpv package every week and opens a reminder for version differences. An incomplete comparison fails the check.
+- [`dependency-triage.yml`](.github/workflows/dependency-triage.yml) queries OSV for the Python lock and native Git pins, retaining exact queries and advisory results. Builds measure the actual extracted artifacts, publish CycloneDX inventories and preserve nested license files. Unresolved inventory coverage blocks tagged publication; see [`packaging/SECURITY.md`](packaging/SECURITY.md).
 
 
 - **Manual:** Actions → *Build* → *Run workflow* → AppImage and Flatpak are attached to the run as artifacts (14 days).
 - **Release:** bump `__version__` in `multichat/__init__.py` (and add the release to `packaging/io.github.Corrgan.MultiChat.metainfo.xml`), commit, then `git tag v<version> && git push origin v<version>` – the workflow creates the release with both files and checksums. If the tag doesn't match `__version__` or the tagged commit isn't on `main`, it stops with an error – tag only on `main`.
-- **Which tags create a release:** only `vX.Y` where the second number is a single digit or ends in 0 – e.g. `v0.10`, `v0.20`, `v1.6`, `v2.0`. Intermediate versions such as `v0.11`, `v0.15` or `v0.10.1` don't trigger a build; one-off exceptions are listed in `EXTRA_RELEASES` in the workflow (currently `v0.25`, the first release with the Flatpak).
+- **Which tags create a release:** numeric `vMAJOR.MINOR` and `vMAJOR.MINOR.PATCH`, for example `v0.80`, `v0.81` and `v0.80.1`. The version and main-ancestry checks apply to patch releases as well.
+- Branch protection is prepared in [`.github/rulesets/main.json`](.github/rulesets/main.json); a repository administrator must activate it using [`docs/REPOSITORY_RULES.md`](docs/REPOSITORY_RULES.md).
 
 ## Project layout
 
@@ -142,12 +144,16 @@ docs/                 additional documentation
 - **Click on a name** to select the user. The **action bar** above that group's chat then works on that user: user card, mention, delete their last message, timeout (1 min / 10 min / 1 h), ban, unban.
 - **Right-click a name** for the menu: user card, mention, copy text and the same moderation actions.
 - **User card** (👤): roles, account age, followage (Twitch, Kick), subscription months (Kick), ban status (Kick), the user's recent messages, your moderation actions and your own notes. It opens as a window; the 📌 button docks it next to the chat (remembered). Notes and the action log are stored only on this computer in `~/.config/multichat/modnotes.json`.
+- **Moderation context:** the selected user and card retain their channel even when that user writes in another channel. The card, action bar and ban confirmation show the target channel; opening a different channel's message changes it explicitly. Cross-channel history labels each message's channel.
 - **Moderator check:** MultiChat asks Twitch which channels you moderate; on Kick and YouTube it knows your own channel. In addition, the badge on your own chat messages counts. Where you are known **not** to be a moderator, the moderation actions are hidden.
 - **Alerts:** subs, resubs, gifted subs, raids/hosts, bits/Kicks, Super Chats and memberships are shown with a headline and highlighted in the chat and in the OBS overlay. **View → Alerts …** turns each kind on or off and sets minimum values (e.g. bits from 100). The alert settings of the streamer (StreamElements, Streamlabs …) can't be read by other apps, so set values that match them. Events below the minimum are still shown, without highlight. Follows aren't part of the chat and are not shown.
 - **View → Chat font size** (Ctrl + / Ctrl − / Ctrl 0) makes the chat text and emotes larger, e.g. to read it from further away. Only the chat changes, not the rest of the window.
 - **Input line at the bottom:** send to one platform or to all you're logged in to.
 - Settings: `~/.config/multichat/config.json` (readable only by you).
 - Logins and the client secrets of your developer apps are stored in the system keyring (KWallet, GNOME Keyring, KeePassXC … via the Secret Service API). Without one, they go to `tokens.json` / `apps.json` next to the settings, readable only by you. `MULTICHAT_SECRETS=file` forces the files; the log and `--selftest` show which storage is used. Data from older versions is moved into the keyring automatically.
+- `MULTICHAT_SECRETS=keyring` prevents plaintext fallback. If the wallet cannot save a logout, the app removes the in-memory session and warns that the account may return after restarting; it does not report a durable logout as successful.
+- Chat ingestion is bounded before GUI delivery and processed fairly across sources. When overloaded, dropped events are counted and reported; debug statistics separately count lost moderation events, which can leave the local display incomplete. Temporary image failures retry after a delay instead of hiding the emote until restart.
+- Scrolling up pauses incoming lines without replacing the passage you are reading, including during bulk moderation updates. Visible messages still receive deletions and updates. Return to the bottom with the jump button to catch up with current chat.
 
 Reading works without logging in. To send and moderate you need to be logged in **and** have moderator rights on the channel (or it's your own channel).
 
@@ -244,6 +250,7 @@ The overlay only answers requests from this computer (`127.0.0.1` / `localhost`)
   - for identical names: channel before global, 7TV before BTTV before FFZ
   - channel emotes are loaded when connecting, so the first seconds of chat may still show text
   - animated emotes (GIF/WebP) play in the app window and in the OBS overlay
+  - large or complex images and animations may use a static frame or text fallback to keep chat responsive
   - if Qt lacks the WebP plugin (some distribution packages), the app uses PNG/GIF; otherwise install `qt6-image-formats-plugins` or use the pip package
 - On Wayland, **Always on top** may be ignored depending on the compositor. The video tiles work on X11 and Wayland.
 

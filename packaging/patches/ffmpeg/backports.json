@@ -1,0 +1,69 @@
+{
+  "base": {
+    "tag": "n9.0.2",
+    "commit": "946fcce07b6dcd0331c8cc609192aeff5e1924f8"
+  },
+  "scope": "Flatpak FFmpeg source build; host libraries are outside this backport set",
+  "patches": [
+    {
+      "cve": "CVE-2026-107675",
+      "upstream_commit": "2b822b7fb6ed195546bc9fd9bdb794e98222bdce",
+      "upstream_url": "https://github.com/FFmpeg/FFmpeg/commit/2b822b7fb6ed195546bc9fd9bdb794e98222bdce",
+      "path": "01-CVE-2026-107675-2b822b7f.patch",
+      "sha256": "07473c9dc1783eb31d3175a425bb093b2798aef03030d5c981ae356910476781"
+    },
+    {
+      "cve": "CVE-2026-107676",
+      "upstream_commit": "2c2f6e96e31795ae95a8f8323a493ffbc493111f",
+      "upstream_url": "https://github.com/FFmpeg/FFmpeg/commit/2c2f6e96e31795ae95a8f8323a493ffbc493111f",
+      "path": "02-CVE-2026-107676-2c2f6e96.patch",
+      "sha256": "4298a0e4fb3f43bfeb53dc9d67871458173f69b204c5a6e491c489d692393d0a"
+    },
+    {
+      "cve": "CVE-2026-107677",
+      "upstream_commit": "ed27bfcbbbc0872c0195eaf4dd2c0c93b9f1778e",
+      "upstream_url": "https://github.com/FFmpeg/FFmpeg/commit/ed27bfcbbbc0872c0195eaf4dd2c0c93b9f1778e",
+      "path": "03-CVE-2026-107677-ed27bfcb.patch",
+      "sha256": "69e42391ef93c60380e8444598b27e1735cc8c4eb92e46ff11977697e78806c6"
+    },
+    {
+      "cve": "CVE-2026-107678",
+      "upstream_commit": "969c7eb091989a664cb7bf66a1f02051cc46cb52",
+      "upstream_url": "https://github.com/FFmpeg/FFmpeg/commit/969c7eb091989a664cb7bf66a1f02051cc46cb52",
+      "path": "04-CVE-2026-107678-969c7eb0.patch",
+      "sha256": "39843e45f039ed9b2350926f670a5cf98e54a38c228bcbdd7089583191ffe19d"
+    },
+    {
+      "cve": "CVE-2026-107678",
+      "upstream_commit": "d1434518fbd03789e3e5dc0657a7a9f1123ce074",
+      "upstream_url": "https://github.com/FFmpeg/FFmpeg/commit/d1434518fbd03789e3e5dc0657a7a9f1123ce074",
+      "path": "05-CVE-2026-107678-d1434518.patch",
+      "sha256": "ca3fa13b8cc9d1b363113baa86b943d020dd3a7f154580db6d71e44d9c388c2c"
+    },
+    {
+      "cve": "CVE-2026-107678",
+      "upstream_commit": "71403a21b02a92b925e26e609e9bd3e48df451cf",
+      "upstream_url": "https://github.com/FFmpeg/FFmpeg/commit/71403a21b02a92b925e26e609e9bd3e48df451cf",
+      "path": "06-CVE-2026-107678-71403a21.patch",
+      "sha256": "85ab9a7fbf3c8e90c58923fed1995bcf3be4b1c7080fd72f82fbc52e91b05279"
+    },
+    {
+      "cve": "CVE-2026-107696",
+      "upstream_commit": "f5d4fd186c68913240c4f6e9cda98443e1518b34",
+      "upstream_url": "https://github.com/FFmpeg/FFmpeg/commit/f5d4fd186c68913240c4f6e9cda98443e1518b34",
+      "path": "07-CVE-2026-107696-f5d4fd18.patch",
+      "sha256": "9ada1e1e9a353a8f32866f2f00254ecdece592610772bfa815f23a8a40dc710f"
+    }
+  ],
+  "verification": {
+    "native_regressions": "packaging/tests/test-native-ffmpeg.py",
+    "controls": [
+      "empty-search av_strireplace termination",
+      "deterministic HDR10+ output independent of old buffer contents",
+      "iterative long encryption-init-info list free",
+      "MOV demuxing of 10000 pssh boxes with preserved record count",
+      "loopback RTSP redirect limit"
+    ],
+    "sftp": "libssh explicitly disabled; upstream host-key-before-authentication backport applied"
+  }
+}

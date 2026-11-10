@@ -42,6 +42,13 @@ cleanup:
 modules:
   # ---- libmpv and its libraries ------------------------------------------- #
   - name: luajit   # Lua for mpv's ytdl_hook
+    post-install:
+      - |
+        license_dest="${FLATPAK_DEST}/share/licenses/multichat-native/luajit"
+        mkdir -p "$license_dest"
+        find . -type f \( -iname 'LICENSE*' -o -iname 'COPYING*' -o -iname 'NOTICE*' -o -iname 'COPYRIGHT*' \) -exec sh -c 'dest=$1; shift; for license do install -Dm644 "$license" "$dest/${license#./}"; done' _ "$license_dest" {} +
+        (cd "$license_dest" && find . -type f ! -name SHA256SUMS -exec sha256sum {} + > SHA256SUMS)
+        test -s "$license_dest/SHA256SUMS"
     no-autogen: true
     make-args:
       - BUILDMODE=dynamic
@@ -57,6 +64,13 @@ modules:
         commit: 982cd8323eafd8604a9e5f2a916aa50b9f67d9ed
 
   - name: libass
+    post-install:
+      - |
+        license_dest="${FLATPAK_DEST}/share/licenses/multichat-native/libass"
+        mkdir -p "$license_dest"
+        find . -type f \( -iname 'LICENSE*' -o -iname 'COPYING*' -o -iname 'NOTICE*' -o -iname 'COPYRIGHT*' \) -exec sh -c 'dest=$1; shift; for license do install -Dm644 "$license" "$dest/${license#./}"; done' _ "$license_dest" {} +
+        (cd "$license_dest" && find . -type f ! -name SHA256SUMS -exec sha256sum {} + > SHA256SUMS)
+        test -s "$license_dest/SHA256SUMS"
     config-opts:
       - --disable-static
       - --enable-asm
@@ -69,6 +83,14 @@ modules:
         commit: 4a05d8127f525943ebf45fdc6497c9e665947f0d
 
   - name: ffmpeg   # decoding only; H.264/AAC/VP9 are built-in decoders
+    post-install:
+      - |
+        python3 test-native-ffmpeg.py --source-dir . --build-dir .
+        license_dest="${FLATPAK_DEST}/share/licenses/multichat-native/ffmpeg"
+        mkdir -p "$license_dest"
+        find . -type f \( -iname 'LICENSE*' -o -iname 'COPYING*' -o -iname 'NOTICE*' -o -iname 'COPYRIGHT*' \) -exec sh -c 'dest=$1; shift; for license do install -Dm644 "$license" "$dest/${license#./}"; done' _ "$license_dest" {} +
+        (cd "$license_dest" && find . -type f ! -name SHA256SUMS -exec sha256sum {} + > SHA256SUMS)
+        test -s "$license_dest/SHA256SUMS"
     config-opts:
       - --disable-debug
       - --disable-doc
@@ -77,6 +99,8 @@ modules:
       - --disable-encoders
       - --enable-encoder=png
       - --disable-devices
+      - --disable-libssh
+      - --disable-libxml2
       - --enable-shared
       - --enable-gpl
       - --enable-version3
@@ -88,8 +112,34 @@ modules:
         url: https://github.com/FFmpeg/FFmpeg.git  # mirror; git.ffmpeg.org is often unreachable from CI
         tag: n9.0.2
         commit: 946fcce07b6dcd0331c8cc609192aeff5e1924f8
+      - type: patch
+        path: ../patches/ffmpeg/01-CVE-2026-107675-2b822b7f.patch
+      - type: patch
+        path: ../patches/ffmpeg/02-CVE-2026-107676-2c2f6e96.patch
+      - type: patch
+        path: ../patches/ffmpeg/03-CVE-2026-107677-ed27bfcb.patch
+      - type: patch
+        path: ../patches/ffmpeg/04-CVE-2026-107678-969c7eb0.patch
+      - type: patch
+        path: ../patches/ffmpeg/05-CVE-2026-107678-d1434518.patch
+      - type: patch
+        path: ../patches/ffmpeg/06-CVE-2026-107678-71403a21.patch
+      - type: patch
+        path: ../patches/ffmpeg/07-CVE-2026-107696-f5d4fd18.patch
+      - type: file
+        path: ../tests/native_ffmpeg_regressions.c
+      - type: file
+        path: ../tests/test-native-ffmpeg.py
 
   - name: libplacebo
+    post-install:
+      - |
+        if [ ! -f meson.build ] && [ -f ../meson.build ]; then cd ..; fi
+        license_dest="${FLATPAK_DEST}/share/licenses/multichat-native/libplacebo"
+        mkdir -p "$license_dest"
+        find . -type f \( -iname 'LICENSE*' -o -iname 'COPYING*' -o -iname 'NOTICE*' -o -iname 'COPYRIGHT*' \) -exec sh -c 'dest=$1; shift; for license do install -Dm644 "$license" "$dest/${license#./}"; done' _ "$license_dest" {} +
+        (cd "$license_dest" && find . -type f ! -name SHA256SUMS -exec sha256sum {} + > SHA256SUMS)
+        test -s "$license_dest/SHA256SUMS"
     buildsystem: meson
     config-opts:
       - --libdir=lib
@@ -106,6 +156,13 @@ modules:
         commit: 275f7dea27924cdd34ab2e6c20e448b6bc4fab65
 
   - name: hwdata
+    post-install:
+      - |
+        license_dest="${FLATPAK_DEST}/share/licenses/multichat-native/hwdata"
+        mkdir -p "$license_dest"
+        find . -type f \( -iname 'LICENSE*' -o -iname 'COPYING*' -o -iname 'NOTICE*' -o -iname 'COPYRIGHT*' \) -exec sh -c 'dest=$1; shift; for license do install -Dm644 "$license" "$dest/${license#./}"; done' _ "$license_dest" {} +
+        (cd "$license_dest" && find . -type f ! -name SHA256SUMS -exec sha256sum {} + > SHA256SUMS)
+        test -s "$license_dest/SHA256SUMS"
     buildsystem: autotools
     sources:
       - type: archive
@@ -113,6 +170,14 @@ modules:
         sha256: b7c3fd7214a3b7c49d2661db127a712dc11cffd1799f793947aa1cb20aaf3298
 
   - name: libdisplay-info
+    post-install:
+      - |
+        if [ ! -f meson.build ] && [ -f ../meson.build ]; then cd ..; fi
+        license_dest="${FLATPAK_DEST}/share/licenses/multichat-native/libdisplay-info"
+        mkdir -p "$license_dest"
+        find . -type f \( -iname 'LICENSE*' -o -iname 'COPYING*' -o -iname 'NOTICE*' -o -iname 'COPYRIGHT*' \) -exec sh -c 'dest=$1; shift; for license do install -Dm644 "$license" "$dest/${license#./}"; done' _ "$license_dest" {} +
+        (cd "$license_dest" && find . -type f ! -name SHA256SUMS -exec sha256sum {} + > SHA256SUMS)
+        test -s "$license_dest/SHA256SUMS"
     buildsystem: meson
     config-opts:
       - --libdir=lib
@@ -122,6 +187,14 @@ modules:
         sha256: f7331fcaf5527251b84c8fb84238d06cd2f458422ce950c80e86c72927aa8c2b
 
   - name: mpv
+    post-install:
+      - |
+        if [ ! -f meson.build ] && [ -f ../meson.build ]; then cd ..; fi
+        license_dest="${FLATPAK_DEST}/share/licenses/multichat-native/mpv"
+        mkdir -p "$license_dest"
+        find . -type f \( -iname 'LICENSE*' -o -iname 'COPYING*' -o -iname 'NOTICE*' -o -iname 'COPYRIGHT*' \) -exec sh -c 'dest=$1; shift; for license do install -Dm644 "$license" "$dest/${license#./}"; done' _ "$license_dest" {} +
+        (cd "$license_dest" && find . -type f ! -name SHA256SUMS -exec sha256sum {} + > SHA256SUMS)
+        test -s "$license_dest/SHA256SUMS"
     buildsystem: meson
     config-opts:
       - --libdir=lib
@@ -157,6 +230,13 @@ modules:
 
   # ---- JavaScript runtime for yt-dlp (YouTube) ------------------------------ #
   - name: deno
+    post-install:
+      - |
+        license_dest="${FLATPAK_DEST}/share/licenses/multichat-native/deno"
+        mkdir -p "$license_dest"
+        find . -type f \( -iname 'LICENSE*' -o -iname 'COPYING*' -o -iname 'NOTICE*' -o -iname 'COPYRIGHT*' \) -exec sh -c 'dest=$1; shift; for license do install -Dm644 "$license" "$dest/${license#./}"; done' _ "$license_dest" {} +
+        (cd "$license_dest" && find . -type f ! -name SHA256SUMS -exec sha256sum {} + > SHA256SUMS)
+        test -s "$license_dest/SHA256SUMS"
     buildsystem: simple
     build-commands:
       - unzip deno.zip
@@ -168,8 +248,30 @@ modules:
         dest-filename: deno.zip
         only-arches:
           - x86_64
+      - type: file
+        path: ../licenses/deno-2.9.8/LICENSE.md
 
   # ---- Python packages (PyQt6 comes from the BaseApp) ----------------------- #
+  # The upstream lxml wheels embed old libxml2. Build a checked static replacement first.
+  - name: secure-lxml
+    buildsystem: simple
+    build-commands:
+      - python3 build-secure-lxml.py --offline --source-cache . --work native-build --output native-wheels --install-prefix=${FLATPAK_DEST}
+    sources:
+      - type: file
+        path: ../build-secure-lxml.py
+      - type: file
+        path: ../native-sources.json
+      - type: file
+        url: https://download.gnome.org/sources/libxml2/2.15/libxml2-2.15.4.tar.xz
+        sha256: 98087fd181d9070724f3fbc65c7377db03038eb92bd882374daff44940138821
+      - type: file
+        url: https://download.gnome.org/sources/libxslt/1.1/libxslt-1.1.45.tar.xz
+        sha256: 9acfe68419c4d06a45c550321b3212762d92f41465062ca4ea19e632ee5d216e
+      - type: file
+        url: https://files.pythonhosted.org/packages/23/ad/28ecd7cb894d172f3c9c80a075eeeb2017ac62e3632cee05a5f9493547eb/lxml-6.1.3.tar.gz
+        sha256: 45222d94ddd511536f3b2f7d9deae3b2339b4ce0f075f1ca25703b07cad9dd21
+
   - python-deps.json
 
   # ---- MultiChat ------------------------------------------------------------ #
@@ -186,6 +288,7 @@ modules:
         install -Dm644 "packaging/${FLATPAK_ID}.metainfo.xml" -t "${FLATPAK_DEST}/share/metainfo/"
         install -Dm644 "multichat/resources/${FLATPAK_ID}.png" -t "${FLATPAK_DEST}/share/icons/hicolor/256x256/apps/"
         install -Dm644 LICENSE THIRD_PARTY_NOTICES.md README.md AUTHORS.md -t "${FLATPAK_DEST}/share/licenses/${FLATPAK_ID}/"
+        PYTHONPATH="$SITE" python3 packaging/collect-licenses.py "${FLATPAK_DEST}/share/licenses/multichat-python" --metadata-root "$SITE" --relocated-licenses packaging/flatpak/baseapp-licenses.json --artifact-root "${FLATPAK_DEST}"
     sources:
       - type: dir
         path: ../..
