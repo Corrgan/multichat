@@ -196,6 +196,7 @@
   "stream ended or chat unreachable – retrying in {seconds} s": "直播已结束或聊天无法访问 – {seconds} 秒后重试",
   "stream ended – waiting for the next one": "直播已结束 – 等待下一场",
   "subscribing to chat …": "正在订阅聊天 …",
+  "unexpected stream address": "意外的直播地址",
   "yes": "是",
   "{host} cannot be resolved (DNS)": "无法解析 {host}（DNS）",
   "{host} is blocked by your DNS blocker (→ {addresses})": "{host} 被你的 DNS 拦截器屏蔽（→ {addresses}）",

@@ -196,6 +196,7 @@
   "stream ended or chat unreachable – retrying in {seconds} s": "Stream beendet oder Chat nicht erreichbar – neuer Versuch in {seconds} s",
   "stream ended – waiting for the next one": "Stream beendet – warte auf den nächsten",
   "subscribing to chat …": "abonniere Chat …",
+  "unexpected stream address": "unerwartete Stream-Adresse",
   "yes": "ja",
   "{host} cannot be resolved (DNS)": "{host} ist nicht auflösbar (DNS)",
   "{host} is blocked by your DNS blocker (→ {addresses})": "{host} wird von deinem DNS-Blocker gesperrt (→ {addresses})",

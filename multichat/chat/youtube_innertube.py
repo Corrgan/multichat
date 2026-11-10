@@ -55,13 +55,21 @@ def _cfg(page: str, key: str) -> str | None:
     return m.group(1) if m else None
 
 
+# what a response in an unexpected shape raises while it is taken apart
+_SHAPE_ERRORS = (KeyError, IndexError, TypeError, AttributeError, ValueError)
+
+
 def _continuation(conts: list) -> tuple[str, float]:
     """→ (token, seconds to wait) from a `continuations` list."""
     for c in conts or []:
         for kind in ("invalidationContinuationData", "timedContinuationData", "reloadContinuationData"):
             data = c.get(kind)
             if data and data.get("continuation"):
-                return data["continuation"], int(data.get("timeoutMs") or 5000) / 1000
+                try:
+                    wait = int(data.get("timeoutMs") or 5000) / 1000
+                except (TypeError, ValueError):
+                    wait = 5.0
+                return str(data["continuation"]), wait
     raise ChatEnded
 
 
@@ -212,10 +220,17 @@ class InnertubeChat:
                 if r.status != 200:
                     raise InnertubeError(f"live chat page HTTP {r.status}")
                 page = await r.text()
-            context, token, initial = parse_page(page)
+            # A page or response that no longer has the expected shape must end up as
+            # InnertubeError: that is what makes run_youtube fall back to pytchat. A bare
+            # KeyError/TypeError would only be retried with this same reader forever.
+            try:
+                context, token, initial = parse_page(page)
+                first = self._new(parse_actions(initial, self.video_id))
+            except _SHAPE_ERRORS as e:
+                raise InnertubeError(f"unexpected live chat page: {type(e).__name__}: {e}") from e
             if on_connected:
                 on_connected()
-            for ev in self._new(parse_actions(initial, self.video_id)):
+            for ev in first:
                 emit(emotes_apply(ev) if emotes_apply else ev)
             failures = 0
             while True:
@@ -224,11 +239,18 @@ class InnertubeChat:
                                       json={"context": context, "continuation": token}) as r:
                         if r.status != 200:
                             raise InnertubeError(f"get_live_chat HTTP {r.status}")
-                        data = await r.json(content_type=None)
-                    cont = (data.get("continuationContents") or {}).get("liveChatContinuation")
-                    if cont is None:
-                        raise ChatEnded
-                    token, wait = _continuation(cont.get("continuations"))
+                        try:
+                            data = await r.json(content_type=None)
+                        except ValueError as e:
+                            raise InnertubeError(f"get_live_chat did not return JSON: {e}") from e
+                    try:
+                        cont = (data.get("continuationContents") or {}).get("liveChatContinuation")
+                        if cont is None:
+                            raise ChatEnded
+                        token, wait = _continuation(cont.get("continuations"))
+                        events = self._new(parse_actions(cont.get("actions") or [], self.video_id))
+                    except _SHAPE_ERRORS as e:
+                        raise InnertubeError(f"unexpected get_live_chat response: {type(e).__name__}: {e}") from e
                     failures = 0
                 except (aiohttp.ClientError, asyncio.TimeoutError, InnertubeError) as e:
                     failures += 1
@@ -237,6 +259,6 @@ class InnertubeChat:
                     log.debug("YouTube InnerTube poll failed (%s), retrying", e)
                     await asyncio.sleep(3)
                     continue
-                for ev in self._new(parse_actions(cont.get("actions") or [], self.video_id)):
+                for ev in events:
                     emit(emotes_apply(ev) if emotes_apply else ev)
                 await asyncio.sleep(min(MAX_WAIT, max(MIN_WAIT, wait)))

@@ -227,6 +227,7 @@ def _kick(slug: str, max_h: int) -> Stream:
     if not live or not url:
         log.debug("Kick %s: offline (livestream=%s, playback_url=%s)", slug, bool(live), bool(url))
         raise Offline("offline")
+    _https_only(str(url), "Kick playlist")  # fetched below
     try:
         from curl_cffi import requests as cf  # type: ignore
 
@@ -339,13 +340,26 @@ def _twitch(channel: str, max_h: int) -> Stream:
     return Stream(f"fdclose://{rfd}", title, closer=close, pipe_fd=rfd, ads=ads)
 
 
+def _https_only(url: str | None, what: str) -> None:
+    """mpv opens whatever address it is given (files, devices, other protocols). The
+    addresses come out of platform responses – only ever pass on https ones."""
+    if url is not None and not url.lower().startswith("https://"):
+        log.warning("%s: refusing stream address %r", what, url[:80])
+        raise RuntimeError(_("unexpected stream address"))
+
+
 def resolve(platform: str, value: str, quality: str) -> Stream:
     """Returns the stream or raises Offline / RuntimeError."""
     max_h = quality_height(quality)
     value = value.strip()
     log.debug("Looking for stream: %s %r (%s)", platform, value, quality)
     if platform == "twitch":
-        return _twitch(twitch_channel(value), max_h)
-    if platform == "kick":
-        return _kick(value, max_h)
-    return _youtube(value, max_h)
+        stream = _twitch(twitch_channel(value), max_h)
+    elif platform == "kick":
+        stream = _kick(value, max_h)
+    else:
+        stream = _youtube(value, max_h)
+    if stream.pipe_fd is None:  # not our own Streamlink pipe
+        _https_only(stream.url, platform)
+    _https_only(stream.audio_url, platform)
+    return stream

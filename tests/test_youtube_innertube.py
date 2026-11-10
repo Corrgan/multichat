@@ -138,3 +138,93 @@ def test_falls_back_to_pytchat(monkeypatch):
     got = []
     asyncio.run(youtube._read_chat("vid12345678", got.append, None, lambda: None))
     assert [m.text for m in got] == ["via pytchat"]
+
+
+def test_changed_response_shape_falls_back_to_pytchat(monkeypatch):
+    """YouTube answers in a shape the reader doesn't know (here: a list, and an action that
+    is no dict): that must become InnertubeError → pytchat takes over, instead of the same
+    reader being retried forever with a KeyError/AttributeError."""
+    import sys
+    import types
+
+    polls = []
+
+    async def page(req):
+        return web.Response(text=PAGE, content_type="text/html")
+
+    async def get_live_chat(req):
+        polls.append(1)
+        return web.json_response([{"unexpected": True}])  # not an object any more
+
+    class FakeChat:
+        def is_alive(self):
+            return False
+
+        def terminate(self):
+            pass
+
+    created = []
+
+    async def fast_sleep(_s, _real=asyncio.sleep):
+        await _real(0)
+
+    async def run():
+        app = web.Application()
+        app.router.add_get("/live_chat", page)
+        app.router.add_post("/get_live_chat", get_live_chat)
+        runner = web.AppRunner(app)
+        await runner.setup()
+        await web.TCPSite(runner, "127.0.0.1", PORT + 1).start()
+        monkeypatch.setattr(it, "LIVE_CHAT_URL", f"http://127.0.0.1:{PORT + 1}/live_chat")
+        monkeypatch.setattr(it, "GET_LIVE_CHAT_URL", f"http://127.0.0.1:{PORT + 1}/get_live_chat")
+        monkeypatch.setattr(it.asyncio, "sleep", fast_sleep)
+        monkeypatch.delenv("MULTICHAT_YT_CHAT", raising=False)
+        monkeypatch.setitem(sys.modules, "pytchat", types.SimpleNamespace(
+            create=lambda **kw: created.append(kw) or FakeChat()))
+        try:
+            await youtube._read_chat("vid12345678", lambda ev: None, None, lambda: None)
+        finally:
+            await runner.cleanup()
+
+    asyncio.run(run())
+    assert len(polls) == 5 and len(created) == 1  # gave up after 5 tries, pytchat was started
+
+
+def test_broken_page_shape_is_an_innertube_error():
+    import pytest
+
+    page = 'var ytInitialData = {"contents": {"liveChatRenderer": {"continuations": "oops"}}}; "INNERTUBE_CLIENT_VERSION":"2.1"'
+    chat = it.InnertubeChat("vid12345678", {}, {})
+
+    class Resp:
+        status = 200
+
+        async def text(self):
+            return page
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+    class Session:
+        def __init__(self, **kw):
+            pass
+
+        def get(self, *a, **kw):
+            return Resp()
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+    real = it.aiohttp.ClientSession
+    it.aiohttp.ClientSession = Session
+    try:
+        with pytest.raises(it.InnertubeError, match="unexpected live chat page"):
+            asyncio.run(chat.run(lambda ev: None))
+    finally:
+        it.aiohttp.ClientSession = real

@@ -137,3 +137,27 @@ def test_discarded_stream_result_is_closed_in_the_background():
     t0 = _time.perf_counter()
     VideoTile._resolved(tile, 1, ("ok", streams.Stream("fdclose://-1", closer=slow_close)))
     assert _time.perf_counter() - t0 < 0.1 and closed.wait(2)
+
+
+def test_only_https_streams_reach_mpv(monkeypatch):
+    """mpv opens any address it is given – file paths or other protocols from a platform
+    response are refused."""
+    from multichat.chat import kick
+
+    monkeypatch.setattr(kick, "_kick_get", lambda url, slug: {"livestream": {"session_title": "t"},
+                                                              "playback_url": "file:///etc/passwd"})
+    with pytest.raises(RuntimeError, match="unexpected stream address"):
+        streams.resolve("kick", "examplekick", "best")
+
+    monkeypatch.setattr(streams, "_youtube", lambda value, max_h: streams.Stream("http://example.invalid/v.m3u8"))
+    with pytest.raises(RuntimeError, match="unexpected stream address"):
+        streams.resolve("youtube", "@examplechannel", "best")
+    monkeypatch.setattr(streams, "_youtube", lambda value, max_h: streams.Stream(
+        "https://example.invalid/v", audio_url="rtmp://example.invalid/a"))
+    with pytest.raises(RuntimeError, match="unexpected stream address"):
+        streams.resolve("youtube", "@examplechannel", "best")
+    # our own Streamlink pipe and ordinary https pass
+    monkeypatch.setattr(streams, "_twitch", lambda channel, max_h: streams.Stream("fdclose://7", pipe_fd=7))
+    assert streams.resolve("twitch", "examplechan", "best").url == "fdclose://7"
+    monkeypatch.setattr(streams, "_youtube", lambda value, max_h: streams.Stream("https://www.youtube.com/watch?v=abcdefghijk"))
+    assert streams.resolve("youtube", "@examplechannel", "best").url.startswith("https://")

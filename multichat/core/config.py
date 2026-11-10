@@ -26,7 +26,14 @@ def write_private(path: Path, data: dict) -> None:
     disk while saving never leaves a half-written file behind."""
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     tmp = path.with_name(f".{path.name}.tmp")
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    # O_NOFOLLOW: never write through a symlink left at the temporary name. fchmod: the mode
+    # argument only applies when the file is created – a left-over temp file with wider
+    # permissions would otherwise become the settings/token file as it is.
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0), 0o600)
+    try:
+        os.fchmod(fd, 0o600)
+    except (AttributeError, OSError):  # not on this platform/filesystem
+        pass
     with os.fdopen(fd, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
         f.flush()

@@ -41,11 +41,54 @@ class ChatMessage:
     source: str = ""
 
     def __post_init__(self) -> None:
+        # Everything here comes from a platform's servers. They limit lengths themselves
+        # (200-500 characters), but nothing downstream (chat view, overlay, history, notes)
+        # should depend on that: clamp once, here.
+        self.user = _CONTROL_RE.sub("", _SPOOF_RE.sub("", str(self.user)))[:MAX_USER].strip() or "?"
+        self.text = _clean_text(self.text)[:MAX_TEXT]
+        self.event_text = _clean_text(self.event_text)[:MAX_EVENT_TEXT]
+        if self.parts:
+            self.parts = _clean_parts(self.parts)
         if not self.parts and (self.text or not self.event):  # an event may come without a message
             self.parts = [("text", self.text, "")]
         # name colours come from the platforms; only accept #RRGGBB (ends up in HTML/CSS)
         if self.color and not _COLOR_RE.fullmatch(self.color):
             self.color = None
+
+
+MAX_USER = 100  # characters of a display name (YouTube allows 100)
+MAX_TEXT = 2000  # characters of one message (the platforms allow 200-500)
+MAX_EVENT_TEXT = 300
+MAX_PARTS = 600  # text pieces and emotes of one message
+_CONTROL_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")  # control characters (not tab/newline)
+# direction overrides/isolates: in a name they can make it read as another name
+_SPOOF_RE = re.compile("[\u202a-\u202e\u2066-\u2069\r\n\t]")
+
+
+def _clean_text(value) -> str:
+    return _CONTROL_RE.sub("", value if isinstance(value, str) else str(value or ""))
+
+
+def _clean_parts(parts) -> list:
+    """Parts as (kind, value, alt) string triples, within MAX_PARTS and MAX_TEXT in total."""
+    out, room = [], MAX_TEXT
+    for part in list(parts)[:MAX_PARTS]:
+        try:
+            kind, value, alt = part
+        except (TypeError, ValueError):
+            continue
+        if kind == "text":
+            value = _clean_text(value)[:room]
+            room -= len(value)
+            if value:
+                out.append(("text", value, ""))
+        elif kind == "emote" and isinstance(value, str) and len(value) <= 2048:
+            alt = _clean_text(alt)[:100]
+            room -= len(alt)
+            out.append(("emote", value, alt))
+        if room <= 0:
+            break
+    return out
 
 
 ROLE_NAMES = {

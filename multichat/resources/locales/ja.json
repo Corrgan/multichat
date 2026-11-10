@@ -196,6 +196,7 @@
   "stream ended or chat unreachable – retrying in {seconds} s": "配信終了またはチャットに接続できません – {seconds} 秒後に再試行",
   "stream ended – waiting for the next one": "配信終了 – 次の配信を待機中",
   "subscribing to chat …": "チャットを購読中 …",
+  "unexpected stream address": "予期しない配信アドレス",
   "yes": "はい",
   "{host} cannot be resolved (DNS)": "{host} を名前解決できません（DNS）",
   "{host} is blocked by your DNS blocker (→ {addresses})": "{host} は DNS ブロッカーでブロックされています（→ {addresses}）",

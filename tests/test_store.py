@@ -48,3 +48,27 @@ def test_falls_back_to_file_when_keyring_fails(tmp_path):
     s.update("youtube", access_token="y")  # must not lose the login
     assert json.loads((tmp_path / "tokens.json").read_text())["youtube"]["access_token"] == "y"
     assert s.backend_name == "file"
+
+
+def test_private_file_stays_private_and_never_follows_a_symlink(tmp_path):
+    """A left-over temp file with wide permissions, or a symlink at its name, must not end
+    up as (or redirect) the settings/token file."""
+    import os
+
+    import pytest
+
+    from multichat.core.config import write_private
+
+    target = tmp_path / "tokens.json"
+    stale = tmp_path / ".tokens.json.tmp"
+    stale.write_text("old")
+    stale.chmod(0o644)
+    write_private(target, {"a": 1})
+    assert target.stat().st_mode & 0o777 == 0o600 and json.loads(target.read_text()) == {"a": 1}
+
+    victim = tmp_path / "victim.txt"
+    victim.write_text("untouched")
+    os.symlink(victim, stale)
+    with pytest.raises(OSError):
+        write_private(target, {"a": 2})
+    assert victim.read_text() == "untouched" and json.loads(target.read_text()) == {"a": 1}
