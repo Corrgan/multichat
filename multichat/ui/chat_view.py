@@ -47,7 +47,12 @@ MAX_ANIMATION_FRAME_BYTES = 16 * 1024 * 1024
 MAX_FRAME_CACHE_PER_MOVIE = 2 * 1024 * 1024  # an emote of 60 frames at 56 px height needs ~0.75 MiB
 MAX_FRAME_CACHE_BYTES = 64 * 1024 * 1024  # across all animations of one view
 MAX_FAILED = 1500  # negative cache holds URLs/deadlines, never decoded images
+# An image that couldn't be loaded is tried again in the background: after 30 s, then at
+# doubling intervals up to 10 minutes. Its lines keep showing the name meanwhile and are
+# only touched again when the image has arrived (see _retry_images).
 IMAGE_RETRY_SECONDS = 30
+IMAGE_RETRY_MAX_SECONDS = 600
+RETRYING = float("inf")  # "deadline" of a failed image whose next attempt is under way
 RETRY_BATCH = 32  # spread recovery after a network outage over multiple GUI turns
 FAILURE_NOTIFY_BATCH = 8
 # Qt's HTML import creates a new image object + text format for every <img> (platform icon,
@@ -76,6 +81,7 @@ class ChatView(QTextBrowser):
 
     rerender_needed = pyqtSignal()
     image_failed = pyqtSignal(str)  # an emote that couldn't be loaded – its lines show the name instead
+    image_restored = pyqtSignal(str)  # a later attempt got it – its lines can show the image again
     name_context = pyqtSignal(QUrl)  # right-click on a user name ("msg:<uid>")
     name_clicked = pyqtSignal(QUrl)  # left click on a user name ("msg:<uid>")
     follow_changed = pyqtSignal(bool)  # True: sticks to the newest message
@@ -108,7 +114,8 @@ class ChatView(QTextBrowser):
         self._movie_connections: dict[str, list] = {}
         self._playing: set[str] = set()
         self.pending: set[str] = set()
-        self.failed: OrderedDict[str, float] = OrderedDict()
+        self.failed: OrderedDict[str, float] = OrderedDict()  # URL → time of the next attempt
+        self._attempts: dict[str, int] = {}  # failed attempts in a row, for the URLs in `failed`
         self._failure_notifications: OrderedDict[str, None] = OrderedDict()
         self._failure_timer = QTimer(self, singleShot=True, interval=0)
         self._timer_connections = [self._failure_timer.timeout.connect(self._emit_image_failures)]
@@ -167,6 +174,7 @@ class ChatView(QTextBrowser):
             self._drop_movie(key)
         self.pending.clear()
         self.failed.clear()
+        self._attempts.clear()
         self._failure_notifications.clear()
         self._loaded_keys.clear()
 
@@ -359,11 +367,15 @@ class ChatView(QTextBrowser):
         if self._closed:
             return
         self.pending.discard(key)
-        self.failed.pop(key, None)
-        self.failed[key] = time.monotonic() + IMAGE_RETRY_SECONDS
+        known = self.failed.pop(key, None) is not None
+        attempts = self._attempts[key] = self._attempts.get(key, 0) + 1
+        self.failed[key] = time.monotonic() + min(IMAGE_RETRY_MAX_SECONDS, IMAGE_RETRY_SECONDS * 2 ** (attempts - 1))
         while len(self.failed) > MAX_FAILED:
-            self.failed.popitem(last=False)
+            old, _deadline = self.failed.popitem(last=False)
+            self._attempts.pop(old, None)
         self._schedule_image_retry()
+        if known:
+            return  # a background retry failed again: the lines already show the name
         # loadResource runs inside Qt's HTML importer: don't reenter that importer
         # or enqueue a separate Qt event for every URL rejected under a burst.
         self._failure_notifications[key] = None
@@ -389,47 +401,47 @@ class ChatView(QTextBrowser):
         if img is None:
             self._failed_image(key)
             return
-        self.failed.pop(key, None)
+        restored = self.failed.pop(key, None) is not None
+        self._attempts.pop(key, None)
         self._store(key, img)
         self._loaded_keys.add(key)
         self._relayout.start()
         if not self._anim.isActive():
             self._anim.start()
+        if restored:
+            self.image_restored.emit(key)  # its lines show the name so far
 
     def _schedule_image_retry(self) -> None:
         if self._closed:
             return
         if self.failed and not self._image_retry.isActive():
-            delay = next(iter(self.failed.values())) - time.monotonic()
+            due = min(self.failed.values())
+            if due == RETRYING:
+                return  # every failed image is being tried right now
+            delay = due - time.monotonic()
             # Recovery must not add a new request queue while earlier downloads are slow.
             minimum = 100 if len(self.pending) >= RETRY_BATCH else 1
             self._image_retry.start(max(minimum, round(delay * 1000)))
 
     def _retry_images(self) -> None:
-        """Expire a bounded batch and refresh existing text fallbacks through the usual path."""
+        """Tries a bounded batch of failed images again – in the background. The chat is
+        not touched: an image stays "failed" (its lines show the name) until an attempt
+        succeeds, and only then are its lines rendered again (image_restored).
+
+        Re-rendering the lines for every attempt instead made an idle chat flicker: an
+        image that can't be loaded at all (blocked, gone) switched its lines to the empty
+        image and back to the name every 30 seconds – a platform icon did that to every
+        line of the chat."""
         if self._closed:
             return
         now = time.monotonic()
-        expired = []
         capacity = max(0, RETRY_BATCH - len(self.pending))
-        for key, deadline in self.failed.items():
-            if deadline > now or len(expired) >= capacity:
-                break
-            expired.append(key)
+        expired = [key for key, deadline in self.failed.items() if deadline <= now][:capacity]
         for key in expired:
-            self.failed.pop(key, None)
-            self.document().addResource(IMAGE_RES, QUrl(key), None)
-        for key in expired:
-            self.image_failed.emit(key)  # reintroduces <img> for matching displayed messages
-        # Qt may keep the old placeholder in its layout cache after reimporting a line.
-        # Explicitly load only expired URLs still present in this document, not old history.
-        wanted = set(expired)
-        block = self.document().firstBlock()
-        while wanted and block.isValid():
-            for key in self._block_images(block) & wanted:
-                self.loadResource(IMAGE_RES, QUrl(key))
-                wanted.remove(key)
-            block = block.next()
+            self.failed[key] = RETRYING
+            self.pending.add(key)
+            if not self._images.request(key):
+                self._failed_image(key)
         self._schedule_image_retry()
 
     def _decode(self, key: str, data: QByteArray) -> QImage | None:

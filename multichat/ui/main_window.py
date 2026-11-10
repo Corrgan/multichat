@@ -463,6 +463,7 @@ class MainWindow(GroupsMixin, ConnectionsMixin, MessagesMixin, SendMixin, QMainW
             "dropped events": self._incoming.dropped,
             "dropped moderation events": self._incoming.dropped_deletions,
             "chat lines": sum(v.document().blockCount() for v in self.views()),
+            "images not loaded": sum(len(v.failed) for v in self.views()),
             "animations playing": sum(m.state() == m.MovieState.Running for m in movies),
             "of": len(movies),
         }

@@ -263,3 +263,17 @@ the text above and from the pull request; the files in the repository are author
 - **Animated emotes:** decoded frames are cached again (QMovie.CacheAll) within a separate
   byte budget; only animations that do not fit are decoded frame by frame. Measured with
   12 emotes playing, uncached decoding cost about three times the CPU.
+
+Two defects of the merged image code were found in the first test builds and corrected:
+
+- **Images were dropped after arriving.** The bounded transfer's final read asked a
+  finished reply for more than it had buffered; Qt answers -1 for that unless it used its
+  zero-copy buffer (plain HTTP/1.1 with a Content-Length – the only case the loopback
+  tests covered). Every image from a server that compresses, sends chunked or speaks
+  HTTP/2 was treated as an I/O error: no emotes or platform icons at all. The transfer
+  now reads exactly what is buffered; `tests/test_image_transfer_encodings.py` covers the
+  other framings with a real loopback server.
+- **Retries re-rendered the chat.** A failed image was retried every 30 seconds by
+  rendering its lines again (twice per attempt, for a platform icon every line of every
+  group) – an idle chat flickered. Retries now run in the background with a growing
+  interval (30 s up to 10 min); lines are rendered again only when an image has arrived.

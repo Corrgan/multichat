@@ -218,7 +218,8 @@ class MessagesMixin:
             self.update_lines(changed)
             self.mod.history_changed.emit()
 
-    def _image_failed(self, key: str) -> None:
+    def _image_changed(self, key: str) -> None:
+        """An image failed (its lines show the name instead) or arrived after all."""
         if any(key in urls for urls in FAVICONS.values()):  # platform icon: every line shows it
             self.render_all()
         else:

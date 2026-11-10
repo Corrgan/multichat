@@ -218,7 +218,9 @@ def test_transient_image_failure_expires_and_refreshes_existing_line(app, monkey
         return reply
 
     monkeypatch.setattr(v.nam, "get", get)
-    v.image_failed.connect(lambda _key: v.update_messages([(7, v._part_html(part), None)]))
+    rendered = []
+    for signal in (v.image_failed, v.image_restored):  # what the main window does for both
+        signal.connect(lambda _key: (rendered.append(1), v.update_messages([(7, v._part_html(part), None)])))
     v.append_many([(7, v._part_html(part), None)])
     v.show()
     app.processEvents()
@@ -232,10 +234,55 @@ def test_transient_image_failure_expires_and_refreshes_existing_line(app, monkey
     v._image_retry.stop()
     v._retry_images()
     app.processEvents()
-    assert len(requests) == 2 and key not in v.failed
+    # tried again in the background: the line keeps showing the name and is not touched
+    assert len(requests) == 2 and key in v.failed and len(rendered) == 1
+    assert v.toPlainText() == "Kappa"
     requests[-1].finished.emit()
-    assert key in v.cache
+    assert key in v.cache and key not in v.failed and len(rendered) == 2
     assert key in v.toHtml() and "Kappa" not in v.toPlainText()
+    v.close()
+
+
+def test_image_that_never_loads_leaves_an_idle_chat_alone(app, monkeypatch):
+    """Each retry used to re-render the image's lines twice (empty image, then the name
+    again) – every 30 seconds, for a platform icon on every line of every group."""
+    from types import SimpleNamespace
+    import time
+
+    now = [time.monotonic()]
+    monkeypatch.setattr(chat_view, "time", SimpleNamespace(monotonic=lambda: now[0]))
+    v = ChatView()
+    key = "https://cdn.invalid/gone.png"
+    part = ("emote", key, "Kappa")
+    requests = []
+
+    def get(request):
+        requests.append(ImageReply(None, v))
+        return requests[-1]
+
+    monkeypatch.setattr(v.nam, "get", get)
+    signals = []
+    v.image_failed.connect(lambda k: (signals.append("failed"), v.update_messages([(7, v._part_html(part), None)])))
+    v.image_restored.connect(lambda k: signals.append("restored"))
+    v.append_many([(7, v._part_html(part), None)])
+    v.show()
+    app.processEvents()
+    requests[0].finished.emit()
+    app.processEvents()
+    assert signals == ["failed"] and v.toPlainText() == "Kappa"
+    shown = v.toHtml()
+    waits = []
+    for _attempt in range(8):
+        waits.append(v.failed[key] - now[0])
+        now[0] = v.failed[key] + 1
+        v._image_retry.stop()
+        v._retry_images()
+        assert v.failed[key] == chat_view.RETRYING and not v._image_retry.isActive()
+        requests[-1].finished.emit()
+        app.processEvents()
+    assert len(requests) == 9  # it is still tried …
+    assert signals == ["failed"] and v.toHtml() == shown  # … but the chat stays as it is
+    assert waits[:3] == [30, 60, 120] and waits[-1] == chat_view.IMAGE_RETRY_MAX_SECONDS  # less and less often
     v.close()
 
 
@@ -249,15 +296,19 @@ def test_negative_image_cache_and_each_retry_batch_are_bounded(app, monkeypatch)
     for i in range(9):
         v._failed_image(f"https://cdn.invalid/{i}")
     assert list(v.failed) == [f"https://cdn.invalid/{i}" for i in range(4, 9)]
-    changed = []
+    changed, requested = [], []
     v.image_failed.connect(changed.append)
+    monkeypatch.setattr(v._images, "request", lambda key: requested.append(key) or True)
     now[0] += chat_view.IMAGE_RETRY_SECONDS + 1
     v.pending.update({"https://slow.invalid/1", "https://slow.invalid/2"})
     v._image_retry.stop()
     v._retry_images()
-    assert len(v.failed) == 5 and not changed and v._image_retry.interval() >= 100
+    assert not requested and not changed and v._image_retry.interval() >= 100
     v.pending.clear()
     v._image_retry.stop()
     v._retry_images()
-    assert len(v.failed) == 3 and len(changed) == 2 and v._image_retry.isActive()
+    # two are tried again; all five still count as failed and no line is touched
+    assert requested == ["https://cdn.invalid/4", "https://cdn.invalid/5"]
+    assert len(v.failed) == 5 and not changed
+    assert [k for k, d in v.failed.items() if d == chat_view.RETRYING] == requested
     v.close()

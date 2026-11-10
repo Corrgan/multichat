@@ -56,7 +56,8 @@ class GroupsMixin:
         v.document().setMaximumBlockCount(MAX_MESSAGES)
         v.name_clicked.connect(self.on_anchor)
         v.rerender_needed.connect(lambda pn=panel: self.render_all(pn))  # e.g. its font size changed
-        v.image_failed.connect(self._image_failed)
+        v.image_failed.connect(self._image_changed)
+        v.image_restored.connect(self._image_changed)
         v.name_context.connect(self.on_name_context)
         v.follow_changed.connect(lambda following, pn=panel: self._follow_changed(pn, following))
         v.held = False  # messages arrived while scrolled up
