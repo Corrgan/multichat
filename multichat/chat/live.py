@@ -20,6 +20,7 @@ from .youtube import live_now, youtube_target
 log = logging.getLogger("multichat.chat")
 
 PARALLEL = 3  # Kick and YouTube lookups at the same time
+TIMEOUT = 25  # seconds for one lookup – none may hold up the next round
 
 
 async def check(targets: list[tuple[str, str, str]], twitch) -> dict[str, bool | None]:
@@ -31,7 +32,8 @@ async def check(targets: list[tuple[str, str, str]], twitch) -> dict[str, bool |
         live: set[str] | None = None
         if twitch is not None and twitch.logged_in:
             try:
-                live = await twitch.live_channels([twitch_channel(value) for _key, value in tw])
+                live = await asyncio.wait_for(
+                    twitch.live_channels([twitch_channel(value) for _key, value in tw]), TIMEOUT)
             except Exception as e:  # noqa: BLE001
                 log.debug("Live check Twitch failed: %s", e)
         for key, value in tw:
@@ -43,12 +45,12 @@ async def check(targets: list[tuple[str, str, str]], twitch) -> dict[str, bool |
         async with gate:
             try:
                 if platform == "kick":
-                    data = await asyncio.to_thread(fetch_kick_json, value)
+                    data = await asyncio.wait_for(asyncio.to_thread(fetch_kick_json, value), TIMEOUT)
                     return key, bool(data.get("livestream"))
                 kind, target = youtube_target(value)
                 if kind != "channel":
                     return key, None
-                return key, await asyncio.to_thread(live_now, target) is not None
+                return key, await asyncio.wait_for(asyncio.to_thread(live_now, target), TIMEOUT) is not None
             except ValueError:
                 return key, False  # no such channel
             except Exception as e:  # noqa: BLE001

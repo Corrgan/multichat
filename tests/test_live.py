@@ -96,14 +96,15 @@ def test_live_channels_show_a_dot_on_the_row_and_the_tab(window, app, monkeypatc
 
     watch.check()
     assert spin(app, lambda: watch.live.get("twitch:examplechan") is True)
-    assert asked == [["kick:examplekick", "twitch:examplechan"]]
+    assert spin(app, lambda: len(asked) == 2 and not watch._busy)
+    assert sorted(asked) == [["kick:examplekick"], ["twitch:examplechan"]]  # each platform on its own
     assert panel.rows["twitch"].live.text() == "●" and panel.rows["twitch"].live.toolTip()
     assert panel.rows["kick"].live.text() == ""
     assert not w.tabs.tabIcon(0).isNull() and "examplechan" in w.tabs.tabToolTip(0)
 
     watch.check()  # nothing is due yet
     QTest.qWait(20)
-    assert len(asked) == 1
+    assert len(asked) == 2
 
     # the stream ends
     answers["twitch:examplechan"] = False
@@ -127,7 +128,7 @@ def test_live_channels_show_a_dot_on_the_row_and_the_tab(window, app, monkeypatc
     assert w.tabs.tabIcon(0).isNull()
     # … and a channel that keeps failing is asked less and less often
     import time
-    assert watch._due["twitch:examplechan"] - time.monotonic() > live_watch.CHECK_SECONDS * 2
+    assert watch._due["twitch:examplechan"] - time.monotonic() > live_watch.CHECK_SECONDS["twitch"] * 2
 
     # another channel in the field: the old state is gone at once
     answers["twitch:examplechan"] = True
@@ -156,3 +157,75 @@ def test_a_group_tab_shows_live_when_any_of_its_channels_is(window, app, monkeyp
     assert w.tabs.tabIcon(0).isNull() and not w.tabs.tabIcon(1).isNull()
     tip = w.tabs.tabToolTip(1)
     assert "Kick · examplekick" in tip and "YouTube · @examplelive" in tip
+
+
+def test_twitch_is_asked_more_often_and_does_not_wait_for_the_others(window, app, monkeypatch):  # noqa: F811
+    """A streamer who goes live should show up soon: Twitch (one request for all channels)
+    is asked every 30 s, and its answer does not wait for slow Kick or YouTube lookups."""
+    import time
+
+    assert live_watch.CHECK_SECONDS["twitch"] <= 30 < live_watch.CHECK_SECONDS["kick"]
+    w = window
+    watch = w.live_watch
+    w.panels[0].rows["twitch"].edit.setText("examplechan")
+    w.panels[0].rows["kick"].edit.setText("examplekick")
+    release = asyncio.Event()
+    asked = []
+
+    async def check(targets, twitch):
+        keys = [key for key, _p, _v in targets]
+        asked.append(keys)
+        if keys == ["kick:examplekick"]:
+            await asyncio.wait_for(release.wait(), 5)  # Kick hangs
+        return {key: True for key in keys}
+
+    monkeypatch.setattr(live_watch.live, "check", check)
+    watch.check()
+    assert spin(app, lambda: watch.live.get("twitch:examplechan") is True)  # although Kick has not answered
+    assert "kick" in watch._busy and "twitch" not in watch._busy and "kick:examplekick" not in watch.live
+    # the next rounds ask Twitch again and leave the hanging Kick lookup alone …
+    watch._due.clear()
+    watch.check()
+    assert spin(app, lambda: asked.count(["twitch:examplechan"]) == 2)
+    assert asked.count(["kick:examplekick"]) == 1
+    # … until it has been silent for too long: then it no longer blocks a new attempt
+    watch._busy["kick"] = time.monotonic() - live_watch.BUSY_SECONDS - 1
+    watch.check()
+    assert spin(app, lambda: asked.count(["kick:examplekick"]) == 2)
+    w.loop.call_soon_threadsafe(release.set)
+    assert spin(app, lambda: watch.live.get("kick:examplekick") is True and not watch._busy)
+
+
+def test_a_playing_video_shows_live_at_once(window, app, monkeypatch):  # noqa: F811
+    """The platform's "is live" answer lags behind the start of a stream. A video tile that
+    already plays is proof enough – and a late "not live" must not take the dot away again."""
+    import time
+    from types import SimpleNamespace
+
+    w = window
+    watch = w.live_watch
+    panel = w.panels[0]
+    panel.rows["twitch"].edit.setText("examplechan")
+
+    async def check(targets, twitch):
+        return {key: False for key, _p, _v in targets}  # Twitch has not noticed yet
+
+    monkeypatch.setattr(live_watch.live, "check", check)
+    # what the watch reads from the video tiles (a stand-in: no player in the tests)
+    tile = SimpleNamespace(key="twitch:examplechan", state="playing")
+    other = SimpleNamespace(key="kick:examplekick", state="offline")
+    fake = SimpleNamespace(panels=[SimpleNamespace(video=SimpleNamespace(tiles={"twitch": tile, "kick": other})),
+                                   SimpleNamespace(video=None)])
+    assert live_watch.LiveWatch._playing(SimpleNamespace(win=fake)) == {"twitch:examplechan"}
+    monkeypatch.setattr(watch, "_playing", lambda: {t.key for t in (tile, other) if t.state == "playing"})
+    watch.check()
+    assert watch.live.get("twitch:examplechan") is True and not w.tabs.tabIcon(0).isNull()
+    assert spin(app, lambda: not watch._busy)
+    assert watch.live.get("twitch:examplechan") is True  # the lagging "not live" is ignored
+    # the video stops; once nothing vouches for the stream any more the lookups decide again
+    tile.state = "ended"
+    watch._hold["twitch:examplechan"] = time.monotonic() - 1
+    watch._due.clear()
+    watch.check()
+    assert spin(app, lambda: watch.live.get("twitch:examplechan") is False)
+    assert w.tabs.tabIcon(0).isNull()
