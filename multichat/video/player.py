@@ -14,6 +14,7 @@ import time
 import re
 import sys
 import threading
+from collections import deque
 from pathlib import Path
 
 from PyQt6.QtCore import QByteArray, Qt, pyqtSignal
@@ -180,6 +181,15 @@ class MpvWidget(QOpenGLWidget):
             **({"ytdl": False} | extra),
         )
         mlog.debug("libmpv %s", getattr(self.player, "mpv_version", "?"))
+        # What quality "Automatic" goes by (see auto_quality.py). mpv reports from its own
+        # thread: only append/assign here, the tile reads it on the UI thread.
+        self.stalls: deque[tuple[float, bool]] = deque(maxlen=64)  # (time, waiting for data?)
+        self.video_height = 0  # height of the picture being decoded
+        try:
+            self.player.observe_property("paused-for-cache", self._on_stall)
+            self.player.observe_property("height", self._on_height)
+        except Exception as e:  # noqa: BLE001 – without it "Automatic" just stays at its level
+            mlog.debug("mpv property observers not available: %s", e)
         self.ctx = None
         self._pending: tuple[str, dict] | None = None
         self._proc = mpv.MpvGlGetProcAddressFn(self._get_proc)
@@ -189,10 +199,18 @@ class MpvWidget(QOpenGLWidget):
         self.frames = 0  # drawn frames and time spent drawing them (performance log)
         self.paint_ms = 0.0
 
+    def _on_stall(self, _name, value) -> None:
+        self.stalls.append((time.monotonic(), bool(value)))
+
+    def _on_height(self, _name, value) -> None:
+        self.video_height = int(value) if isinstance(value, (int, float)) and value > 0 else 0
+
     def play(self, url: str, **opts) -> None:
         """Load only once the render context exists – otherwise mpv plays audio only.
         opts: mpv options for this stream only, e.g. {"user-agent": …, "audio-file": …}."""
         self.last_error = ""
+        self.stalls.clear()
+        self.video_height = 0
         if self.ctx is None:
             self._pending = (url, opts)
         else:

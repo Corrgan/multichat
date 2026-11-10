@@ -26,7 +26,9 @@ from ..core.i18n import _
 log = logging.getLogger("multichat.streams")
 
 # (internal key, max. height, UI label – translated with _())
-QUALITIES = [("360p", 360, "360p"), ("480p", 480, "480p"), ("720p", 720, "720p"), ("source", 0, "Source")]
+AUTO = "auto"  # the tile picks the level itself, see auto_quality.py
+QUALITIES = [("auto", 0, "Automatic"), ("360p", 360, "360p"), ("480p", 480, "480p"), ("720p", 720, "720p"),
+             ("source", 0, "Source")]
 DEFAULT_QUALITY = "480p"
 _LEGACY_QUALITIES = {"Quelle": "source"}  # values stored by older versions
 _OFFLINE_HINTS = (
@@ -54,6 +56,8 @@ class Stream:
     closer: Callable[[], None] | None = None  # stops a Streamlink data stream
     pipe_fd: int | None = None  # read end of the pipe (owned by mpv once loaded)
     ads: "AdWatch | None" = None  # reports skipped Twitch ads
+    heights: tuple = ()  # heights of the variants on offer, where known (Twitch, Kick)
+    height: int = 0  # height of the chosen variant, where known
 
 
 class AdWatch(logging.Handler):
@@ -83,8 +87,8 @@ def quality_height(name: str) -> int:
     return {key: height for key, height, _l in QUALITIES}[normalize_quality(name)]
 
 
-def pick_hls_variant(master: str, base_url: str, max_h: int) -> str:
-    """Picks the best variant ≤ max_h from an HLS master playlist (0 = best)."""
+def hls_variants(master: str, base_url: str) -> list[tuple[int, int, str]]:
+    """(height, bandwidth, URL) of the variants in an HLS master playlist."""
     lines = master.splitlines()
     variants = []
     for i, line in enumerate(lines):
@@ -95,6 +99,12 @@ def pick_hls_variant(master: str, base_url: str, max_h: int) -> str:
         uri = next((x.strip() for x in lines[i + 1 :] if x.strip() and not x.startswith("#")), None)
         if uri:
             variants.append((int(res.group(1)) if res else 0, int(bw.group(1)) if bw else 0, urljoin(base_url, uri)))
+    return variants
+
+
+def pick_hls_variant(master: str, base_url: str, max_h: int) -> str:
+    """Picks the best variant ≤ max_h from an HLS master playlist (0 = best)."""
+    variants = hls_variants(master, base_url)
     if not variants:
         return base_url
     fitting = [v for v in variants if not max_h or v[0] <= max_h] or [min(variants)]
@@ -241,7 +251,10 @@ def _kick(slug: str, max_h: int) -> Stream:
         raise RuntimeError(f"Kick playlist HTTP {r.status_code}")
     chosen = pick_hls_variant(r.text, url, max_h)
     log.info("Kick %s: variant %s", slug, chosen.split("?")[0][-60:])
-    return Stream(chosen, live.get("session_title") or "")
+    variants = hls_variants(r.text, url)
+    return Stream(chosen, live.get("session_title") or "",
+                  heights=tuple(sorted({v[0] for v in variants if v[0]})),
+                  height=next((v[0] for v in variants if v[2] == chosen), 0))
 
 
 def _pick_streamlink(names, max_h: int) -> str:
@@ -257,6 +270,11 @@ def _pick_streamlink(names, max_h: int) -> str:
         return max(cands)[2]
     fitting = [c for c in cands if c[0] <= max_h] or [min(cands)]
     return max(fitting)[2]
+
+
+def _streamlink_heights(names) -> tuple:
+    """Heights in Streamlink names such as "480p", "720p60" (not "best", "audio_only")."""
+    return tuple(sorted({int(m.group(1)) for m in (re.fullmatch(r"(\d+)p(\d+)?", n) for n in names) if m}))
 
 
 def _twitch(channel: str, max_h: int) -> Stream:
@@ -337,7 +355,8 @@ def _twitch(channel: str, max_h: int) -> Stream:
         except Exception:  # noqa: BLE001
             pass
 
-    return Stream(f"fdclose://{rfd}", title, closer=close, pipe_fd=rfd, ads=ads)
+    return Stream(f"fdclose://{rfd}", title, closer=close, pipe_fd=rfd, ads=ads,
+                  heights=_streamlink_heights(streams), height=next(iter(_streamlink_heights([name])), 0))
 
 
 def _https_only(url: str | None, what: str) -> None:
@@ -349,7 +368,8 @@ def _https_only(url: str | None, what: str) -> None:
 
 
 def resolve(platform: str, value: str, quality: str) -> Stream:
-    """Returns the stream or raises Offline / RuntimeError."""
+    """Returns the stream or raises Offline / RuntimeError. quality: a fixed level (a tile
+    set to "Automatic" passes the level it is at)."""
     max_h = quality_height(quality)
     value = value.strip()
     log.debug("Looking for stream: %s %r (%s)", platform, value, quality)

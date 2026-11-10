@@ -20,7 +20,8 @@ from ..core.i18n import _
 from ..ui.widgets import CopyLabel
 from . import player
 from .player import DEFAULT_UA, MpvWidget, load_mpv
-from .streams import DEFAULT_QUALITY, QUALITIES, Offline, normalize_quality, resolve
+from .auto_quality import AutoQuality
+from .streams import AUTO, DEFAULT_QUALITY, QUALITIES, Offline, normalize_quality, resolve
 
 log = logging.getLogger("multichat.video")
 
@@ -30,6 +31,7 @@ ERROR_RETRY = 30
 ENDED_RETRY = 10
 RECHECK_AFTER = OFFLINE_RETRY  # seconds: before this, an offline tile shown again waits for its retry timer
 HIDDEN_STOP = 300  # seconds a hidden tile (other group) keeps streaming before it is stopped
+AUTO_POLL_MS = 2000  # how often a tile set to "Automatic" looks at its stalls
 
 
 class VideoTile(QFrame):
@@ -44,6 +46,7 @@ class VideoTile(QFrame):
         self.runner = runner
         self.value = ""
         self.quality = normalize_quality(quality)
+        self.auto = AutoQuality()  # the level while the quality is "Automatic"
         self.gen = 0
         self.state = "idle"
         self.muted = True
@@ -52,6 +55,7 @@ class VideoTile(QFrame):
         self._closer = None  # stops the running Streamlink data stream
         self._ads = None
         self._title = ""
+        self._stall_from: float | None = None  # mpv has been waiting for data since then
         self.setFrameShape(QFrame.Shape.StyledPanel)
 
         style = self.style()
@@ -69,6 +73,7 @@ class VideoTile(QFrame):
             self.qbox.addItem(_(label), key)
         self.qbox.setCurrentIndex(max(0, self.qbox.findData(self.quality)))
         self.qbox.setToolTip(_("Quality"))
+        self._show_auto_level()
         self.qbox.currentIndexChanged.connect(lambda _i: self._on_quality(self.qbox.currentData()))
         self.audio_btn = QToolButton()
         self.audio_btn.setIcon(self.icon_off)
@@ -125,6 +130,8 @@ class VideoTile(QFrame):
         self.retry.timeout.connect(self.start)
         self.watch = QTimer(self, interval=5000)
         self.watch.timeout.connect(self._check)
+        self.auto_timer = QTimer(self, interval=AUTO_POLL_MS)
+        self.auto_timer.timeout.connect(self._auto_check)
         self._show_message(_("Not connected yet"))
 
     def _set_title(self, channel: str) -> None:
@@ -140,9 +147,11 @@ class VideoTile(QFrame):
         self.value = ""
         self._set_title(channel)
         self.quality = normalize_quality(quality)
+        self.auto.reset()
         self.qbox.blockSignals(True)
         self.qbox.setCurrentIndex(max(0, self.qbox.findData(self.quality)))
         self.qbox.blockSignals(False)
+        self._show_auto_level()
         self.vol.blockSignals(True)
         self.vol.setValue(max(0, min(100, int(volume))))
         self.vol.blockSignals(False)
@@ -159,6 +168,9 @@ class VideoTile(QFrame):
         self.setVisible(bool(value))
         waiting = self.state in ("offline", "ended") and time.monotonic() - self._started > RECHECK_AFTER
         if value != self.value or self.state == "idle" or waiting:
+            if value != self.value:
+                self.auto.reset(self._tile_pixels())  # another channel starts over
+                self._show_auto_level()
             self.value = value
             self.start() if value else self.stop()
 
@@ -189,6 +201,7 @@ class VideoTile(QFrame):
     def start(self) -> None:
         self.retry.stop()
         self.watch.stop()
+        self.auto_timer.stop()
         self._release()
         self.gen += 1
         if not self.value:
@@ -206,6 +219,7 @@ class VideoTile(QFrame):
         self.gen += 1
         self.retry.stop()
         self.watch.stop()
+        self.auto_timer.stop()
         self.state = "idle"
         self._release()
         try:
@@ -225,7 +239,7 @@ class VideoTile(QFrame):
 
     async def _resolve(self):
         try:
-            return "ok", await asyncio.to_thread(resolve, self.platform, self.value, self.quality)
+            return "ok", await asyncio.to_thread(resolve, self.platform, self.value, self.level())
         except Offline:
             return "offline", None
         except Exception as e:  # noqa: BLE001
@@ -268,6 +282,9 @@ class VideoTile(QFrame):
             self.state = "playing"
             self.set_status(_("live: {title}").format(title=data.title) if data.title else _("live"))
             self.watch.start()
+            self.auto.loaded(data.heights, data.height)
+            self._stall_from = None
+            self.auto_timer.start()
             return
         delay = OFFLINE_RETRY if kind == "offline" else ERROR_RETRY
         nxt = time.strftime("%H:%M", time.localtime(time.time() + delay))
@@ -313,8 +330,56 @@ class VideoTile(QFrame):
 
     def _on_quality(self, q: str) -> None:
         self.quality = q
+        if q == AUTO:
+            self.auto.reset(self._tile_pixels())
+        self._show_auto_level()
         self.quality_changed.emit()
         if self.value:
+            self.start()
+
+    # ---- Quality "Automatic" (the rules are in auto_quality.py) ------------- #
+    def level(self) -> str:
+        """The quality level streams are looked up with."""
+        return self.auto.level if self.quality == AUTO else self.quality
+
+    def _tile_pixels(self) -> int:
+        """Height of the visible picture in device pixels, 0 while hidden."""
+        video = self.video
+        return round(video.height() * video.devicePixelRatioF()) if video.isVisible() else 0
+
+    def _show_auto_level(self) -> None:
+        index = self.qbox.findData(AUTO)
+        if index < 0:
+            return
+        if self.quality == AUTO:
+            label = next(_(label) for key, _h, label in QUALITIES if key == self.auto.level)
+            self.qbox.setItemText(index, _("Automatic ({level})").format(level=label))
+        else:
+            self.qbox.setItemText(index, _("Automatic"))
+
+    def _auto_check(self) -> None:
+        """Every two seconds while playing: what mpv reported about waiting for data. Only
+        looks at values mpv has already handed over – no call into the player."""
+        if self.state != "playing":
+            self.auto_timer.stop()
+            return
+        stalls = self.video.stalls
+        while stalls:
+            at, stalled = stalls.popleft()
+            self.auto.stall(stalled, at)
+            if stalled and self._stall_from is None:
+                self._stall_from = at
+            elif not stalled and self._stall_from is not None:
+                # in the verbose log for every quality: shows whether the line keeps up
+                log.debug("Video %s: waited %.1f s for data (%s)", self.platform, at - self._stall_from, self.level())
+                self._stall_from = None
+        if self.quality != AUTO:
+            return
+        target = self.auto.poll(ads_active=bool(self._ads is not None and self._ads.active),
+                                played_height=self.video.video_height, tile_height=self._tile_pixels())
+        self._show_auto_level()  # also when a level turned out to be the stream's best
+        if target:
+            log.info("Video %s: automatic quality %s", self.platform, self.auto.reason)
             self.start()
 
     def _on_volume(self, value: int) -> None:
@@ -353,6 +418,7 @@ class VideoTile(QFrame):
         self.gen += 1
         self.retry.stop()
         self.watch.stop()
+        self.auto_timer.stop()
         self._release()
         self.video.shutdown()
 
