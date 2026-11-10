@@ -60,12 +60,22 @@ jobs:
         with:
           python-version: "3.12"
       - name: Download the release inventory assets without executing the application
+        id: assets
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
         run: |
           mkdir -p published-inventory
           gh release view --repo "$REPO" --json tagName,targetCommitish,assets > published-inventory/release.json
+          # Releases before the inventories existed (up to v0.80) have nothing to query:
+          # that is not a failure of this weekly check.
+          count=$(python3 -c "import json; print(sum(a['name'].endswith('-inventory.tar.gz') for a in json.load(open('published-inventory/release.json'))['assets']))")
+          if [ "$count" -eq 0 ]; then
+            echo "::notice::The latest release has no artifact inventories yet – nothing to query until the next release."
+            echo "found=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "found=true" >> "$GITHUB_OUTPUT"
           gh release download --repo "$REPO" --pattern 'MultiChat-*-inventory.tar.gz' --dir published-inventory
           gh --version > published-inventory/gh-version.txt
           for inventory in published-inventory/*.tar.gz; do
@@ -81,6 +91,7 @@ jobs:
                   archive.extractall(path='published-inventory', filter='data')
           PY
       - name: Query actual shipped Python and measured native versions
+        if: steps.assets.outputs.found == 'true'
         run: |
           python packaging/audit-dependencies.py \
             --inventory-file published-inventory/appimage-inventory/inventory.json \
