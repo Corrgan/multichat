@@ -266,7 +266,7 @@ def test_tab_shows_how_long_the_streamer_has_been_live(window, app, monkeypatch)
     monkeypatch.setattr(live_watch.live, "check", offline)
     watch._due.clear()
     watch.check()
-    assert spin(app, lambda: watch.live.get("kick:examplekick") is False)
+    assert spin(app, lambda: not any(watch.live.values()) and not watch._busy)  # each platform answers on its own
     assert w.tabs.tabText(0) == "Main" and not watch.since and w.tabs.tabIcon(0).isNull()
 
 
