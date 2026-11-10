@@ -277,3 +277,28 @@ Two defects of the merged image code were found in the first test builds and cor
   rendering its lines again (twice per attempt, for a platform icon every line of every
   group) – an idle chat flickered. Retries now run in the background with a growing
   interval (30 s up to 10 min); lines are rendered again only when an image has arrived.
+
+## Follow-up corrections for v1.0
+
+The follow-up review found four Linux behavior defects, a Windows source-startup
+regression, and an existing mention-action inconsistency. They are corrected as follows:
+
+- Automatic video quality retains a stall that crosses the startup/ad grace period,
+  counts only the unprotected time, and never steps up while the player is buffering.
+  The lowest quality also retains an ongoing stall until the player actually recovers.
+- With unknown variants, the controller learns the picture delivered by each quality
+  cap. A duplicate intermediate cap is skipped without declaring every higher or lower
+  cap unavailable. Channel changes and changed variant lists discard stale observations.
+- The single-instance server holds a process lock until its socket closes. Concurrent
+  starts notify the owner without removing its live socket; abandoned locks and sockets
+  are recovered after a crash. Windows uses its per-user cache and Qt named pipes rather
+  than POSIX user IDs. Lock contention does not silently open another window.
+- A newly failed image with an earlier retry deadline advances an already running
+  timer. Later deadlines do not postpone earlier attempts; retry batches remain bounded.
+- The mention action uses the same account-name helper as @-completion, preserving the
+  send target and existing text while addressing the real Twitch login when needed.
+
+Regression coverage includes real competing processes, crash recovery, grace-crossing
+stalls, duplicate intermediate resolutions, image scheduling, and mention insertion.
+POSIX-only socket/permission checks are marked accordingly; JSON replacement and
+Windows named-pipe behavior retain their own platform-independent/native coverage.

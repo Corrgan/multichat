@@ -414,14 +414,19 @@ class ChatView(QTextBrowser):
     def _schedule_image_retry(self) -> None:
         if self._closed:
             return
-        if self.failed and not self._image_retry.isActive():
-            due = min(self.failed.values())
-            if due == RETRYING:
-                return  # every failed image is being tried right now
-            delay = due - time.monotonic()
-            # Recovery must not add a new request queue while earlier downloads are slow.
-            minimum = 100 if len(self.pending) >= RETRY_BATCH else 1
-            self._image_retry.start(max(minimum, round(delay * 1000)))
+        due = min(self.failed.values(), default=RETRYING)
+        if due == RETRYING:
+            self._image_retry.stop()  # no failed image is waiting for another attempt
+            return
+        delay = due - time.monotonic()
+        # Recovery must not add a new request queue while earlier downloads are slow.
+        minimum = 100 if len(self.pending) >= RETRY_BATCH else 1
+        delay_ms = max(minimum, round(delay * 1000))
+        remaining = self._image_retry.remainingTime()
+        if remaining < 0 or delay_ms < remaining:
+            # A newly failed image may be due before an older image's long backoff.
+            # Later deadlines must not keep postponing an already scheduled retry.
+            self._image_retry.start(delay_ms)
 
     def _retry_images(self) -> None:
         """Tries a bounded batch of failed images again – in the background. The chat is

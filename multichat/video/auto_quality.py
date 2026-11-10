@@ -20,7 +20,7 @@ Rules:
   tile. An attempt that fails – a stall soon after – doubles the wait before the next one
   (up to half an hour), so the quality does not swing back and forth.
 - Levels that would give the same picture (the stream has no such variant) are skipped
-  when the variants are known; otherwise the first attempt notices it and stays.
+  when the variants are known; otherwise their played heights are learned by trying.
 """
 from __future__ import annotations
 
@@ -64,10 +64,10 @@ class AutoQuality:
         """Another channel, or "Automatic" was just chosen."""
         self.index = self._start_index(tile_height)
         self.heights: tuple[int, ...] = ()
-        self._floor, self._ceiling = 0, len(LEVELS) - 1  # learned by trying (variants unknown)
+        self._observed: dict[int, int] = {}  # level index → played height (variants unknown)
         self._up_wait = UP_AFTER
         self._probe: tuple[float, int] | None = None  # (time, index before) of the last step up
-        self._moved: tuple[int, int] | None = None  # (direction, height played before the step)
+        self._moved: tuple[int, int] | None = None  # (index before, height played before the step)
         self._since = self.clock()
         self._ad_until = 0.0
         self._last_height = 0
@@ -88,7 +88,14 @@ class AutoQuality:
 
     def loaded(self, heights=(), height: int = 0) -> None:
         """A stream started at self.level. heights: the variants it offers, if known."""
-        self.heights = tuple(sorted({int(h) for h in heights if h}))
+        heights = tuple(sorted({int(h) for h in heights if h}))
+        if heights != self.heights:
+            # A changed variant list invalidates the empirical map, including when
+            # lookups switch between known variants and mpv/yt-dlp selection.
+            self._observed.clear()
+            self._moved = None
+        self.heights = heights
+        self._last_height = height
         self._since = self.clock()
         self._stalls.clear()
 
@@ -102,16 +109,18 @@ class AutoQuality:
 
     # ---- decisions ---------------------------------------------------------- #
     def _same_picture(self, a: int, b: int) -> bool:
-        return bool(self.heights) and pick_height(self.heights, LEVELS[a][1]) == pick_height(self.heights, LEVELS[b][1])
+        if self.heights:
+            return pick_height(self.heights, LEVELS[a][1]) == pick_height(self.heights, LEVELS[b][1])
+        return a in self._observed and self._observed[a] == self._observed.get(b)
 
     def _lower(self) -> int | None:
-        for i in range(self.index - 1, self._floor - 1, -1):
+        for i in range(self.index - 1, -1, -1):
             if not self._same_picture(i, self.index):
                 return i
         return None
 
     def _higher(self) -> int | None:
-        for i in range(self.index + 1, self._ceiling + 1):
+        for i in range(self.index + 1, len(LEVELS)):
             if not self._same_picture(i, self.index):
                 return i
         return None
@@ -128,23 +137,26 @@ class AutoQuality:
         now = self.clock()
         if ads_active:
             self._ad_until = now + AD_GRACE
-            self._stalls.clear()
             return None
         settled = now - self._since >= HEIGHT_SETTLE
         if played_height and settled:
-            if self._moved and not self.heights:
-                direction, before = self._moved
-                self._moved = None
-                if before and direction > 0 and played_height <= before:
-                    # the level above gives the same picture: it is the stream's best
-                    self._ceiling = self.index = self.index - 1
-                    self._probe = None
-                elif before and direction < 0 and played_height >= before:
-                    self._floor = self.index  # nothing smaller on offer
+            if not self.heights:
+                self._observed[self.index] = played_height
+                if self._moved:
+                    previous, before = self._moved
+                    self._moved = None
+                    if before and played_height == before:
+                        # This cap is a duplicate, not an absolute end of the range.
+                        # Keep the prior name without reloading; another cap may help.
+                        self.index = previous
+                        self._probe = None
             self._last_height = played_height
 
         quiet_from = max(self._since + STARTUP_GRACE, self._ad_until)
-        stalls = [s for s in self._stalls if s[0] >= quiet_from]
+        # A stall can begin inside a grace period and continue long after it.
+        # Count only its unprotected time, retaining the open player state.
+        stalls = [(max(start, quiet_from), end) for start, end in self._stalls
+                  if (end is None or end > quiet_from) and max(start, quiet_from) <= now]
         recent = [s for s in stalls if s[0] >= now - STALL_WINDOW]
         ongoing = stalls[-1] if stalls and stalls[-1][1] is None else None
         stalled = sum(min(s[1] or now, now) - max(s[0], now - STALLED_WINDOW) for s in stalls
@@ -162,10 +174,11 @@ class AutoQuality:
             self._probe = None
             target = self._lower()
             if target is None:
-                self._stalls.clear()  # already the smallest: nothing to gain from reloading
-                return None
-            return self._move(target, -1, why)
+                return None  # no lower picture: keep waiting, including the open stall
+            return self._move(target, why)
 
+        if self._stalls and self._stalls[-1][1] is None:
+            return None  # waiting for data is never a reason to try a higher quality
         if self._probe and now - self._probe[0] > PROBE_SECONDS:
             self._probe = None
             self._up_wait = UP_AFTER  # it holds
@@ -181,10 +194,10 @@ class AutoQuality:
         if target is None:
             return None
         self._probe = (now, self.index)
-        return self._move(target, +1, f"smooth for {now - last_trouble:.0f} s")
+        return self._move(target, f"smooth for {now - last_trouble:.0f} s")
 
-    def _move(self, target: int, direction: int, why: str) -> str:
-        self._moved = (direction, self._last_height)
+    def _move(self, target: int, why: str) -> str:
+        self._moved = (self.index, self._last_height)
         self.reason = f"{LEVELS[self.index][0]} → {LEVELS[target][0]} ({why})"
         self.index = target
         self._since = self.clock()

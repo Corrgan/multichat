@@ -59,13 +59,24 @@ def test_falls_back_to_file_when_keyring_fails(tmp_path):
     assert s.backend_name == "file"
 
 
+def test_private_file_replaces_stale_temporary_file_and_complete_json(tmp_path):
+    from multichat.core.config import write_private
+
+    target = tmp_path / "tokens.json"
+    stale = tmp_path / ".tokens.json.tmp"
+    stale.write_text("interrupted earlier write")
+    write_private(target, {"token": "first"})
+    assert json.loads(target.read_text()) == {"token": "first"}
+    assert not stale.exists()
+    write_private(target, {"token": "second", "user": "chatter"})
+    assert json.loads(target.read_text()) == {"token": "second", "user": "chatter"}
+    assert not stale.exists()
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX permissions and O_NOFOLLOW require a POSIX filesystem")
 def test_private_file_stays_private_and_never_follows_a_symlink(tmp_path):
     """A left-over temp file with wide permissions, or a symlink at its name, must not end
     up as (or redirect) the settings/token file."""
-    import os
-
-    import pytest
-
     from multichat.core.config import write_private
 
     target = tmp_path / "tokens.json"

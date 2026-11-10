@@ -164,6 +164,150 @@ def test_unknown_variants_are_learned_from_what_is_played():
     assert auto.poll(played_height=720, tile_height=2160) is None  # and not tried again
 
 
+def test_stall_that_started_during_loading_counts_after_the_grace():
+    auto, clock = make()
+    clock.tick(2)
+    auto.stall(True)
+    clock.tick(aq.STARTUP_GRACE - 2)
+    assert auto.poll(tile_height=1080) is None  # no time outside the grace yet
+    clock.tick(118 - aq.STARTUP_GRACE + 2)
+    assert auto.poll(tile_height=1080) == "480p"
+
+
+def test_stall_crossing_the_grace_only_counts_its_unprotected_time():
+    auto, clock = make()
+    clock.tick(2)
+    auto.stall(True)
+    clock.tick(5)
+    auto.poll(ads_active=True, tile_height=1080)
+    clock.tick(aq.AD_GRACE + aq.LONG_STALL - 1)
+    assert auto.poll(tile_height=1080) is None  # four seconds of actual trouble
+    clock.tick(1)
+    assert auto.poll(tile_height=1080) == "480p"
+
+
+def test_ad_break_retains_an_open_stall_until_the_player_recovers():
+    auto, clock = make()
+    clock.tick(30)
+    auto.stall(True)
+    assert auto.poll(ads_active=True, played_height=720, tile_height=1080) is None
+    clock.tick(aq.UP_AFTER + 1)
+    assert auto.poll(played_height=720, tile_height=1080) == "480p"
+
+
+def test_lowest_quality_keeps_a_stall_and_only_climbs_after_recovery():
+    auto, clock = make()
+    auto.reset(tile_height=300)
+    auto.loaded(TWITCH)
+    clock.tick(30)
+    auto.stall(True)
+    clock.tick(aq.LONG_STALL + 1)
+    assert auto.poll(played_height=360, tile_height=1080) is None
+    clock.tick(aq.UP_AFTER + 1)
+    assert auto.poll(played_height=360, tile_height=1080) is None
+    auto.stall(False)
+    clock.tick(aq.UP_AFTER - 1)
+    assert auto.poll(played_height=360, tile_height=1080) is None
+    clock.tick(2)
+    assert auto.poll(played_height=360, tile_height=1080) == "480p"
+
+
+def test_unknown_variants_can_drop_below_a_duplicate_middle_level():
+    """The 720p and 480p caps both play 480p; the 360p cap still helps."""
+    auto, clock = make(heights=())
+    clock.tick(15)
+    auto.poll(played_height=480, tile_height=1080)
+    clock.tick(15)
+    stall(auto, clock, 9)
+    assert auto.poll(played_height=480, tile_height=1080) == "480p"
+    auto.loaded(())
+    clock.tick(15)
+    auto.poll(played_height=480, tile_height=1080)
+    clock.tick(15)
+    stall(auto, clock, 9)
+    assert auto.poll(played_height=480, tile_height=1080) == "360p"
+
+
+def test_unknown_variants_can_climb_past_a_duplicate_middle_level():
+    """The 360p and 480p caps both play 360p; trying 720p still helps."""
+    auto, clock = make(heights=())
+    auto.reset(tile_height=300)
+    auto.loaded(())
+    clock.tick(15)
+    auto.poll(played_height=360, tile_height=1080)
+    clock.tick(aq.UP_AFTER)
+    assert auto.poll(played_height=360, tile_height=1080) == "480p"
+    auto.loaded(())
+    clock.tick(15)
+    assert auto.poll(played_height=360, tile_height=1080) is None
+    clock.tick(aq.UP_AFTER)
+    assert auto.poll(played_height=360, tile_height=1080) == "720p"
+    auto.loaded(())
+    clock.tick(15)
+    assert auto.poll(played_height=720, tile_height=1080) is None
+    # The same 480p cap is useful when coming back down from a real 720p picture.
+    clock.tick(15)
+    stall(auto, clock, 9)
+    assert auto.poll(played_height=720, tile_height=1080) == "480p"
+
+
+def test_unknown_duplicate_levels_are_not_retried_forever():
+    """A stream with only 480p is probed at most once per other cap."""
+    auto, clock = make(heights=())
+    for expected in ("source", None):
+        clock.tick(aq.UP_AFTER + 1)
+        assert auto.poll(played_height=480, tile_height=1080) == expected
+        if expected is not None:
+            auto.loaded(())
+            clock.tick(aq.HEIGHT_SETTLE + 1)
+            auto.poll(played_height=480, tile_height=1080)
+    for expected in ("480p", "360p", None):
+        clock.tick(30)
+        stall(auto, clock, 9)
+        assert auto.poll(played_height=480, tile_height=1080) == expected
+        if expected is not None:
+            auto.loaded(())
+            clock.tick(aq.HEIGHT_SETTLE + 1)
+            auto.poll(played_height=480, tile_height=1080)
+    for _ in range(5):
+        clock.tick(aq.UP_AFTER_MAX + 1)
+        assert auto.poll(played_height=480, tile_height=1080) is None
+
+
+def test_new_channel_forgets_previously_duplicate_caps():
+    auto, clock = make(heights=())
+    clock.tick(aq.UP_AFTER + 1)
+    assert auto.poll(played_height=720, tile_height=2160) == "source"
+    auto.loaded(())
+    clock.tick(aq.HEIGHT_SETTLE + 1)
+    auto.poll(played_height=720, tile_height=2160)
+    clock.tick(aq.UP_AFTER + 1)
+    assert auto.poll(played_height=720, tile_height=2160) is None
+    auto.reset()
+    auto.loaded(())
+    clock.tick(aq.UP_AFTER + 1)
+    assert auto.poll(played_height=720, tile_height=2160) == "source"
+
+
+def test_switching_variant_lookup_modes_discards_old_observations():
+    auto, clock = make(heights=())
+    clock.tick(aq.UP_AFTER + 1)
+    assert auto.poll(played_height=720, tile_height=2160) == "source"
+    auto.loaded(())
+    clock.tick(aq.HEIGHT_SETTLE + 1)
+    auto.poll(played_height=720, tile_height=2160)
+    auto.loaded((360, 480, 720, 1080), height=720)
+    clock.tick(aq.UP_AFTER + 1)
+    assert auto.poll(played_height=720, tile_height=2160) == "source"
+    auto.loaded(())
+    clock.tick(aq.HEIGHT_SETTLE + 1)
+    auto.poll(played_height=1080, tile_height=2160)
+    clock.tick(30)
+    stall(auto, clock, 9)
+    # The preceding unknown lookup's 720p/source equivalence must not survive.
+    assert auto.poll(played_height=1080, tile_height=2160) == "720p"
+
+
 def test_pick_height_matches_the_stream_lookup():
     names = ["160p", "360p", "480p", "720p60", "1080p60", "best", "worst", "audio_only"]
     for limit in (360, 480, 720, 0):
