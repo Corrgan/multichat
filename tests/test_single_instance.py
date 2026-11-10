@@ -65,3 +65,24 @@ def test_socket_lives_in_the_runtime_directory(tmp_path, monkeypatch):
     assert single_instance.socket_path().startswith(str(tmp_path / "multichat"))
     monkeypatch.setenv("FLATPAK_ID", "io.github.Corrgan.MultiChat")  # sandboxes share this directory
     assert single_instance.socket_path().startswith(str(tmp_path / "app" / "io.github.Corrgan.MultiChat"))
+
+
+def test_shared_temp_directory_of_someone_else_is_not_trusted(tmp_path, monkeypatch):
+    """Without XDG_RUNTIME_DIR the socket lives under /tmp. A directory there that another
+    user could write to (or made first) must not decide whether MultiChat starts."""
+    _app()
+    monkeypatch.delenv("XDG_RUNTIME_DIR", raising=False)
+    monkeypatch.delenv("FLATPAK_ID", raising=False)
+    monkeypatch.setattr(single_instance.tempfile, "gettempdir", lambda: str(tmp_path))
+    path = single_instance.socket_path()
+    assert path == str(tmp_path / f"multichat-{os.getuid()}" / "instance")  # our own, private: fine
+    os.chmod(tmp_path / f"multichat-{os.getuid()}", 0o777)  # writable for everyone
+    assert single_instance.socket_path() == ""
+    inst = SingleInstance()
+    assert inst.acquire() is True and inst.server is None  # starts, without the check
+    monkeypatch.setattr(single_instance.os, "getuid", lambda: 4242)  # the directory is someone else's
+    os.makedirs(tmp_path / "multichat-4242", mode=0o700)
+    monkeypatch.setattr(single_instance.os, "getuid", lambda: 4243)
+    monkeypatch.setattr(single_instance.tempfile, "gettempdir", lambda: str(tmp_path))
+    (tmp_path / "multichat-4243").symlink_to(tmp_path / "multichat-4242")  # a planted link
+    assert single_instance.socket_path() == ""

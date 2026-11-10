@@ -55,10 +55,14 @@ def test_cache_is_bounded(app, monkeypatch):
     assert list(v.cache) == [f"https://x.invalid/{i}.png" for i in (2, 3, 4)]
 
 
-def test_only_https_is_loaded(app):
+def test_only_https_is_loaded(app, monkeypatch):
     assert chat_view._allowed_url(QUrl("https://cdn.example/a.png"))
     assert not chat_view._allowed_url(QUrl("http://192.168.1.1/a.png"))
-    assert chat_view._allowed_url(QUrl("http://127.0.0.1:8000/a.png"))
+    assert chat_view._allowed_url(QUrl("http://127.0.0.1:8000/a.png"))  # the tests' own servers …
+    monkeypatch.setattr(chat_view.image_io, "LOOPBACK_HTTP", False)  # … but not in the app itself:
+    assert chat_view._allowed_url(QUrl("https://cdn.example/a.png"))
+    for local in ("http://127.0.0.1:8000/a.png", "http://localhost:631/admin", "http://[::1]/a.png"):
+        assert not chat_view._allowed_url(QUrl(local))  # no requests to services on this machine
 
 
 def test_drawn_icons_are_not_empty():

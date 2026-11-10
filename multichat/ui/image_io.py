@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from collections import OrderedDict, deque
 from dataclasses import dataclass, field
 
@@ -11,6 +12,18 @@ from PyQt6.QtGui import QImage, QImageReader
 from PyQt6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
 
 log = logging.getLogger("multichat.images")
+
+# Images are loaded over https only. Plain http to this machine is for the tests' local
+# servers and off otherwise: image addresses come from the platforms and the emote
+# services, and none of them should be able to make the app send requests to a service
+# that listens on the user's own computer.
+LOOPBACK_HTTP = bool(os.environ.get("MULTICHAT_TEST_LOOPBACK_IMAGES"))
+
+
+def allowed_image_url(url: QUrl) -> bool:
+    if url.scheme() == "https":
+        return True
+    return LOOPBACK_HTTP and url.scheme() == "http" and url.host() in ("127.0.0.1", "localhost")
 
 READ_BUFFER_BYTES = 64 * 1024
 TRANSFER_TIMEOUT_MS = 15_000
@@ -85,8 +98,7 @@ class ImageTransfers(QObject):
         if key in self.active or key in self._queued:
             return True
         url = QUrl(key)
-        if not (url.scheme() == "https" or
-                (url.scheme() == "http" and url.host() in ("localhost", "127.0.0.1"))):
+        if not allowed_image_url(url):
             return False
         if len(self.active) < self.max_active and not self._queued:
             self._start(key)

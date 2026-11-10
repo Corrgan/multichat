@@ -12,6 +12,7 @@ for var in ("XDG_CONFIG_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME"):
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ["MULTICHAT_SECRETS"] = "file"  # never touch the real keyring from tests
 os.environ["MULTICHAT_NO_UPDATE_CHECK"] = "1"  # no requests to GitHub from tests
+os.environ["MULTICHAT_TEST_LOOPBACK_IMAGES"] = "1"  # image tests use servers on 127.0.0.1
 os.environ["MULTICHAT_NO_LIVE_CHECK"] = "1"  # no "is the channel live?" lookups from tests
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 

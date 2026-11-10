@@ -19,7 +19,7 @@ from PyQt6.QtWidgets import QTextBrowser, QToolButton
 
 from ..chat import alerts
 from ..chat.models import ChatMessage, user_key
-from . import icons
+from . import icons, image_io
 from .image_io import ImageCache, ImageTransfers, raster_reader, read_scaled
 from ..core.constants import BADGES, BROWSER_UA, FAVICONS
 from ..core.i18n import _
@@ -72,8 +72,8 @@ RELAYOUT_SCAN = 400  # lines checked for a newly loaded image
 
 
 def _allowed_url(url: QUrl) -> bool:
-    """https only (plain http just for local test servers)."""
-    return url.scheme() == "https" or (url.scheme() == "http" and url.host() in ("127.0.0.1", "localhost"))
+    """https only (see image_io.allowed_image_url)."""
+    return image_io.allowed_image_url(url)
 
 
 class ChatView(QTextBrowser):

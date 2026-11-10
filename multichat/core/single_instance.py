@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 import os
+import stat
 import tempfile
 from pathlib import Path
 
@@ -42,8 +43,14 @@ def socket_path() -> str:
         base = Path(tempfile.gettempdir()) / f"multichat-{os.getuid()}"
     try:
         base.mkdir(mode=0o700, parents=True, exist_ok=True)
+        info = base.lstat()
+        # Without a runtime directory the socket lives under /tmp, where another user of
+        # this machine could have created the directory first and answer in our place.
+        if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o022:
+            log.warning("Single instance: %s is not a private directory of this user – check skipped", base)
+            return ""
     except OSError:
-        pass
+        return ""
     return str(base / "instance")  # short: socket paths are limited to about 100 characters
 
 
@@ -55,10 +62,12 @@ class SingleInstance(QObject):
 
     def __init__(self, path: str | None = None) -> None:
         super().__init__()
-        self.path = path or socket_path()
+        self.path = socket_path() if path is None else path
         self.server: QLocalServer | None = None
 
     def acquire(self) -> bool:
+        if not self.path:
+            return True  # no safe place for the socket: start as if there were no check
         probe = QLocalSocket()
         probe.connectToServer(self.path)
         if probe.waitForConnected(500):
