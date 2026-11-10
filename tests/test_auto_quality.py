@@ -321,3 +321,37 @@ def test_pick_height_matches_the_stream_lookup():
 def test_auto_is_a_stored_quality_and_never_reaches_the_lookup_by_itself():
     assert streams.normalize_quality("auto") == "auto"
     assert streams.QUALITIES[0][0] == streams.AUTO
+
+
+def test_blips_nobody_sees_change_nothing():
+    """Logs from a good line: the players wait 0.0–0.3 s for data every minute or so.
+    Counted as stalls, two of them within 30 s stepped the quality down (a reload of a
+    second or two – worse than the blips), and each one restarted the wait for a step up."""
+    auto, clock = make()
+    clock.tick(20)
+    # as in the log of a Kick tile: 0.1 s, two seconds later 0.3 s, then one every minute
+    stall(auto, clock, 0.1)
+    clock.tick(2)
+    stall(auto, clock, 0.3)
+    assert auto.poll(tile_height=1080) is None and auto.level == "720p"
+    for _minute in range(3):
+        clock.tick(60)
+        stall(auto, clock, 0.1)
+        assert auto.level == "720p"
+    # … and the smooth minutes still count: the step up comes on time
+    assert auto.poll(tile_height=1080) == "source"
+    # waits that can be seen still count
+    auto.loaded(TWITCH)
+    clock.tick(20)
+    stall(auto, clock, 0.6)
+    clock.tick(5)
+    stall(auto, clock, 0.6)
+    assert auto.poll(tile_height=1080) == "720p"
+    # a blip that is still going on is an open stall until it ends (no step up meanwhile)
+    auto.loaded(TWITCH)
+    clock.tick(400)  # the step up that just failed doubled the wait
+    auto.stall(True)
+    clock.tick(0.2)
+    assert auto.poll(tile_height=1080) is None
+    auto.stall(False)
+    assert auto.poll(tile_height=1080) == "source"

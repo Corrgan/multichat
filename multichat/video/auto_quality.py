@@ -34,6 +34,7 @@ STARTUP_GRACE = 12.0  # seconds after loading in which stalls say nothing
 AD_GRACE = 20.0  # … and after a Twitch ad break
 STALL_WINDOW = 30.0
 STALLS_FOR_DOWN = 2
+MIN_STALL = 0.5  # seconds: shorter waits for data are not counted at all
 LONG_STALL = 5.0  # one stall this long is enough
 STALLED_WINDOW = 60.0
 STALLED_FOR_DOWN = 8.0  # seconds stalled within STALLED_WINDOW
@@ -105,7 +106,13 @@ class AutoQuality:
             if not self._stalls or self._stalls[-1][1] is not None:
                 self._stalls.append([at, None])
         elif self._stalls and self._stalls[-1][1] is None:
-            self._stalls[-1][1] = at
+            if at - self._stalls[-1][0] < MIN_STALL:
+                # A blip nobody sees. The players report them every minute or so on a
+                # perfectly good line (logs: 0.0–0.3 s); counted, two of them within 30 s
+                # stepped the quality down, and each one restarted the wait for a step up.
+                self._stalls.pop()
+            else:
+                self._stalls[-1][1] = at
 
     # ---- decisions ---------------------------------------------------------- #
     def _same_picture(self, a: int, b: int) -> bool:
