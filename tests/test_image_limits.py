@@ -182,8 +182,11 @@ def test_network_and_qiodevice_read_errors_are_terminal_without_qt_slot_exceptio
     transfers.request(key)
     reply = factory.replies[0]
     if io_failure:
-        monkeypatch.setattr(reply, "read", lambda *_: None)  # Qt IO error (-1), as exposed by PyQt on Linux
-        reply.readyRead.emit()
+        # Qt IO error (-1 → None in PyQt) while data is waiting. Without waiting data nothing
+        # is read at all: a finished reply answers -1 for "nothing more", which is no error
+        # (see test_image_transfer_encodings.py).
+        monkeypatch.setattr(reply, "read", lambda *_: None)
+        reply.feed(b"abc")
     else:
         reply.setError(QNetworkReply.NetworkError.ConnectionRefusedError, "controlled connection failure")
         monkeypatch.setattr(reply, "read", lambda *_: pytest.fail("do not read an already failed reply"))

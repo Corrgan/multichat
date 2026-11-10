@@ -2,12 +2,15 @@
 """Bounded Qt image transfers and raster metadata checks before decoding."""
 from __future__ import annotations
 
+import logging
 from collections import OrderedDict, deque
 from dataclasses import dataclass, field
 
 from PyQt6.QtCore import QBuffer, QByteArray, QIODevice, QObject, QSize, QTimer, QUrl, pyqtSignal, pyqtSlot
 from PyQt6.QtGui import QImage, QImageReader
 from PyQt6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
+
+log = logging.getLogger("multichat.images")
 
 READ_BUFFER_BYTES = 64 * 1024
 TRANSFER_TIMEOUT_MS = 15_000
@@ -181,11 +184,20 @@ class ImageTransfers(QObject):
         if self._closed or self.active.get(key) is not state or state.rejected:
             return
         remaining = self.max_bytes - state.data.size()
-        if state.reply.bytesAvailable() > remaining:
+        available = state.reply.bytesAvailable()
+        if available > remaining:
             self._abort(key, state)
             return
-        chunk = state.reply.read(remaining + 1)
-        if chunk is None:  # PyQt maps QIODevice's -1 read result to None on some platforms
+        if available <= 0:
+            return
+        # Exactly what is buffered, never more: asked for more than it has, a reply that
+        # has finished answers -1 ("read past the end"; PyQt: None) – unless Qt used its
+        # zero-copy buffer, which it only does for a plain HTTP/1.1 response with a
+        # Content-Length. The final read in _finish treated that as an error, so every
+        # image from a server that compresses, sends chunked or speaks HTTP/2 (all the
+        # emote CDNs) was thrown away after it had arrived completely.
+        chunk = state.reply.read(available)
+        if chunk is None:
             self._abort(key, state)
             return
         state.data.append(chunk)
@@ -210,6 +222,10 @@ class ImageTransfers(QObject):
         self._disconnect(state)
         state.timer.deleteLater()
         success = not state.rejected and state.reply.error() == QNetworkReply.NetworkError.NoError
+        if not success and log.isEnabledFor(logging.DEBUG):  # verbose log: why an image is missing
+            reason = ("stopped (too large, too slow or unreadable)" if state.rejected
+                      else state.reply.errorString() or "failed")
+            log.debug("Image not loaded: %s – %s", key.split("?", 1)[0][:200], reason)
         data, state.data = state.data, QByteArray()  # reply signal closures must not retain completed bodies
         state.reply.deleteLater()
         self._pump()
