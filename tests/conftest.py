@@ -53,3 +53,14 @@ def _fresh_shared_answers():
     kick._channel_cache.clear()
     youtube.LIVE_CACHE.clear()
     yield
+
+
+@pytest.fixture(autouse=True)
+def _no_login_from_earlier_tests():
+    """Each test starts logged out: windows share one token store in the session config dir,
+    so a test that logs in would otherwise change the menus later tests see."""
+    from multichat.accounts.store import SecretStore, choose_backend
+    from multichat.core.config import CONF_DIR
+
+    backend, files = choose_backend(CONF_DIR)
+    SecretStore("tokens", backend, files).replace_all({})
