@@ -151,6 +151,7 @@
   "Subscriber / member": "订阅者 / 会员",
   "Subscriptions and resubs (Twitch, Kick)": "订阅和续订（Twitch、Kick）",
   "Super Chats and Super Stickers (YouTube)": "超级留言和超级贴图（YouTube）",
+  "The chat was cleared": "聊天已被清空",
   "The YouTube channel is not live right now": "该 YouTube 频道当前未直播",
   "The new language takes effect after a restart. Restart MultiChat now?": "新语言将在重启后生效。现在重启 MultiChat 吗？",
   "The settings file was damaged – started with defaults (the old file was kept as a backup)": "设置文件已损坏 – 已使用默认值启动（旧文件已作为备份保留）",
@@ -238,5 +239,7 @@
   "{user} sent a Super Chat: {amount}": "{user} 发送了超级留言：{amount}",
   "{user} sent {n} {currency}": "{user} 送出了 {n} {currency}",
   "{user} subscribed": "{user} 订阅了",
-  "{user} unbanned": "已解除 {user} 的封禁"
+  "{user} unbanned": "已解除 {user} 的封禁",
+  "{user} was banned": "{user} 已被封禁",
+  "{user} was timed out for {duration}": "{user} 被禁言 {duration}"
 }

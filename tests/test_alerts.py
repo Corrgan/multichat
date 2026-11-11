@@ -15,8 +15,9 @@ def test_twitch_usernotice():
     assert twitch_event(tags) == ("sub", 12, "Tier 1")
     assert twitch_event({"msg-id": "sub", "msg-param-sub-plan": "Prime"}) == ("sub", 1, "Prime")
     assert twitch_event({"msg-id": "submysterygift", "msg-param-mass-gift-count": "5"}) == ("gift", 5, "")
-    # the single notices of a community gift are skipped – the total above counts once
-    assert twitch_event({"msg-id": "subgift", "msg-param-community-gift-id": "123"}) is None
+    # who got one of a community gift is shown too – with value 0, the total above counts once
+    assert twitch_event({"msg-id": "subgift", "msg-param-community-gift-id": "123",
+                         "msg-param-recipient-display-name": "Bob"}) == ("gift", 0, "Bob")
     assert twitch_event({"msg-id": "subgift", "msg-param-recipient-display-name": "Bob"}) == ("gift", 1, "Bob")
     assert twitch_event({"msg-id": "raid", "msg-param-viewerCount": "42"}) == ("raid", 42, "")
     # everything else Twitch announces is shown as a notice, in Twitch's own words

@@ -151,6 +151,7 @@
   "Subscriber / member": "Abonnent / Mitglied",
   "Subscriptions and resubs (Twitch, Kick)": "Abos und Resubs (Twitch, Kick)",
   "Super Chats and Super Stickers (YouTube)": "Super Chats und Super Sticker (YouTube)",
+  "The chat was cleared": "Der Chat wurde geleert",
   "The YouTube channel is not live right now": "Der YouTube-Kanal ist gerade nicht live",
   "The new language takes effect after a restart. Restart MultiChat now?": "Die neue Sprache gilt nach einem Neustart. MultiChat jetzt neu starten?",
   "The settings file was damaged – started with defaults (the old file was kept as a backup)": "Die Einstellungsdatei war beschädigt – mit Standardwerten gestartet (die alte Datei wurde als Sicherung behalten)",
@@ -238,5 +239,7 @@
   "{user} sent a Super Chat: {amount}": "{user} hat einen Super Chat gesendet: {amount}",
   "{user} sent {n} {currency}": "{user} hat {n} {currency} geschickt",
   "{user} subscribed": "{user} hat abonniert",
-  "{user} unbanned": "{user} entbannt"
+  "{user} unbanned": "{user} entbannt",
+  "{user} was banned": "{user} wurde gesperrt",
+  "{user} was timed out for {duration}": "{user} wurde für {duration} stummgeschaltet"
 }

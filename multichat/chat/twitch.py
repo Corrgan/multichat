@@ -9,8 +9,10 @@ import logging
 
 import websockets
 
-from ..core.i18n import _
 from .models import Backoff, ChatMessage, Deletion, Emit, Part, Status, roles, twitch_channel, with_extra_emotes as _extra
+
+from .cheermotes import cheer_parts
+from .twitch_events import _int, message_note, moderation_notice, twitch_event  # noqa: F401 – twitch_event is imported from here elsewhere
 
 log = logging.getLogger("multichat.chat")
 
@@ -24,58 +26,6 @@ def _parse_tags(raw: str) -> dict[str, str]:
         k, _, v = part.partition("=")
         out[k] = v.replace("\\s", " ").replace("\\:", ";").replace("\\\\", "\\")
     return out
-
-
-SUB_PLANS = {"Prime": "Prime", "1000": "Tier 1", "2000": "Tier 2", "3000": "Tier 3"}
-
-
-def _int(value: str | None) -> int:
-    try:
-        return int(value or 0)
-    except ValueError:
-        return 0
-
-
-def twitch_event(tags: dict[str, str]) -> tuple[str, float, str] | None:
-    """USERNOTICE tags → (event, value, text). Subs, gifts and raids are events of their
-    own; everything else Twitch announces in the chat (announcements, watch streaks, bits
-    badges, charity donations, whatever comes next) is a "notice" with Twitch's own wording.
-
-    None only for the one notice that repeats another: a community gift ("gifted 5 subs")
-    is followed by one subgift notice per recipient – those carry
-    msg-param-community-gift-id and are skipped, the total counts once."""
-    kind = tags.get("msg-id", "")
-    plan = SUB_PLANS.get(tags.get("msg-param-sub-plan", ""), "")
-    if kind in ("sub", "resub"):
-        return "sub", _int(tags.get("msg-param-cumulative-months")) or 1, plan
-    if kind in ("giftpaidupgrade", "anongiftpaidupgrade", "primepaidupgrade"):
-        return "sub", 1, plan
-    if kind in ("subgift", "anonsubgift"):
-        if tags.get("msg-param-community-gift-id"):
-            return None
-        return "gift", 1, tags.get("msg-param-recipient-display-name", "")
-    if kind in ("submysterygift", "anonsubmysterygift"):
-        return "gift", _int(tags.get("msg-param-mass-gift-count")) or 1, ""
-    if kind == "raid":
-        return "raid", _int(tags.get("msg-param-viewerCount")), ""
-    if kind == "announcement":
-        return "notice", 0, _("Announcement")
-    return "notice", 0, tags.get("system-msg") or kind.replace("-", " ").replace("_", " ") or _("Notice")
-
-
-def message_note(tags: dict[str, str]) -> str:
-    """What sets a normal chat message apart on Twitch ("" for most): bought with channel
-    points, sent with a Power-up, the first one of a new chatter."""
-    kind = tags.get("msg-id", "")
-    if kind == "highlighted-message":
-        return _("Highlighted message (channel points)")
-    if tags.get("custom-reward-id"):
-        return _("Channel points reward")
-    if kind in ("animated-message", "gigantified-emote-message"):
-        return _("Power-up")
-    if kind == "user-intro" or tags.get("first-msg") == "1":
-        return _("First message")
-    return ""
 
 
 def parse_irc(line: str) -> tuple[dict[str, str], str, str, list[str]]:
@@ -153,8 +103,10 @@ async def run_twitch(channel: str, emit: Emit, status: Status, emotes=None) -> N
                             text = params[1]
                             if text.startswith("\x01ACTION "):
                                 text = text[8:].rstrip("\x01")
+                            parts = twitch_parts(text, tags.get("emotes"))
                             if tags.get("bits"):
                                 event = {"event": "bits", "event_value": _int(tags["bits"])}
+                                parts = cheer_parts(parts)
                             elif note := message_note(tags):
                                 event = {"event": "notice", "event_text": note}
                             else:
@@ -166,7 +118,7 @@ async def run_twitch(channel: str, emit: Emit, status: Status, emotes=None) -> N
                                     user=tags.get("display-name") or prefix.split("!")[0],
                                     login=prefix.split("!")[0],
                                     text=text,
-                                    parts=_extra(emotes, "twitch", channel, twitch_parts(text, tags.get("emotes"))),
+                                    parts=_extra(emotes, "twitch", channel, parts),
                                     color=tags.get("color") or None,
                                     msg_id=tags.get("id"),
                                     user_id=tags.get("user-id"),
@@ -202,6 +154,8 @@ async def run_twitch(channel: str, emit: Emit, status: Status, emotes=None) -> N
                         elif cmd == "CLEARCHAT":
                             target = tags.get("target-user-id")
                             emit(Deletion("twitch", user_id=target) if target else Deletion("twitch", clear_all=True))
+                            emit(ChatMessage(platform="twitch", channel=channel, user="Twitch", text="", event="notice",
+                                             event_text=moderation_notice(tags, params[-1] if len(params) >= 2 else "")))
                         elif cmd == "RECONNECT":
                             raise ConnectionError("Twitch requested a reconnect")
         except asyncio.CancelledError:

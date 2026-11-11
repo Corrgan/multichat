@@ -21,6 +21,7 @@ import aiohttp
 
 from .alerts import parse_amount
 from .models import ChatMessage, Deletion, Emit, Part, roles
+from .youtube_notices import _text, notice
 
 log = logging.getLogger("multichat.chat")
 
@@ -101,14 +102,6 @@ def parse_page(page: str) -> tuple[dict, str, list]:
     return context, token, renderer.get("actions") or []
 
 
-def _text(obj: dict | None) -> str:
-    if not obj:
-        return ""
-    if "simpleText" in obj:
-        return obj["simpleText"]
-    return "".join(r.get("text", "") for r in obj.get("runs", []))
-
-
 def runs_to_parts(runs: list) -> list[Part]:
     parts: list[Part] = []
     for r in runs or []:
@@ -133,35 +126,6 @@ def _badges(r: dict) -> tuple:
         icon = (badge.get("icon") or {}).get("iconType")
         names.append(icon if icon else ("member" if badge.get("customThumbnail") else ""))
     return roles(names)
-
-
-_NOTICE_TEXTS = ("text", "message", "primaryText", "headerPrimaryText", "subtext", "headerSubtext")
-_NO_NOTICE = ("liveChatPlaceholderItemRenderer",)  # stands for a message that is still being checked
-
-
-def notice(item: dict, video_id: str) -> ChatMessage | None:
-    """A chat item that is no message, Super Chat or membership: YouTube's own lines (chat
-    mode changed, "welcome to live chat"), a redeemed gift membership, a poll … They are
-    read by what they have in common – an author if any, and their texts – instead of one
-    by one, so a new kind is shown too. None if there is nothing to show."""
-    kind, r = next(((k, v) for k, v in item.items() if isinstance(v, dict)), ("", None))
-    if not r or kind in _NO_NOTICE:
-        return None
-    texts = []
-    for key in _NOTICE_TEXTS:
-        value = _text(r.get(key)) if isinstance(r.get(key), dict) else ""
-        if value.strip() and value.strip() not in texts:
-            texts.append(value.strip())
-    if not texts:
-        return None
-    author = _text(r.get("authorName")) if isinstance(r.get("authorName"), dict) else ""
-    headline, body = (texts[0], " ".join(texts[1:])) if not author else (" ".join(texts), "")
-    return ChatMessage(
-        platform="youtube", channel=video_id, user=author or "YouTube", text=body,
-        parts=[("text", body, "")] if body else [], msg_id=r.get("id") if isinstance(r.get("id"), str) else None,
-        user_id=r.get("authorExternalChannelId") if author else None,
-        event="notice", event_text=f"{author} {headline}" if author else headline,
-    )
 
 
 _RENDERERS = (

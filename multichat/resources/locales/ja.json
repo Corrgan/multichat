@@ -151,6 +151,7 @@
   "Subscriber / member": "サブスク / メンバー",
   "Subscriptions and resubs (Twitch, Kick)": "サブスクと継続サブスク（Twitch、Kick）",
   "Super Chats and Super Stickers (YouTube)": "スーパーチャットとスーパーステッカー（YouTube）",
+  "The chat was cleared": "チャットがクリアされました",
   "The YouTube channel is not live right now": "この YouTube チャンネルは現在ライブ配信していません",
   "The new language takes effect after a restart. Restart MultiChat now?": "新しい言語は再起動後に反映されます。今すぐ MultiChat を再起動しますか？",
   "The settings file was damaged – started with defaults (the old file was kept as a backup)": "設定ファイルが破損していました – 既定値で起動しました（古いファイルはバックアップとして保存されています）",
@@ -238,5 +239,7 @@
   "{user} sent a Super Chat: {amount}": "{user}がスーパーチャットを送りました: {amount}",
   "{user} sent {n} {currency}": "{user}が{n} {currency}を送りました",
   "{user} subscribed": "{user}がサブスクしました",
-  "{user} unbanned": "{user}のBANを解除しました"
+  "{user} unbanned": "{user}のBANを解除しました",
+  "{user} was banned": "{user} が BAN されました",
+  "{user} was timed out for {duration}": "{user} が {duration} タイムアウトされました"
 }

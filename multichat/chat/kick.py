@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import asyncio
-from collections import OrderedDict
 import json
 import logging
 import re
@@ -12,6 +11,7 @@ import re
 import websockets
 
 from ..core.i18n import _
+from .kick_events import ban_notice, kick_event, kick_notice  # noqa: F401 – kick_event is imported from here elsewhere
 from .models import Backoff, ChatMessage, Deletion, Emit, Part, Status, TTLCache, kick_channel, roles, with_extra_emotes as _extra
 
 log = logging.getLogger("multichat.chat")
@@ -165,67 +165,6 @@ def _kick_get(url: str, slug: str) -> dict:
     return r.json()
 
 
-def kick_event(name: str, data: dict) -> tuple[str, str, float, str] | None:
-    """Kick's subscription, gift, host and Kicks events → (user, event, value, text).
-    These are unofficial website events; unknown ones are logged in the verbose log."""
-    def num(v) -> float:
-        try:
-            return float(v or 0)
-        except (TypeError, ValueError):
-            return 0.0
-
-    if name.endswith("\\SubscriptionEvent") or name == "SubscriptionEvent":
-        return str(data.get("username") or "?"), "sub", num(data.get("months")) or 1, ""
-    if name.endswith("GiftedSubscriptionsEvent"):
-        gifted = data.get("gifted_usernames") or []
-        n = len(gifted) if isinstance(gifted, list) else 0
-        text = str(gifted[0]) if n == 1 else ""
-        return str(data.get("gifter_username") or "?"), "gift", n or 1, text
-    if name.endswith("StreamHostEvent"):
-        return str(data.get("host_username") or "?"), "raid", num(data.get("number_viewers")), ""
-    if name.endswith("KicksGifted"):
-        sender = data.get("sender") or {}
-        gift = data.get("gift") or {}
-        return str(sender.get("username") or "?"), "bits", num(gift.get("amount")), "Kicks"
-    if not name.endswith(("ChatMessageEvent", "MessageDeletedEvent", "UserBannedEvent", "ChatroomClearEvent",
-                          "RewardRedeemedEvent", "PinnedMessageCreatedEvent", "PollUpdateEvent")):
-        log.debug("Kick event %s: %s", name, str(data)[:300])
-    return None
-
-
-_polls_shown: OrderedDict[tuple[str, str], None] = OrderedDict()  # a poll sends an update per vote
-
-
-def kick_notice(name: str, data: dict, slug: str) -> tuple[str, str, str] | None:
-    """What else Kick shows in its chat → (user, headline, message): redeemed rewards,
-    pinned messages, polls. These website events are undocumented – anything that does
-    not look as expected is left to the verbose log (kick_event) instead of guessed at."""
-    def text(value) -> str:
-        return value.strip() if isinstance(value, str) else ""
-
-    if name.endswith("RewardRedeemedEvent"):
-        user, reward = text(data.get("username")), text(data.get("reward_title"))
-        if user and reward:
-            return user, _("{user} redeemed {reward}").format(user=user, reward=reward), text(data.get("user_input"))
-    elif name.endswith("PinnedMessageCreatedEvent"):
-        message = data.get("message") if isinstance(data.get("message"), dict) else {}
-        sender = message.get("sender") if isinstance(message.get("sender"), dict) else {}
-        user, content = text(sender.get("username")), text(message.get("content"))
-        if user and content:
-            return user, _("Pinned message"), content
-    elif name.endswith("PollUpdateEvent"):
-        poll = data.get("poll") if isinstance(data.get("poll"), dict) else {}
-        title = text(poll.get("title"))
-        options = [text(o.get("label")) for o in poll.get("options") or [] if isinstance(o, dict)]
-        options = [o for o in options if o]
-        if title and (slug, title) not in _polls_shown:
-            _polls_shown[(slug, title)] = None
-            while len(_polls_shown) > 50:
-                _polls_shown.popitem(last=False)
-            return "Kick", _("Poll: {title}").format(title=title), " · ".join(options)
-    return None
-
-
 def _handle_event(name: str, data: dict, slug: str, emit: Emit, emotes) -> None:
     if notice := kick_notice(name, data, slug):
         user, headline, message = notice
@@ -267,6 +206,8 @@ def _handle_event(name: str, data: dict, slug: str, emit: Emit, emotes) -> None:
         uid = (data.get("user") or {}).get("id")
         if uid:
             emit(Deletion("kick", user_id=str(uid)))
+        if line := ban_notice(data):
+            emit(ChatMessage(platform="kick", channel=slug, user="Kick", text="", event="notice", event_text=line))
     elif name.endswith("ChatroomClearEvent"):
         emit(Deletion("kick", clear_all=True))
 

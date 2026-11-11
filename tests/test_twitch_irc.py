@@ -66,10 +66,54 @@ def test_bot_messages_announcements_and_notices_are_shown(monkeypatch):
     assert [(m.user, m.event, alerts.headline(m)) for m in room] == [
         ("Twitch", "notice", "This room is now in slow mode.")]
 
-    # still once only: the per-recipient lines of a community gift
-    assert _read("@display-name=Gifter;id=a5;login=gifter;msg-id=subgift;msg-param-community-gift-id=77;"
-                 "msg-param-recipient-display-name=Bob;room-id=1;user-id=3 :tmi.twitch.tv USERNOTICE #examplechan",
-                 monkeypatch) == []
+    # a community gift: the total, then who got one (not highlighted again, not counted twice)
+    total = _read("@display-name=Gifter;id=a5;login=gifter;msg-id=submysterygift;msg-param-mass-gift-count=5;"
+                  "room-id=1;user-id=3 :tmi.twitch.tv USERNOTICE #examplechan", monkeypatch)
+    single = _read("@display-name=Gifter;id=a6;login=gifter;msg-id=subgift;msg-param-community-gift-id=77;"
+                   "msg-param-recipient-display-name=Bob;room-id=1;user-id=3 :tmi.twitch.tv USERNOTICE #examplechan",
+                   monkeypatch)
+    assert alerts.headline(total[0]) == "Gifter gifted 5 subs" and alerts.is_alert(total[0], alerts.DEFAULT_ALERTS)
+    assert alerts.headline(single[0]) == "Gifter gifted a sub to Bob"
+    assert single[0].event_value == 0 and not alerts.is_alert(single[0], alerts.DEFAULT_ALERTS)
+
+
+def test_timeouts_bans_and_cleared_chat_get_a_line(monkeypatch):
+    from multichat.chat import alerts
+    from multichat.chat.models import Deletion
+    from multichat.chat.twitch_events import duration_text
+
+    def lines(tags, target=" :troublemaker"):
+        got = _read(f"@{tags}room-id=1 :tmi.twitch.tv CLEARCHAT #examplechan{target}", monkeypatch)
+        assert isinstance(got[0], Deletion)  # the messages are still marked as deleted
+        return [alerts.headline(m) for m in got[1:]]
+
+    assert lines("ban-duration=600;target-user-id=8;") == ["troublemaker was timed out for 10 min"]
+    assert lines("target-user-id=8;") == ["troublemaker was banned"]
+    assert lines("", target="") == ["The chat was cleared"]
+    assert [duration_text(s) for s in (45, 60, 90, 3600, 172800)] == ["45 s", "1 min", "90 s", "1 h", "2 d"]
+
+
+def test_cheermotes_become_animated_pictures(monkeypatch):
+    from multichat.chat.cheermotes import cheer_parts, cheermote
+
+    assert cheermote("Cheer100") == ("https://d3aqoihi2n8ty8.cloudfront.net/actions/cheer/dark/animated/100/2.gif", 100)
+    assert cheermote("cheer99")[0].endswith("/animated/1/2.gif") and cheermote("Kappa12000")[0].endswith("/kappa/dark/animated/10000/2.gif")
+    for word in ("Cheer", "100", "Hello100", "Cheer0", "Cheer100!", "xCheer100"):
+        assert cheermote(word) is None, word
+    assert cheer_parts([("text", "Cheer100 nice  stream uni5000", ""), ("emote", "https://e/1", "Kappa")]) == [
+        ("emote", "https://d3aqoihi2n8ty8.cloudfront.net/actions/cheer/dark/animated/100/2.gif", "Cheer"),
+        ("text", "100 nice  stream ", ""),
+        ("emote", "https://d3aqoihi2n8ty8.cloudfront.net/actions/uni/dark/animated/5000/2.gif", "uni"),
+        ("text", "5000", ""),
+        ("emote", "https://e/1", "Kappa"),
+    ]
+    # only in messages that carry bits: "Cheer100" typed without bits stays text
+    with_bits = _read("@bits=100;display-name=Cheerer;id=c1;room-id=1;user-id=5 "
+                      ":cheerer!cheerer@cheerer.tmi.twitch.tv PRIVMSG #examplechan :Cheer100 gg", monkeypatch)
+    without = _read("@display-name=Cheerer;id=c2;room-id=1;user-id=5 "
+                    ":cheerer!cheerer@cheerer.tmi.twitch.tv PRIVMSG #examplechan :Cheer100 gg", monkeypatch)
+    assert [p[0] for p in with_bits[0].parts] == ["emote", "text"] and with_bits[0].text == "Cheer100 gg"
+    assert [p[0] for p in without[0].parts] == ["text"]
 
 
 def test_channel_points_bits_and_first_messages_are_marked(monkeypatch):
@@ -130,6 +174,12 @@ def test_kick_rewards_pins_polls_and_replies_are_shown():
         ("Bob", "Replying to Alice", "yes!"),
         ("Bob", "", "hello"),
     ]
+    kick._handle_event("App\\Events\\UserBannedEvent", {"user": {"id": 5, "username": "troublemaker"}, "duration": 10},
+                       "examplekick", got.append, None)
+    kick._handle_event("App\\Events\\UserBannedEvent", {"user": {"id": 6, "username": "worse"}, "permanent": True},
+                       "examplekick", got.append, None)
+    assert [alerts.headline(m) for m in got[-3:] if not hasattr(m, "clear_all")] == [
+        "troublemaker was timed out for 10 min", "worse was banned"]
     # these events are undocumented: one that looks different is not guessed at
     before = len(got)
     for name, data in (("RewardRedeemedEvent", {"username": "Viewer"}), ("PinnedMessageCreatedEvent", {"message": "x"}),
@@ -160,7 +210,6 @@ def test_youtube_shows_its_other_chat_lines_too():
     got = parse_actions(actions, "vid12345678")
     assert [(m.user, m.event, alerts.headline(m), m.text) for m in got] == [
         ("YouTube", "notice", "Slow mode is on", "Send a message every 30 seconds"),
-        ("YouTube", "notice", "Welcome to live chat!", ""),
         ("@viewer", "notice", "@viewer received a gift membership by @gifter", ""),
         ("YouTube", "notice", "A new kind of line", ""),
         ("@chatter", "", "", "hello"),
