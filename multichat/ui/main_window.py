@@ -488,6 +488,12 @@ class MainWindow(GroupsMixin, ConnectionsMixin, MessagesMixin, SendMixin, QMainW
                 name = key if i == 0 else f"{key} (group {i + 1})"
                 stats[f"{name} fps"] = round(frames / 60, 1)
                 stats[f"{name} ms/frame"] = round(ms / frames, 1)
+                tile = panel.video.tiles.get(key)
+                behind = tile.buffer_seconds() if tile is not None else None
+                if behind is not None:  # see video/catch_up.py
+                    stats[f"{name} buffered s"] = round(behind, 1)
+                    if tile.catch_up.speed != 1.0:
+                        stats[f"{name} speed"] = tile.catch_up.speed
         return stats
 
     def changeEvent(self, event) -> None:  # noqa: N802

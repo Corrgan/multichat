@@ -394,20 +394,19 @@ class VideoTile(QFrame):
     def _catch_up(self, waited: bool) -> None:
         """Low video delay: a little faster while more is buffered than needed (catch_up.py)."""
         samples = self.video.buffered
-        if not self.low_latency:
-            samples.clear()
-            if self.catch_up.speed != 1.0:
-                self.catch_up.reset()
-                self.video.set_speed(1.0)
-            return
         if waited or self._stall_from is not None:  # the buffer ran dry: measure anew, at normal speed
             samples.clear()
             self.catch_up.reset()
             self.video.set_speed(1.0)
             return
-        while samples:
+        while samples:  # measured either way: the minute summary of the verbose log shows it
             at, seconds = samples.popleft()
             self.catch_up.sample(seconds, at)
+        if not self.low_latency:
+            if self.catch_up.speed != 1.0:
+                self.catch_up.speed = 1.0
+                self.video.set_speed(1.0)
+            return
         speed = self.catch_up.poll()
         if speed is not None:
             low = self.catch_up.lowest()
@@ -415,6 +414,11 @@ class VideoTile(QFrame):
                       "catching up with the stream" if speed > 1.0 else "close to the stream again",
                       low if low is not None else 0.0, speed)
             self.video.set_speed(speed)
+
+    def buffer_seconds(self) -> float | None:
+        """The smallest buffer of the last seconds while playing (how far the picture is
+        behind the newest data at the worst moment); None if not known."""
+        return self.catch_up.lowest() if self.state == "playing" else None
 
     def set_low_latency(self, on: bool) -> None:
         if on == self.low_latency:
