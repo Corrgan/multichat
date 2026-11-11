@@ -104,3 +104,64 @@ def test_notices_render_as_a_plain_line_and_are_no_alert(_session_qapplication):
     assert "This room is now in slow mode." in text
     assert "Announcement" in text and "ExampleBot: Stream starts soon" in text
     view.close()
+
+
+# ---- the other platforms ------------------------------------------------------ #
+def test_kick_rewards_pins_polls_and_replies_are_shown():
+    from multichat.chat import alerts, kick
+
+    got = []
+
+    def feed(name, data):
+        kick._handle_event(name, data, "examplekick", got.append, None)
+
+    feed("RewardRedeemedEvent", {"username": "Viewer", "reward_title": "Hydrate", "user_input": "drink!"})
+    feed("App\\Events\\PinnedMessageCreatedEvent", {"message": {"content": "Rules: be nice", "sender": {"username": "Mod"}}})
+    poll = {"poll": {"title": "Next game?", "options": [{"label": "A", "votes": 0}, {"label": "B", "votes": 0}]}}
+    feed("App\\Events\\PollUpdateEvent", poll)
+    feed("App\\Events\\PollUpdateEvent", poll)  # every vote sends an update: shown once
+    feed("App\\Events\\ChatMessageEvent", {"id": "m1", "content": "yes!", "type": "reply", "sender": {"id": 4, "username": "Bob"},
+                                         "metadata": {"original_sender": {"username": "Alice"}}})
+    feed("App\\Events\\ChatMessageEvent", {"id": "m2", "content": "hello", "type": "message", "sender": {"id": 4, "username": "Bob"}})
+    assert [(m.user, alerts.headline(m), m.text) for m in got] == [
+        ("Viewer", "Viewer redeemed Hydrate", "drink!"),
+        ("Mod", "Pinned message", "Rules: be nice"),
+        ("Kick", "Poll: Next game?", "A · B"),
+        ("Bob", "Replying to Alice", "yes!"),
+        ("Bob", "", "hello"),
+    ]
+    # these events are undocumented: one that looks different is not guessed at
+    before = len(got)
+    for name, data in (("RewardRedeemedEvent", {"username": "Viewer"}), ("PinnedMessageCreatedEvent", {"message": "x"}),
+                       ("PollUpdateEvent", {"poll": None}), ("SomethingNewEvent", {"a": 1})):
+        feed(name, data)
+    assert len(got) == before
+
+
+def test_youtube_shows_its_other_chat_lines_too():
+    from multichat.chat import alerts
+    from multichat.chat.youtube_innertube import parse_actions
+
+    def item(kind, body):
+        return {"addChatItemAction": {"item": {kind: body}}}
+
+    actions = [
+        item("liveChatModeChangeMessageRenderer", {"id": "n1", "text": {"runs": [{"text": "Slow mode is on"}]},
+                                                    "subtext": {"runs": [{"text": "Send a message every 30 seconds"}]}}),
+        item("liveChatViewerEngagementMessageRenderer", {"id": "n2", "message": {"runs": [{"text": "Welcome to live chat!"}]}}),
+        item("liveChatSponsorshipsGiftRedemptionAnnouncementRenderer", {
+            "id": "n3", "authorName": {"simpleText": "@viewer"}, "authorExternalChannelId": "UCviewer",
+            "message": {"runs": [{"text": "received a gift membership by "}, {"text": "@gifter"}]}}),
+        item("liveChatSomethingNewRenderer", {"id": "n4", "text": {"simpleText": "A new kind of line"}}),
+        item("liveChatPlaceholderItemRenderer", {"id": "n5"}),  # a message still being checked: nothing to show
+        item("liveChatTextMessageRenderer", {"id": "m1", "authorName": {"simpleText": "@chatter"},
+                                             "message": {"runs": [{"text": "hello"}]}}),
+    ]
+    got = parse_actions(actions, "vid12345678")
+    assert [(m.user, m.event, alerts.headline(m), m.text) for m in got] == [
+        ("YouTube", "notice", "Slow mode is on", "Send a message every 30 seconds"),
+        ("YouTube", "notice", "Welcome to live chat!", ""),
+        ("@viewer", "notice", "@viewer received a gift membership by @gifter", ""),
+        ("YouTube", "notice", "A new kind of line", ""),
+        ("@chatter", "", "", "hello"),
+    ]

@@ -4,12 +4,14 @@
 from __future__ import annotations
 
 import asyncio
+from collections import OrderedDict
 import json
 import logging
 import re
 
 import websockets
 
+from ..core.i18n import _
 from .models import Backoff, ChatMessage, Deletion, Emit, Part, Status, TTLCache, kick_channel, roles, with_extra_emotes as _extra
 
 log = logging.getLogger("multichat.chat")
@@ -185,15 +187,60 @@ def kick_event(name: str, data: dict) -> tuple[str, str, float, str] | None:
         sender = data.get("sender") or {}
         gift = data.get("gift") or {}
         return str(sender.get("username") or "?"), "bits", num(gift.get("amount")), "Kicks"
-    if not name.endswith(("ChatMessageEvent", "MessageDeletedEvent", "UserBannedEvent", "ChatroomClearEvent")):
+    if not name.endswith(("ChatMessageEvent", "MessageDeletedEvent", "UserBannedEvent", "ChatroomClearEvent",
+                          "RewardRedeemedEvent", "PinnedMessageCreatedEvent", "PollUpdateEvent")):
         log.debug("Kick event %s: %s", name, str(data)[:300])
     return None
 
 
+_polls_shown: OrderedDict[tuple[str, str], None] = OrderedDict()  # a poll sends an update per vote
+
+
+def kick_notice(name: str, data: dict, slug: str) -> tuple[str, str, str] | None:
+    """What else Kick shows in its chat → (user, headline, message): redeemed rewards,
+    pinned messages, polls. These website events are undocumented – anything that does
+    not look as expected is left to the verbose log (kick_event) instead of guessed at."""
+    def text(value) -> str:
+        return value.strip() if isinstance(value, str) else ""
+
+    if name.endswith("RewardRedeemedEvent"):
+        user, reward = text(data.get("username")), text(data.get("reward_title"))
+        if user and reward:
+            return user, _("{user} redeemed {reward}").format(user=user, reward=reward), text(data.get("user_input"))
+    elif name.endswith("PinnedMessageCreatedEvent"):
+        message = data.get("message") if isinstance(data.get("message"), dict) else {}
+        sender = message.get("sender") if isinstance(message.get("sender"), dict) else {}
+        user, content = text(sender.get("username")), text(message.get("content"))
+        if user and content:
+            return user, _("Pinned message"), content
+    elif name.endswith("PollUpdateEvent"):
+        poll = data.get("poll") if isinstance(data.get("poll"), dict) else {}
+        title = text(poll.get("title"))
+        options = [text(o.get("label")) for o in poll.get("options") or [] if isinstance(o, dict)]
+        options = [o for o in options if o]
+        if title and (slug, title) not in _polls_shown:
+            _polls_shown[(slug, title)] = None
+            while len(_polls_shown) > 50:
+                _polls_shown.popitem(last=False)
+            return "Kick", _("Poll: {title}").format(title=title), " · ".join(options)
+    return None
+
+
 def _handle_event(name: str, data: dict, slug: str, emit: Emit, emotes) -> None:
+    if notice := kick_notice(name, data, slug):
+        user, headline, message = notice
+        emit(ChatMessage(platform="kick", channel=slug, user=user, text=_KICK_EMOTE_RE.sub(r"\2", message),
+                         parts=_extra(emotes, "kick", slug, kick_parts(message)) if message else [],
+                         event="notice", event_text=headline))
+        return
     if name.endswith("ChatMessageEvent"):
         sender = data.get("sender") or {}
         content = str(data.get("content") or "")
+        meta = data.get("metadata") if isinstance(data.get("metadata"), dict) else {}
+        original = meta.get("original_sender") if isinstance(meta.get("original_sender"), dict) else {}
+        reply_to = original.get("username") if data.get("type") == "reply" else None
+        note = ({"event": "notice", "event_text": _("Replying to {user}").format(user=reply_to)}
+                if isinstance(reply_to, str) and reply_to.strip() else {})
         emit(
             ChatMessage(
                 platform="kick",
@@ -205,6 +252,7 @@ def _handle_event(name: str, data: dict, slug: str, emit: Emit, emotes) -> None:
                 badges=roles(b.get("type", "") for b in (sender.get("identity") or {}).get("badges") or [] if isinstance(b, dict)),
                 msg_id=str(data.get("id") or "") or None,
                 user_id=str(sender.get("id") or "") or None,
+                **note,
             )
         )
     elif ev := kick_event(name, data):
