@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 Corrgan
-"""Alert-like chat events (subs, gifts, raids, bits, Super Chats, memberships).
+"""Alert-like chat events (subs, gifts, raids, bits, Super Chats, memberships) and
+"notice": everything else a platform announces in the chat, shown as a plain grey line.
 
 The readers set ChatMessage.event/event_value/event_text; this module turns them into a
 headline and decides – by the user's own settings – which ones are highlighted. What the
@@ -66,6 +67,8 @@ def headline(m: ChatMessage) -> str:
     if m.event == "member":
         return (_("{user} has been a member for {months} months").format(user=user, months=_n(v)) if v > 1
                 else _("{user} became a member").format(user=user))
+    if m.event == "notice":  # the platform's own wording (see twitch_event)
+        return t
     return ""
 
 

@@ -76,7 +76,7 @@ class SendMixin:
         keys = {key for key, _p, _c, _label in self._send_options() if target in (None, key)}
         seen, names, out = set(), set(), []
         for m in reversed(self.messages.values()):
-            if m.source not in keys or m.user == "?":
+            if m.source not in keys or m.user == "?" or (m.event == "notice" and not m.parts and not m.user_id):
                 continue
             who = (m.platform, user_key(m))
             if who in seen:

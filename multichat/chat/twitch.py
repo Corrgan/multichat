@@ -9,6 +9,7 @@ import logging
 
 import websockets
 
+from ..core.i18n import _
 from .models import Backoff, ChatMessage, Deletion, Emit, Part, Status, roles, twitch_channel, with_extra_emotes as _extra
 
 log = logging.getLogger("multichat.chat")
@@ -36,10 +37,13 @@ def _int(value: str | None) -> int:
 
 
 def twitch_event(tags: dict[str, str]) -> tuple[str, float, str] | None:
-    """USERNOTICE tags → (event, value, text) for subs, gifts and raids; None for others.
+    """USERNOTICE tags → (event, value, text). Subs, gifts and raids are events of their
+    own; everything else Twitch announces in the chat (announcements, watch streaks, bits
+    badges, charity donations, whatever comes next) is a "notice" with Twitch's own wording.
 
-    A community gift ("gifted 5 subs") is followed by one subgift notice per recipient –
-    those carry msg-param-community-gift-id and are skipped, the total counts once."""
+    None only for the one notice that repeats another: a community gift ("gifted 5 subs")
+    is followed by one subgift notice per recipient – those carry
+    msg-param-community-gift-id and are skipped, the total counts once."""
     kind = tags.get("msg-id", "")
     plan = SUB_PLANS.get(tags.get("msg-param-sub-plan", ""), "")
     if kind in ("sub", "resub"):
@@ -54,7 +58,24 @@ def twitch_event(tags: dict[str, str]) -> tuple[str, float, str] | None:
         return "gift", _int(tags.get("msg-param-mass-gift-count")) or 1, ""
     if kind == "raid":
         return "raid", _int(tags.get("msg-param-viewerCount")), ""
-    return None
+    if kind == "announcement":
+        return "notice", 0, _("Announcement")
+    return "notice", 0, tags.get("system-msg") or kind.replace("-", " ").replace("_", " ") or _("Notice")
+
+
+def message_note(tags: dict[str, str]) -> str:
+    """What sets a normal chat message apart on Twitch ("" for most): bought with channel
+    points, sent with a Power-up, the first one of a new chatter."""
+    kind = tags.get("msg-id", "")
+    if kind == "highlighted-message":
+        return _("Highlighted message (channel points)")
+    if tags.get("custom-reward-id"):
+        return _("Channel points reward")
+    if kind in ("animated-message", "gigantified-emote-message"):
+        return _("Power-up")
+    if kind == "user-intro" or tags.get("first-msg") == "1":
+        return _("First message")
+    return ""
 
 
 def parse_irc(line: str) -> tuple[dict[str, str], str, str, list[str]]:
@@ -132,6 +153,12 @@ async def run_twitch(channel: str, emit: Emit, status: Status, emotes=None) -> N
                             text = params[1]
                             if text.startswith("\x01ACTION "):
                                 text = text[8:].rstrip("\x01")
+                            if tags.get("bits"):
+                                event = {"event": "bits", "event_value": _int(tags["bits"])}
+                            elif note := message_note(tags):
+                                event = {"event": "notice", "event_text": note}
+                            else:
+                                event = {}
                             emit(
                                 ChatMessage(
                                     platform="twitch",
@@ -144,7 +171,7 @@ async def run_twitch(channel: str, emit: Emit, status: Status, emotes=None) -> N
                                     msg_id=tags.get("id"),
                                     user_id=tags.get("user-id"),
                                     badges=roles(b.split("/")[0] for b in (tags.get("badges") or "").split(",") if b),
-                                    **({"event": "bits", "event_value": _int(tags["bits"])} if tags.get("bits") else {}),
+                                    **event,
                                 )
                             )
                         elif cmd == "USERNOTICE" and (ev := twitch_event(tags)):
@@ -166,6 +193,10 @@ async def run_twitch(channel: str, emit: Emit, status: Status, emotes=None) -> N
                                     event=ev[0], event_value=ev[1], event_text=ev[2],
                                 )
                             )
+                        elif cmd == "NOTICE" and params and params[-1].strip():
+                            # what Twitch itself says in the chat: slow mode on, followers only …
+                            emit(ChatMessage(platform="twitch", channel=channel, user="Twitch", text="",
+                                             event="notice", event_text=params[-1].strip()))
                         elif cmd == "CLEARMSG":
                             emit(Deletion("twitch", msg_id=tags.get("target-msg-id")))
                         elif cmd == "CLEARCHAT":

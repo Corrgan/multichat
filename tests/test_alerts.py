@@ -19,7 +19,11 @@ def test_twitch_usernotice():
     assert twitch_event({"msg-id": "subgift", "msg-param-community-gift-id": "123"}) is None
     assert twitch_event({"msg-id": "subgift", "msg-param-recipient-display-name": "Bob"}) == ("gift", 1, "Bob")
     assert twitch_event({"msg-id": "raid", "msg-param-viewerCount": "42"}) == ("raid", 42, "")
-    assert twitch_event({"msg-id": "announcement"}) is None
+    # everything else Twitch announces is shown as a notice, in Twitch's own words
+    assert twitch_event({"msg-id": "announcement"}) == ("notice", 0, "Announcement")
+    assert twitch_event({"msg-id": "viewermilestone", "system-msg": "Viewer sparked a watch streak!"}) == (
+        "notice", 0, "Viewer sparked a watch streak!")
+    assert twitch_event({"msg-id": "some-new-kind"}) == ("notice", 0, "some new kind")
 
 
 def test_kick_events():
