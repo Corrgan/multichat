@@ -22,7 +22,7 @@ NAMES = frozenset((
     "swiftrage", "notlikethis", "failfish", "vohiyo", "pjsalt", "mrdestructoid", "bday", "ripcheer",
     "shamrock", "bitboss", "streamlabs", "muxy", "holidaycheer", "goal", "anon", "charity",
 ))
-_WORD = re.compile(r"^([A-Za-z0-9]*[A-Za-z])(\d{1,7})$")
+_WORD = re.compile(r"^([A-Za-z0-9]*[A-Za-z])([0-9]{1,7})$")  # ASCII digits only: \d also matches e.g. "١"
 
 
 def cheermote(word: str) -> tuple[str, int] | None:

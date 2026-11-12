@@ -56,7 +56,7 @@ def twitch_parts(text: str, emotes: str | None) -> list[Part]:
     spans = []
     for entry in emotes.split("/"):
         eid, _, positions = entry.partition(":")
-        if not eid.replace("_", "").isalnum():  # IDs are digits or emotesv2_<hex>
+        if not (eid.isascii() and eid.replace("_", "").isalnum()):  # IDs are digits or emotesv2_<hex>; isalnum() alone accepts "²"
             continue
         for rng in positions.split(","):
             a, sep, b = rng.partition("-")

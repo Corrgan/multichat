@@ -94,7 +94,7 @@ class KickKeyRejected(Exception):
 
 
 KICK_EMOTE_URL = "https://files.kick.com/emotes/{}/fullsize"
-_KICK_EMOTE_RE = re.compile(r"\[emote:(\d+):([^\]]*)\]")
+_KICK_EMOTE_RE = re.compile(r"\[emote:([0-9]+):([^\]]*)\]")  # ASCII digits only: the id goes into a CDN URL
 
 
 def kick_parts(content: str) -> list[Part]:
