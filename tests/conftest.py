@@ -45,6 +45,37 @@ def _local_http_only(monkeypatch):
     monkeypatch.setattr(aiohttp.ClientSession, "_request", local_request)
 
 
+@pytest.fixture(scope="session", autouse=True)
+def _offline_qt_network(_session_qapplication):
+    """Emote/avatar URLs in test messages (https://e/1, www.twitch.tv …) must not reach the network:
+    Qt's image loader is not covered by the aiohttp guard. Non-local requests go to a proxy on a
+    closed local port and fail at once, as if offline (no DNS lookup); the tests' own servers stay direct."""
+    from PyQt6.QtNetwork import QNetworkProxy, QNetworkProxyFactory
+
+    class OfflineProxies(QNetworkProxyFactory):
+        def queryProxy(self, query):
+            if query.peerHostName() in ("127.0.0.1", "localhost", "::1"):
+                return [QNetworkProxy(QNetworkProxy.ProxyType.NoProxy)]
+            return [QNetworkProxy(QNetworkProxy.ProxyType.HttpProxy, "127.0.0.1", 9)]  # discard port, closed
+
+    QNetworkProxyFactory.setApplicationProxyFactory(OfflineProxies())
+    yield
+    QNetworkProxyFactory.setApplicationProxyFactory(None)
+
+
+@pytest.fixture(autouse=True)
+def _no_external_dns(monkeypatch):
+    """requests/websockets have no guard of their own – fail name lookups as if offline."""
+    import socket
+
+    getaddrinfo = socket.getaddrinfo
+    def local_getaddrinfo(host, *args, **kwargs):
+        if host not in (None, "", "127.0.0.1", "localhost", "::1", "0.0.0.0"):
+            raise socket.gaierror(socket.EAI_NONAME, f"External DNS is disabled in tests: {host}")
+        return getaddrinfo(host, *args, **kwargs)
+    monkeypatch.setattr(socket, "getaddrinfo", local_getaddrinfo)
+
+
 @pytest.fixture(autouse=True)
 def _fresh_shared_answers():
     """Kick/YouTube answers are shared for a few seconds – not between tests."""
