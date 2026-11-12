@@ -6,8 +6,10 @@ import ctypes
 import ctypes.util
 import hashlib
 import json
+import os
 from pathlib import Path
 import platform
+import stat
 import sys
 
 
@@ -112,6 +114,9 @@ def collect() -> dict:
                 paths.add(parts[5].removesuffix(" (deleted)"))
         for path in sorted(paths):
             try:
+                # Mapped device nodes (/dev/dri/* once OpenGL is loaded) block on read – only files are evidence.
+                if not stat.S_ISREG(os.stat(path).st_mode):
+                    continue
                 with open(path, "rb") as stream:
                     if stream.read(4) != b"\x7fELF":
                         continue

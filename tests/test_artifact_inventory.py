@@ -348,6 +348,31 @@ def test_component_probe_loads_video_before_measuring_xml(monkeypatch, tmp_path)
     assert xml["versions"]["libxml2"] == "2.15.4"
 
 
+def test_component_probe_skips_mapped_device_nodes(monkeypatch, tmp_path):
+    import os
+    import threading
+    from pathlib import Path
+    from multichat.core import component_probe
+    from multichat.video import player
+
+    # A FIFO blocks on open/read like a mapped /dev/dri node, which hung the probe after a GL test.
+    device = tmp_path / "renderD128"
+    os.mkfifo(device)
+    maps = tmp_path / "maps"
+    maps.write_text(f"7f0000000000-7f0000001000 rw-s 00000000 00:06 42 {device}\n")
+    real_path = Path
+    monkeypatch.setattr(component_probe, "Path", lambda p: real_path(maps if str(p) == "/proc/self/maps" else p))
+    monkeypatch.setattr(player, "load_mpv", lambda: True)
+    monkeypatch.setattr(component_probe.ctypes.util, "find_library", lambda _name: None)
+
+    result = {}
+    worker = threading.Thread(target=lambda: result.update(component_probe.collect()), daemon=True)
+    worker.start()
+    worker.join(30)
+    assert not worker.is_alive(), "component probe blocked on a mapped device node"
+    assert str(device) not in [item["path"] for item in result["loaded_files"]]
+
+
 def test_component_probe_cli_does_not_open_config_keyring_or_gui(monkeypatch, capsys):
     from multichat import app
     from multichat.core import component_probe
