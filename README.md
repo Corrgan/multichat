@@ -30,7 +30,7 @@ sha256sum -c MultiChat-x86_64.AppImage.sha256   # optional: verify the download
 ./MultiChat-x86_64.AppImage
 ```
 
-`./MultiChat-x86_64.AppImage --selftest` checks that all components (Streamlink, yt-dlp, libmpv, translations, CA certificates …) can be loaded; `--selftest-net` makes one HTTPS request, `--selftest-video FILE` decodes a video with libmpv.
+`./MultiChat-x86_64.AppImage --selftest` checks that all components (Streamlink, yt-dlp, libmpv, translations, CA certificates …) can be loaded; `--selftest-net` makes one HTTPS request, `--selftest-video FILE` decodes a video with libmpv. `--component-probe` prints offline release diagnostics as JSON (versions, loaded libraries and files with checksums) without touching settings, logins or the GUI.
 
 ### Verifying a download
 
@@ -113,7 +113,7 @@ The script requires Python 3.12, a C compiler, make, pkg-config, binutils and zl
 
 ```
 multichat/            the application (Python package)
-  app.py              start-up, --selftest, --yt-dlp
+  app.py              start-up, --selftest, --yt-dlp, --component-probe
   core/               configuration, paths, logging, translations
   chat/               chat readers per platform, 7TV/BTTV/FFZ emotes
   accounts/           logins (OAuth), sending and moderating per platform

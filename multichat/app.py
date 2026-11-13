@@ -184,7 +184,11 @@ def main() -> None:
     i18n.install_qt_translator(app)
     install_qt_handler()
     log_system_info()
-    log.info("TLS certificates: %s", ensure_ca_certificates())
+    ca_source = ensure_ca_certificates()
+    if ca_source == "none found":
+        log.warning("TLS certificates: none found – HTTPS will fail; set SSL_CERT_FILE to a CA bundle")
+    else:
+        log.info("TLS certificates: %s", ca_source)
     log.info("OpenSSL: %s", openssl_info())
     for warning in config.get("_warnings", []):
         log.warning("Settings: %s", warning)
