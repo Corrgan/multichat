@@ -7,6 +7,7 @@ APP_ID = "io.github.Corrgan.MultiChat"  # Wayland/Flatpak app ID – must match 
 REPO_SLUG = "Corrgan/multichat"
 REPO_URL = f"https://github.com/{REPO_SLUG}"
 LOGIN_DOCS = f"{REPO_URL}/blob/main/docs/LOGIN.md"
+AUTHOR_URL = "https://linktr.ee/corrgan"  # the author's socials, linked in About
 
 PLATFORMS = ("twitch", "kick", "youtube")
 NAMES = {"twitch": "Twitch", "kick": "Kick", "youtube": "YouTube"}
