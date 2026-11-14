@@ -90,7 +90,7 @@
   "Login timed out": "Se agotó el tiempo de inicio de sesión",
   "Looking for stream …": "Buscando stream …",
   "Low video delay": "Poco retraso de vídeo",
-  "Made by Corrgan – written together with Claude by Anthropic.": "Hecho por Corrgan – escrito junto con Claude de Anthropic.",
+  "Made by {author} – written together with Claude by Anthropic.": "Hecho por {author} – escrito junto con Claude de Anthropic.",
   "Mention (@)": "Mencionar (@)",
   "Message deleted": "Mensaje eliminado",
   "Messages seen": "Mensajes vistos",

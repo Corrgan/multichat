@@ -90,7 +90,7 @@
   "Login timed out": "ログインがタイムアウトしました",
   "Looking for stream …": "ストリームを検索中 …",
   "Low video delay": "映像の遅延を小さくする",
-  "Made by Corrgan – written together with Claude by Anthropic.": "作者 Corrgan – Anthropic の Claude と一緒に開発しました。",
+  "Made by {author} – written together with Claude by Anthropic.": "作者 {author} – Anthropic の Claude と一緒に開発しました。",
   "Mention (@)": "メンション (@)",
   "Message deleted": "メッセージを削除しました",
   "Messages seen": "表示されたメッセージ",

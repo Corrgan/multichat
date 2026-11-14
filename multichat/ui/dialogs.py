@@ -14,7 +14,7 @@ from PyQt6.QtWidgets import (
 
 from .. import __version__ as APP_VERSION
 from ..accounts.oauth import REDIRECT_URI
-from ..core.constants import LOGIN_DOCS, NAMES, PLATFORMS, REPO_URL
+from ..core.constants import AUTHOR_URL, LOGIN_DOCS, NAMES, PLATFORMS, REPO_URL
 from ..core.i18n import _
 from ..core.paths import app_icon_path
 
@@ -148,7 +148,8 @@ class AboutDialog(QDialog):
         repo_text = REPO_URL.removeprefix("https://")
         paragraphs = [
             f"<a href='{REPO_URL}'>{repo_text}</a>",
-            _("Made by Corrgan – written together with Claude by Anthropic."),
+            _("Made by {author} – written together with Claude by Anthropic.").format(
+                author=f"<a href='{AUTHOR_URL}'>Corrgan</a>"),
             _("Free software under the {license}.").format(license=license_link) + "<br>"
             + _("Uses third-party libraries under their own licenses – see {notices}.").format(notices=notices_link),
             _("Not affiliated with Twitch, Kick, YouTube/Google, 7TV, BetterTTV or FrankerFaceZ."),

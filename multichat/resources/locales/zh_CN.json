@@ -90,7 +90,7 @@
   "Login timed out": "登录超时",
   "Looking for stream …": "正在查找直播流 …",
   "Low video delay": "低视频延迟",
-  "Made by Corrgan – written together with Claude by Anthropic.": "由 Corrgan 制作——与 Anthropic 的 Claude 一起编写。",
+  "Made by {author} – written together with Claude by Anthropic.": "由 {author} 制作——与 Anthropic 的 Claude 一起编写。",
   "Mention (@)": "提及 (@)",
   "Message deleted": "消息已删除",
   "Messages seen": "已见消息",
