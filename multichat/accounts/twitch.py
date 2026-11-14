@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import logging
+import time
 
 from ..chat.models import ChatMessage, twitch_channel
 from ..core.i18n import _
@@ -12,6 +13,8 @@ from .oauth import Account, ApiError
 log = logging.getLogger("multichat.accounts")
 
 MAX_EMOTES = 5000  # emote suggestions per channel
+CHATTERS_TTL = 60  # seconds a channel's chatter list is reused for routing "@" mentions
+MAX_CHATTER_PAGES = 20  # 1000 per page
 
 
 class TwitchAccount(Account):
@@ -21,10 +24,11 @@ class TwitchAccount(Account):
     token_url = "https://id.twitch.tv/oauth2/token"
     # moderator:read:followers → followage on the user card,
     # user:read:moderated_channels → where you are a moderator,
-    # user:read:emotes → emote suggestions with all emotes you can use (older logins lack these)
+    # user:read:emotes → emote suggestions with all emotes you can use,
+    # moderator:read:chatters → who is in the chat, to send "@" mentions to the right platform (older logins lack these)
     scopes = (
         "user:write:chat moderator:manage:banned_users moderator:manage:chat_messages "
-        "moderator:read:followers user:read:moderated_channels user:read:emotes"
+        "moderator:read:followers user:read:moderated_channels user:read:emotes moderator:read:chatters"
     )
     pkce = False
     API = "https://api.twitch.tv/helix"
@@ -118,6 +122,36 @@ class TwitchAccount(Account):
                 raise
             self._cache[key] = channels
         return login in self._cache[key]
+
+    async def chatters(self, channel: str) -> set[str] | None:
+        """Logins of the people connected to this channel's chat right now (also those who only
+        watch), reused for a minute. None where Twitch doesn't tell: not a moderator there, or a
+        login from before the moderator:read:chatters scope."""
+        login = twitch_channel(channel)
+        key = ("chatters", login)
+        hit = self._cache.get(key)
+        if hit and time.monotonic() - hit[0] < CHATTERS_TTL:
+            return hit[1]
+        bid = await self.broadcaster_id(channel)
+        names, cursor = set(), None
+        try:
+            for _page in range(MAX_CHATTER_PAGES):
+                params = {"broadcaster_id": bid, "moderator_id": self.user_id, "first": "1000",
+                          **({"after": cursor} if cursor else {})}
+                res = await self.request("GET", f"{self.API}/chat/chatters", params=params)
+                names |= {str(c.get("user_login", "")).lower() for c in res.get("data") or [] if isinstance(c, dict)}
+                cursor = (res.get("pagination") or {}).get("cursor")
+                if not cursor:
+                    break
+        except ApiError as e:
+            if e.status in (401, 403):
+                log.info("Twitch: can't list the chatters of %s (%s)", login, e)
+                self._cache[key] = (time.monotonic(), None)  # don't ask (and refresh the token) on every message
+                return None
+            raise
+        names.discard("")
+        self._cache[key] = (time.monotonic(), names)
+        return names
 
     async def usable_emotes(self, channel: str) -> tuple[list[tuple[str, str]], bool]:
         """([(code, image URL)], complete) – the Twitch emotes you can use in this channel:

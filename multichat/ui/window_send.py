@@ -4,6 +4,8 @@
 typing, and sending. Mixed into MainWindow."""
 from __future__ import annotations
 
+import re
+
 from ..accounts import ApiError
 from ..chat import ChatMessage
 from ..chat.models import mention_name, user_key
@@ -12,6 +14,23 @@ from ..core.i18n import _
 
 
 MAX_MENTION_NAMES = 500  # chatters offered after "@"
+MENTION = re.compile(r"(?<![\w@])@(\w(?:[\w.\-]*\w)?)")  # an "@name" as typed (names with spaces: see route_mentions)
+
+
+def route_mentions(text: str, seen: dict[str, set[str]]) -> tuple[set[str], set[str]]:
+    """Where the "@" mentions in text should go: (send targets of the names found in seen,
+    lower-case mentions found nowhere). seen maps a lower-case name to the targets (source keys)
+    that person wrote in. Known names are matched as a whole, so "@Shown Name" (YouTube) works."""
+    low = text.lower()
+    targets: set[str] = set()
+    covered: list[tuple[int, int]] = []
+    for name in sorted((n for n in seen if f"@{n}" in low), key=len, reverse=True):  # "@anna lena" before "@anna"
+        for m in re.finditer(rf"@{re.escape(name)}(?!\w)", low):
+            if not any(a <= m.start() < b for a, b in covered):
+                covered.append((m.start(), m.end()))
+                targets |= seen[name]
+    unknown = {m.group(1) for m in MENTION.finditer(low) if not any(a <= m.start() < b for a, b in covered)}
+    return targets, unknown
 
 
 class SendMixin:
@@ -127,17 +146,63 @@ class SendMixin:
 
             self.run(self.accounts["twitch"].usable_emotes(channel), then=done, on_error=failed, quiet=True)
 
+    def _mention_seen(self, keys: set[str]) -> dict[str, set[str]]:
+        """Lower-case names (shown and account name) → the send targets among keys where that
+        person wrote – from the chat history, like the "@" suggestions."""
+        seen: dict[str, set[str]] = {}
+        for m in self.messages.values():
+            if m.source not in keys or m.user == "?" or (m.event == "notice" and not m.parts and not m.user_id):
+                continue
+            for name in {m.user.lower(), mention_name(m).lower()}:
+                seen.setdefault(name, set()).add(m.source)
+        return seen
+
     def send(self) -> None:
         text = self.input.text().strip()
         if not text:
             return
         target = self.target.currentData()
         options = [o for o in self._send_options() if target in (None, o[0])]
+        if not options:
+            return
+        self.input.clear()
+        if target is None and len(options) > 1 and "@" in text:
+            # "All in this group" with "@name": only where the mentioned people are
+            targets, unknown = route_mentions(text, self._mention_seen({o[0] for o in options}))
+            twitch = [o for o in options if o[1] == "twitch"]
+            if unknown and twitch:
+                self.run(self._twitch_mention_targets(unknown, twitch),
+                         then=lambda found: self._send_routed(text, options, targets | found[0], found[1]),
+                         on_error=lambda: self._send_routed(text, options, targets, unknown), quiet=True)
+                return
+            self._send_routed(text, options, targets, unknown)
+            return
+        self._send_all(text, options)
+
+    async def _twitch_mention_targets(self, unknown: set[str], twitch: list) -> tuple[set[str], set[str]]:
+        """Looks the mentions not in the history up in the Twitch channels' chatter lists →
+        (targets where they are, mentions still unknown)."""
+        found: set[str] = set()
+        left = set(unknown)
+        for key, _p, channel, _label in twitch:
+            chatters = await self.accounts["twitch"].chatters(channel)
+            if chatters:
+                hits = left & chatters
+                if hits:
+                    found.add(key)
+                left -= hits
+        return found, left
+
+    def _send_routed(self, text: str, options: list, targets: set[str], unknown: set[str]) -> None:
+        """Sends to the targets of the mentions – to all options if a mention is unknown
+        (better everywhere than nowhere) or no mention matched."""
+        routed = [o for o in options if o[0] in targets]
+        self._send_all(text, options if unknown or not routed else routed)
+
+    def _send_all(self, text: str, options: list) -> None:
         for _key, platform, channel, label in options:
             self.run(self.send_to(platform, channel, text),
                      label=_("Sent to {platform}").format(platform=f"{label} · {channel}"))
-        if options:
-            self.input.clear()
 
     async def send_to(self, platform: str, channel: str, text: str) -> None:
         try:
