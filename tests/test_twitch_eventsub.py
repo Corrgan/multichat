@@ -242,3 +242,8 @@ def test_no_session_without_a_usable_channel(monkeypatch):
         assert h.sockets == []
 
     run(scenario, monkeypatch, channels={"twitch:other": "other"})
+
+
+def test_default_connect_does_not_wait_for_the_closing_handshake():
+    client = es.EventSubClient(FakeAccount(), dict, lambda ev, key: None)
+    assert client.connect.keywords["close_timeout"] <= 1  # Twitch never answers it (shutdown hung)
