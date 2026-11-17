@@ -142,7 +142,8 @@ class SecretStore:
         self.files = files if files is not None else (backend if isinstance(backend, FileBackend) else None)
         self.lock = threading.Lock()
         try:
-            self.data = backend.load(key) or {}
+            data = backend.load(key)
+            self.data = data if isinstance(data, dict) else {}  # damaged store: valid JSON, but no dict
         except Exception as e:  # noqa: BLE001
             log.warning("Secrets: reading %s from %s failed: %s", key, backend.name, e)
             self.data = {}
