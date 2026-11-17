@@ -92,3 +92,13 @@ def test_private_file_stays_private_and_never_follows_a_symlink(tmp_path):
     with pytest.raises(OSError):
         write_private(target, {"a": 2})
     assert victim.read_text() == "untouched" and json.loads(target.read_text()) == {"a": 1}
+
+
+@pytest.mark.parametrize("stored", ["[1, 2]", '"text"', "42"])
+def test_valid_json_that_is_no_dict_starts_empty(tmp_path, stored):
+    # A damaged store can still hold valid JSON – the app must start logged out, not crash on .get()
+    (tmp_path / "tokens.json").write_text(stored)
+    s = SecretStore("tokens", FileBackend(tmp_path))
+    assert s.get("twitch") == {}
+    assert s.update("twitch", access_token="x")
+    assert s.get("twitch") == {"access_token": "x"}
