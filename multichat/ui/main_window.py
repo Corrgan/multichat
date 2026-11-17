@@ -135,6 +135,7 @@ class MainWindow(GroupsMixin, ConnectionsMixin, MessagesMixin, SendMixin, QMainW
         self.apply_config()
         self.refresh_accounts()
         self._update_conn_buttons()
+        self.start_eventsub()
         self.bridge.login_url.connect(self._show_login_url)
         self.bridge.update.connect(self._show_update)
         for acc in self.accounts.values():

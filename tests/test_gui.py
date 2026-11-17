@@ -34,6 +34,11 @@ def window(app, monkeypatch):
 
     for name in ("run_twitch", "run_kick", "run_youtube"):
         monkeypatch.setattr(window_connections, name, idle)
+
+    async def no_eventsub(*_a):
+        await asyncio.sleep(3600)
+
+    monkeypatch.setattr(window_connections, "run_twitch_eventsub", no_eventsub)
     cfg = load_config()
     cfg["video"]["enabled"] = False
     cfg["extra_emotes"] = False

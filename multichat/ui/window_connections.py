@@ -7,8 +7,8 @@ from __future__ import annotations
 import asyncio
 import logging
 
-from ..chat import run_kick, run_twitch, run_youtube
-from ..chat.models import source_key
+from ..chat import run_kick, run_twitch, run_twitch_eventsub, run_youtube
+from ..chat.models import source_key, twitch_channel
 from ..core.i18n import _
 from .groups import GroupPanel
 
@@ -23,6 +23,15 @@ class ConnectionsMixin:
         fut = self.readers.pop(key, None)
         if fut:
             fut.cancel()
+
+    def start_eventsub(self) -> None:
+        """One Twitch EventSub session for the logged-in account; it picks the connected
+        channels where you are broadcaster or moderator by itself."""
+        def channels() -> dict[str, str]:
+            return {k: twitch_channel(k.split(":", 1)[1]) for k in list(self.readers) if k.startswith("twitch:")}
+
+        coro = run_twitch_eventsub(self.accounts["twitch"], channels, self._emit)
+        self._eventsub = asyncio.run_coroutine_threadsafe(coro, self.loop)  # cancelled with the loop's tasks
 
     def _emit(self, ev, key: str) -> None:
         if self._closing:

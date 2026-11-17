@@ -241,5 +241,18 @@
   "{user} subscribed": "{user} 订阅了",
   "{user} unbanned": "已解除 {user} 的封禁",
   "{user} was banned": "{user} 已被封禁",
-  "{user} was timed out for {duration}": "{user} 被禁言 {duration}"
+  "{user} was timed out for {duration}": "{user} 被禁言 {duration}",
+  "{user} followed": "{user} 关注了频道",
+  "Poll: {title} – {options}": "投票:{title} – {options}",
+  "Poll ended: {title}": "投票已结束:{title}",
+  "Poll ended: {title} – winner: {winner} ({votes} votes)": "投票已结束:{title} – 获胜:{winner}({votes} 票)",
+  "Prediction: {title}": "预测:{title}",
+  "Prediction: {title} – {options}": "预测:{title} – {options}",
+  "Prediction locked: {title}": "预测已锁定:{title}",
+  "Prediction ended: {title}": "预测已结束:{title}",
+  "Prediction ended: {title} – winner: {winner}": "预测已结束:{title} – 获胜:{winner}",
+  "Prediction canceled: {title}": "预测已取消:{title}",
+  "Hype Train started (level {level})": "热度列车已开始(等级 {level})",
+  "Hype Train ended (level {level})": "热度列车已结束(等级 {level})",
+  "Ad break ({n} s)": "广告时段({n} 秒)"
 }

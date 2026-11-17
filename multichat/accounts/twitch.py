@@ -25,10 +25,12 @@ class TwitchAccount(Account):
     # moderator:read:followers → followage on the user card,
     # user:read:moderated_channels → where you are a moderator,
     # user:read:emotes → emote suggestions with all emotes you can use,
-    # moderator:read:chatters → who is in the chat, to send "@" mentions to the right platform (older logins lack these)
+    # moderator:read:chatters → who is in the chat, to send "@" mentions to the right platform,
+    # channel:read:redemptions/polls/predictions/hype_train/ads → EventSub lines in your own channel (older logins lack these)
     scopes = (
         "user:write:chat moderator:manage:banned_users moderator:manage:chat_messages "
-        "moderator:read:followers user:read:moderated_channels user:read:emotes moderator:read:chatters"
+        "moderator:read:followers user:read:moderated_channels user:read:emotes moderator:read:chatters "
+        "channel:read:redemptions channel:read:polls channel:read:predictions channel:read:hype_train channel:read:ads"
     )
     pkce = False
     API = "https://api.twitch.tv/helix"

@@ -241,5 +241,18 @@
   "{user} subscribed": "{user} hat abonniert",
   "{user} unbanned": "{user} entbannt",
   "{user} was banned": "{user} wurde gesperrt",
-  "{user} was timed out for {duration}": "{user} wurde für {duration} stummgeschaltet"
+  "{user} was timed out for {duration}": "{user} wurde für {duration} stummgeschaltet",
+  "{user} followed": "{user} folgt jetzt",
+  "Poll: {title} – {options}": "Umfrage: {title} – {options}",
+  "Poll ended: {title}": "Umfrage beendet: {title}",
+  "Poll ended: {title} – winner: {winner} ({votes} votes)": "Umfrage beendet: {title} – Gewinner: {winner} ({votes} Stimmen)",
+  "Prediction: {title}": "Vorhersage: {title}",
+  "Prediction: {title} – {options}": "Vorhersage: {title} – {options}",
+  "Prediction locked: {title}": "Vorhersage gesperrt: {title}",
+  "Prediction ended: {title}": "Vorhersage beendet: {title}",
+  "Prediction ended: {title} – winner: {winner}": "Vorhersage beendet: {title} – Gewinner: {winner}",
+  "Prediction canceled: {title}": "Vorhersage abgebrochen: {title}",
+  "Hype Train started (level {level})": "Hype Train gestartet (Level {level})",
+  "Hype Train ended (level {level})": "Hype Train beendet (Level {level})",
+  "Ad break ({n} s)": "Werbepause ({n} s)"
 }
