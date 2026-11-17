@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import collections
 import contextlib
+import functools
 import json
 import logging
 import time
@@ -30,6 +31,9 @@ KEEPALIVE_BUFFER = 5.0  # seconds on top of keepalive_timeout_seconds before the
 WELCOME_TIMEOUT = 10.0
 DEFAULT_KEEPALIVE = 10
 SEEN_IDS = 500  # message IDs remembered to drop the duplicates Twitch may deliver
+# Twitch's EventSub servers never answer the closing handshake: waiting for it (websockets'
+# default: 10 s) held up the window's shutdown, which allows only 3 s for all connections.
+CLOSE_TIMEOUT = 0.5
 
 
 class EventSubClient:
@@ -40,7 +44,7 @@ class EventSubClient:
         self.account = account
         self.channels = channels
         self.emit = emit
-        self.connect = connect or websockets.connect
+        self.connect = connect or functools.partial(websockets.connect, close_timeout=CLOSE_TIMEOUT)
         self.seen: collections.deque = collections.deque(maxlen=SEEN_IDS)
         self.warned: set[tuple[str, str]] = set()  # (login, type) whose missing scope was logged already
 
