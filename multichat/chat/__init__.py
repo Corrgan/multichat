@@ -10,6 +10,7 @@ from .emotes import EmoteStore
 from .kick import run_kick
 from .models import ChatMessage, Deletion
 from .twitch import run_twitch
+from .twitch_eventsub import run_twitch_eventsub
 from .youtube import run_youtube
 
-__all__ = ["ChatMessage", "Deletion", "EmoteStore", "run_kick", "run_twitch", "run_youtube"]
+__all__ = ["ChatMessage", "Deletion", "EmoteStore", "run_kick", "run_twitch", "run_twitch_eventsub", "run_youtube"]

@@ -241,5 +241,18 @@
   "{user} subscribed": "{user}がサブスクしました",
   "{user} unbanned": "{user}のBANを解除しました",
   "{user} was banned": "{user} が BAN されました",
-  "{user} was timed out for {duration}": "{user} が {duration} タイムアウトされました"
+  "{user} was timed out for {duration}": "{user} が {duration} タイムアウトされました",
+  "{user} followed": "{user} がフォローしました",
+  "Poll: {title} – {options}": "投票: {title} – {options}",
+  "Poll ended: {title}": "投票終了: {title}",
+  "Poll ended: {title} – winner: {winner} ({votes} votes)": "投票終了: {title} – 勝者: {winner} ({votes} 票)",
+  "Prediction: {title}": "予想: {title}",
+  "Prediction: {title} – {options}": "予想: {title} – {options}",
+  "Prediction locked: {title}": "予想が締め切られました: {title}",
+  "Prediction ended: {title}": "予想終了: {title}",
+  "Prediction ended: {title} – winner: {winner}": "予想終了: {title} – 的中: {winner}",
+  "Prediction canceled: {title}": "予想がキャンセルされました: {title}",
+  "Hype Train started (level {level})": "ハイプトレイン開始 (レベル {level})",
+  "Hype Train ended (level {level})": "ハイプトレイン終了 (レベル {level})",
+  "Ad break ({n} s)": "広告休憩 ({n} 秒)"
 }
