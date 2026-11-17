@@ -50,8 +50,7 @@ class EventSubClient:
         while True:
             try:
                 if await self._eligible():
-                    backoff.connected()
-                    await self._session(url)
+                    await self._session(url, backoff)
                 else:
                     await asyncio.sleep(POLL)
             except asyncio.CancelledError:
@@ -76,7 +75,7 @@ class EventSubClient:
                 log.info("Twitch EventSub: skipping %s (%s)", login, e)
         return out
 
-    async def _session(self, url: str) -> None:
+    async def _session(self, url: str, backoff: Backoff) -> None:
         """One EventSub session until it ends (returns: logged out or no channel left;
         raises: the connection failed or went silent → run() reconnects)."""
         acc = self.account
@@ -84,9 +83,16 @@ class EventSubClient:
         ws = await self.connect(url)
         try:
             session = await self._welcome(ws)
+            backoff.connected()  # only now: a server that refuses us keeps the delay growing
             subscribed: dict[str, set[str]] = {}
             last, due = time.monotonic(), 0.0
             while True:
+                if time.monotonic() >= due:  # first round right after the welcome: Twitch wants the subscriptions within 10 s
+                    eligible = await self._eligible()
+                    if not eligible:
+                        return
+                    await self._subscribe(session["id"], eligible, subscribed)
+                    due = time.monotonic() + POLL
                 keepalive = _num(session.get("keepalive_timeout_seconds")) or DEFAULT_KEEPALIVE
                 try:
                     raw = await asyncio.wait_for(ws.recv(), POLL)
@@ -100,12 +106,6 @@ class EventSubClient:
                     raise ConnectionError("no keepalive from Twitch EventSub – reconnecting")
                 if not acc.logged_in or acc.session_gen != generation:
                     return
-                if now >= due:
-                    eligible = await self._eligible()
-                    if not eligible:
-                        return
-                    await self._subscribe(session["id"], eligible, subscribed)
-                    due = time.monotonic() + POLL
         finally:
             await _close(ws)
 
