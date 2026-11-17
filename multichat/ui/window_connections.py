@@ -26,11 +26,12 @@ class ConnectionsMixin:
 
     def start_eventsub(self) -> None:
         """One Twitch EventSub session for the logged-in account; it picks the connected
-        channels where you are broadcaster or moderator by itself."""
+        channels where you are broadcaster or moderator by itself. Alongside, the website's
+        event feed brings polls, predictions and hype trains of all other Twitch channels."""
         def channels() -> dict[str, str]:
             return {k: twitch_channel(k.split(":", 1)[1]) for k in list(self.readers) if k.startswith("twitch:")}
 
-        coro = run_twitch_eventsub(self.accounts["twitch"], channels, self._emit)
+        coro = run_twitch_eventsub(self.accounts["twitch"], channels, self._emit, lambda: self.session)
         self._eventsub = asyncio.run_coroutine_threadsafe(coro, self.loop)  # cancelled with the loop's tasks
 
     def _emit(self, ev, key: str) -> None:

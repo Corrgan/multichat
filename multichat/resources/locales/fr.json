@@ -254,5 +254,7 @@
   "Prediction canceled: {title}": "Prédiction annulée : {title}",
   "Hype Train started (level {level})": "Hype Train démarré (niveau {level})",
   "Hype Train ended (level {level})": "Hype Train terminé (niveau {level})",
-  "Ad break ({n} s)": "Pause publicitaire ({n} s)"
+  "Ad break ({n} s)": "Pause publicitaire ({n} s)",
+  "Hype Train ended": "Hype Train terminé",
+  "Hype Train level {level}": "Hype Train niveau {level}"
 }

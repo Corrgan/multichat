@@ -254,5 +254,7 @@
   "Prediction canceled: {title}": "预测已取消:{title}",
   "Hype Train started (level {level})": "热度列车已开始(等级 {level})",
   "Hype Train ended (level {level})": "热度列车已结束(等级 {level})",
-  "Ad break ({n} s)": "广告时段({n} 秒)"
+  "Ad break ({n} s)": "广告时段({n} 秒)",
+  "Hype Train ended": "热度列车已结束",
+  "Hype Train level {level}": "热度列车等级 {level}"
 }
