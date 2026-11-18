@@ -18,8 +18,9 @@ concurrency:
 jobs:
   tests:
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 30
     env:
+      APT_ARCHIVES: /home/runner/apt-archives
       MULTICHAT_REQUIRE_MPV: "1"
       MULTICHAT_REQUIRE_SECURE_LXML: "1"
     steps:
@@ -31,10 +32,21 @@ jobs:
         with:
           python-version: "3.12"
 
+      # Downloaded .deb files are cached (see .github/ci/apt-install.sh); the key changes
+      # with the runner image and with the package lists, so updates are picked up
+      - name: Key for the apt package cache
+        id: apt
+        run: echo "key=apt-${GITHUB_JOB}-${ImageOS:-x}-${ImageVersion:-x}-$(cat .github/workflows/tests.yml .github/ci/apt-install.sh | sha256sum | cut -c1-16)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
+        with:
+          path: ~/apt-archives/*.deb
+          key: ${{ steps.apt.outputs.key }}
+          restore-keys: apt-${{ github.job }}-
+
       - name: System libraries (Qt, libmpv for the video test)
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libmpv2 libegl1 libgl1 libxkbcommon0 \
+          .github/ci/apt-install.sh libmpv2 libegl1 libgl1 libxkbcommon0 \
             libfontconfig1 libdbus-1-3 xvfb xauth libxcb-cursor0 libxcb-icccm4 libxcb-image0 \
             libxcb-keysyms1 libxcb-randr0 libxcb-render-util0 libxcb-shape0 libxcb-xinerama0 \
             libxcb-xkb1 libxkbcommon-x11-0 libx11-xcb1
@@ -44,7 +56,7 @@ jobs:
 
       - name: Corrected native XML libraries for the release environment
         run: |
-          sudo apt-get install -y --no-install-recommends gcc make pkg-config binutils zlib1g-dev
+          .github/ci/apt-install.sh gcc make pkg-config binutils zlib1g-dev
           python packaging/build-secure-lxml.py --work build-secure-lxml --output build-secure-lxml/wheels --install
 
       - name: Tests
@@ -53,12 +65,13 @@ jobs:
   source-compatibility:
     name: Source compatibility on Python ${{ matrix.python }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
         python: ["3.10", "3.14"]
     env:
+      APT_ARCHIVES: /home/runner/apt-archives
       MULTICHAT_REQUIRE_MPV: "1"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
@@ -67,10 +80,19 @@ jobs:
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
         with:
           python-version: ${{ matrix.python }}
+      - name: Key for the apt package cache
+        id: apt
+        run: echo "key=apt-${GITHUB_JOB}-${ImageOS:-x}-${ImageVersion:-x}-$(cat .github/workflows/tests.yml .github/ci/apt-install.sh | sha256sum | cut -c1-16)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
+        with:
+          path: ~/apt-archives/*.deb
+          key: ${{ steps.apt.outputs.key }}
+          restore-keys: apt-${{ github.job }}-
+
       - name: Native test prerequisites
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libmpv2 libegl1 libgl1 libxkbcommon0 \
+          .github/ci/apt-install.sh libmpv2 libegl1 libgl1 libxkbcommon0 \
             libfontconfig1 libdbus-1-3 xvfb xauth libxcb-cursor0 libxcb-icccm4 libxcb-image0 \
             libxcb-keysyms1 libxcb-randr0 libxcb-render-util0 libxcb-shape0 libxcb-xinerama0 \
             libxcb-xkb1 libxkbcommon-x11-0 libx11-xcb1
