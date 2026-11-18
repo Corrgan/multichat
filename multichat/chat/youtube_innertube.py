@@ -169,8 +169,9 @@ def parse_actions(actions: list, video_id: str) -> list:
                 user=_text(r.get("authorName")) or "?",
                 text="".join(p[1] if p[0] == "text" else p[2] for p in parts),
                 parts=parts,
-                msg_id=r["id"],
-                user_id=r.get("authorExternalChannelId"),
+                # only strings: anything else would reach the overlay as invalid JSON (e.g. "msg_id": Infinity)
+                msg_id=r["id"] if isinstance(r["id"], str) else None,
+                user_id=r.get("authorExternalChannelId") if isinstance(r.get("authorExternalChannelId"), str) else None,
                 badges=_badges(r),
                 event=event, event_value=value, event_text=etext,
             ))
