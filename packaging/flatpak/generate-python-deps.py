@@ -26,6 +26,7 @@ OUT = HERE / "python-deps.json"
 SKIP = {
     "pyqt6", "pyqt6-qt6", "pyqt6-sip", "pyinstaller", "pyinstaller-hooks-contrib", "altgraph",
     "macholib", "pefile", "pytest", "iniconfig", "pluggy", "pygments", "setuptools", "packaging",
+    "hypothesis",
 }
 # The KDE runtime's Python version is not fixed here: offer wheels for several.
 PYTHONS = ("312", "313", "314")

@@ -1,3 +1,4 @@
 # Build/CI tools pinned together with the app dependencies (see requirements-lock.txt)
 pyinstaller
 pytest
+hypothesis
