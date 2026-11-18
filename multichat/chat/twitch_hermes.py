@@ -37,6 +37,7 @@ GQL_URL = "https://gql.twitch.tv/gql"
 GQL_CHANNEL_ID = "query($login: String!) { user(login: $login) { id } }"
 GQL_CHANNEL_NAME = "query($id: ID!) { user(id: $id) { login displayName } }"
 NAMES_PER_ROUND = 5  # shared chat channel names looked up per POLL
+MAX_UNNAMED = 500  # failed name lookups remembered
 POLL = 5.0  # seconds between looks at the connected channels
 KEEPALIVE_BUFFER = 5.0  # seconds on top of the announced keepalive before the connection counts as dead
 WELCOME_TIMEOUT = 10.0
@@ -186,11 +187,15 @@ class HermesClient:
         """Shared chat: the names of the other channels of a session, for "Shared chat:
         <channel>" (twitch_events.shared_from asks for them). A few per round; one whose
         lookup fails is left without a name."""
-        for room_id in [r for r in WANTED if r not in self.unnamed][:NAMES_PER_ROUND]:
+        for room_id in [r for r in WANTED if r in self.unnamed]:
+            del WANTED[room_id]  # asked again by a later line: still no name, and it must not fill WANTED up
+        for room_id in list(WANTED)[:NAMES_PER_ROUND]:
             WANTED.pop(room_id, None)
             try:
                 remember_room(room_id, await self.lookup_name(room_id))
             except Exception as e:  # noqa: BLE001 – network, HTTP or unexpected answer
+                if len(self.unnamed) >= MAX_UNNAMED:
+                    self.unnamed.clear()  # a later round may ask once more
                 self.unnamed.add(room_id)
                 log.info("Twitch Hermes: no channel name for %s (%s)", room_id, e)
 

@@ -53,7 +53,9 @@ class ChatMessage:
         self.user = _CONTROL_RE.sub("", _SPOOF_RE.sub("", str(self.user)))[:MAX_USER].strip() or "?"
         self.login = _LOGIN_RE.sub("", str(self.login or ""))[:MAX_USER]
         self.text = _clean_text(self.text)[:MAX_TEXT]
-        self.event_text = _clean_text(self.event_text)[:MAX_EVENT_TEXT]
+        # a one-liner that may quote other people's text (replies, pins, clip titles): no direction
+        # overrides, they would also turn round the message shown below it
+        self.event_text = _SPOOF_RE.sub(" ", _clean_text(self.event_text))[:MAX_EVENT_TEXT]
         if self.parts:
             self.parts = _clean_parts(self.parts)
         if not self.parts and (self.text or not self.event):  # an event may come without a message

@@ -250,3 +250,13 @@ def test_replies_name_the_message_they_answer(monkeypatch):
     head = alerts.headline(got[0])
     assert head.startswith("Reply to Alice: what about xxx") and head.endswith("…") and len(head) < 110
     assert got[0].text == "@Alice yes"
+
+
+def test_quoted_text_cannot_turn_round_the_message_below(monkeypatch):
+    """A reply quotes someone else's message in the line above the reply: a direction override
+    in it would also reverse the replier's name and text in the chat view."""
+    from multichat.chat import alerts
+
+    got = _read("@reply-parent-display-name=Alice;reply-parent-msg-body=hi‮evil;display-name=Bob;id=r2;"
+                "room-id=1;user-id=8 :bob!bob@bob.tmi.twitch.tv PRIVMSG #examplechan :ok", monkeypatch)
+    assert "‮" not in alerts.headline(got[0]) and alerts.headline(got[0]) == "Reply to Alice: hi evil"

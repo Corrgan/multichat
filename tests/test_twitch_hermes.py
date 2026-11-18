@@ -313,5 +313,6 @@ def test_names_of_shared_chat_channels_are_looked_up_once():
     twitch_events.shared_from({"source-room-id": "88", "room-id": "1"})
     asyncio.run(client._name_rooms())
     assert sorted(asked) == ["77", "88"]  # a failed one isn't asked again
+    assert "88" not in twitch_events.WANTED  # nor does it stay in the queue
     twitch_events.ROOMS.clear()
     twitch_events.WANTED.clear()
