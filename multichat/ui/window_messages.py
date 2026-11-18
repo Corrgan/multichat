@@ -93,6 +93,9 @@ class MessagesMixin:
             if isinstance(msg, Deletion):
                 self._apply_deletion(msg)
                 continue
+            self.note_shared(msg)
+            if msg.shared_id and not self.panels_for(msg):
+                continue  # a copy of a shared chat message every group of it shows already
             batch.append(msg)
             self.messages[msg.uid] = msg
             if self.overlay.running:

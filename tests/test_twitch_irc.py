@@ -214,3 +214,49 @@ def test_youtube_shows_its_other_chat_lines_too():
         ("YouTube", "notice", "A new kind of line", ""),
         ("@chatter", "", "", "hello"),
     ]
+
+
+def test_shared_chat_lines_of_other_channels_are_marked_and_no_alert(monkeypatch):
+    """Shared chat: what is written in another channel of the session arrives here too
+    (source-room-id ≠ room-id) – marked with that channel, its bits and subs no alert of this one."""
+    from multichat.chat import alerts, twitch_events
+
+    monkeypatch.setattr(twitch_events, "ROOMS", type(twitch_events.ROOMS)())
+    twitch_events.remember_room("2", "PartnerChan")
+    shared = "source-room-id=2;source-id=s1;room-id=1"
+    got = _read(f"@{shared};bits=100;display-name=Viewer;id=b1;user-id=6 "
+                ":viewer!viewer@viewer.tmi.twitch.tv PRIVMSG #examplechan :Cheer100 hi", monkeypatch)
+    assert got[0].event == "notice" and alerts.headline(got[0]) == "Shared chat: PartnerChan"
+    assert got[0].shared_id == "s1"
+    got = _read("@source-room-id=9;source-id=s2;room-id=1;display-name=V;id=b2;user-id=6;first-msg=1 "
+                ":v!v@v.tmi.twitch.tv PRIVMSG #examplechan :hi", monkeypatch)
+    assert alerts.headline(got[0]) == "Shared chat · First message"  # channel not known (yet)
+    own = _read("@source-room-id=1;source-id=b3;room-id=1;display-name=V;id=b3;user-id=6;bits=5 "
+                ":v!v@v.tmi.twitch.tv PRIVMSG #examplechan :Cheer5", monkeypatch)
+    assert own[0].event == "bits" and own[0].shared_id == "b3"  # this channel's own line of the session
+    sub = _read(r"@msg-id=sharedchatnotice;source-msg-id=resub;source-room-id=2;source-id=s4;room-id=1;"
+                r"display-name=Fan;login=fan;id=n1;user-id=7;msg-param-cumulative-months=5;"
+                r"system-msg=Fan\ssubscribed\sfor\s5\smonths! :tmi.twitch.tv USERNOTICE #examplechan", monkeypatch)
+    assert sub[0].event == "notice" and sub[0].event_value == 0
+    assert alerts.headline(sub[0]) == "Shared chat: PartnerChan · Fan subscribed for 5 months!"
+
+
+def test_replies_name_the_message_they_answer(monkeypatch):
+    from multichat.chat import alerts
+
+    got = _read(r"@reply-parent-display-name=Alice;reply-parent-user-login=alice;reply-parent-msg-body=what\sabout\s"
+                + "x" * 120 + ";display-name=Bob;id=r1;room-id=1;user-id=8 "
+                ":bob!bob@bob.tmi.twitch.tv PRIVMSG #examplechan :@Alice yes", monkeypatch)
+    head = alerts.headline(got[0])
+    assert head.startswith("Reply to Alice: what about xxx") and head.endswith("…") and len(head) < 110
+    assert got[0].text == "@Alice yes"
+
+
+def test_quoted_text_cannot_turn_round_the_message_below(monkeypatch):
+    """A reply quotes someone else's message in the line above the reply: a direction override
+    in it would also reverse the replier's name and text in the chat view."""
+    from multichat.chat import alerts
+
+    got = _read("@reply-parent-display-name=Alice;reply-parent-msg-body=hi‮evil;display-name=Bob;id=r2;"
+                "room-id=1;user-id=8 :bob!bob@bob.tmi.twitch.tv PRIVMSG #examplechan :ok", monkeypatch)
+    assert "‮" not in alerts.headline(got[0]) and alerts.headline(got[0]) == "Reply to Alice: hi evil"

@@ -889,3 +889,26 @@ def test_enter_on_an_emote_suggestion_does_not_send(window, app):
 
 async def _done():
     return None
+
+
+def test_shared_chat_message_shows_once_per_group(window):
+    """Twitch shared chat: two channels of one session in a group bring every message twice
+    (same shared_id) – the group shows the first copy; a group with only one of them shows its copy."""
+    w = window
+    a = w.panels[0]
+    a.rows["twitch"].edit.setText("chan_a")
+    a.rows["kick"].edit.setText("chan_b")  # stands in for a second channel of the session
+    b = w.add_group()
+    b.rows["kick"].edit.setText("chan_b")
+
+    def msg(platform, chan, text, shared):
+        m = ChatMessage(platform, chan, "User", text, shared_id=shared)
+        m.source = f"{platform}:{chan}"
+        w.add_message(m)
+
+    msg("twitch", "chan_a", "hello", "s1")
+    msg("kick", "chan_b", "hello", "s1")
+    msg("kick", "chan_b", "plain", "")
+    w._flush_messages()
+    assert [m.text for m in w.messages.values() if a in w.panels_for(m)] == ["hello", "plain"]
+    assert [m.text for m in w.messages.values() if b in w.panels_for(m)] == ["hello", "plain"]

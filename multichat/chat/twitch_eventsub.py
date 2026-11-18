@@ -22,6 +22,7 @@ import websockets
 from ..accounts.oauth import ApiError
 from .models import Backoff, ChatMessage
 from .twitch_eventsub_events import SUBSCRIPTIONS, eventsub_text
+from .twitch_hermes import HermesClient
 
 log = logging.getLogger("multichat.chat")
 
@@ -47,6 +48,11 @@ class EventSubClient:
         self.connect = connect or functools.partial(websockets.connect, close_timeout=CLOSE_TIMEOUT)
         self.seen: collections.deque = collections.deque(maxlen=SEEN_IDS)
         self.warned: set[tuple[str, str]] = set()  # (login, type) whose missing scope was logged already
+        self.active: dict[str, set[str]] = {}  # login → types subscribed in the current session
+
+    def covers(self, login: str, sub_type: str) -> bool:
+        """Whether the current session brings this type for the channel (twitch_hermes leaves it out then)."""
+        return sub_type in self.active.get(login, ())
 
     async def run(self) -> None:
         backoff = Backoff()
@@ -88,7 +94,7 @@ class EventSubClient:
         try:
             session = await self._welcome(ws)
             backoff.connected()  # only now: a server that refuses us keeps the delay growing
-            subscribed: dict[str, set[str]] = {}
+            self.active = subscribed = {}
             last, due = time.monotonic(), 0.0
             while True:
                 if time.monotonic() >= due:  # first round right after the welcome: Twitch wants the subscriptions within 10 s
@@ -111,6 +117,7 @@ class EventSubClient:
                 if not acc.logged_in or acc.session_gen != generation:
                     return
         finally:
+            self.active = {}
             await _close(ws)
 
     async def _welcome(self, ws) -> dict:
@@ -202,6 +209,13 @@ async def _close(ws) -> None:
         await ws.close()
 
 
-async def run_twitch_eventsub(account, channels: Callable[[], dict[str, str]], emit: Callable) -> None:
-    """Runs until cancelled; follows the login and the connected channels by itself."""
-    await EventSubClient(account, channels, emit).run()
+async def run_twitch_eventsub(account, channels: Callable[[], dict[str, str]], emit: Callable,
+                              session: Callable | None = None) -> None:
+    """Runs until cancelled; follows the login and the connected channels by itself. With
+    session (→ the aiohttp session), the Twitch website's event feed runs alongside for
+    the polls, predictions and hype trains EventSub doesn't bring (other people's channels)."""
+    client = EventSubClient(account, channels, emit)
+    if session is None:
+        await client.run()
+        return
+    await asyncio.gather(client.run(), HermesClient(channels, emit, client.covers, session).run())
