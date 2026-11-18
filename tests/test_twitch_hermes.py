@@ -69,7 +69,14 @@ def test_hype_train_running_before_connecting():
 @pytest.mark.parametrize("kind", sorted(set(TOPICS.values())))
 @pytest.mark.parametrize("msg", [None, [], "x", {}, {"type": 5, "data": "x"}, {"type": "POLL_CREATE", "data": {"poll": 3}},
                                  {"type": "event-updated", "data": {"event": {"id": 7, "status": None}}},
-                                 {"type": "hype-train-progression", "data": {"id": "t", "progress": {"level": "x"}}}])
+                                 {"type": "hype-train-progression", "data": {"id": "t", "progress": {"level": "x"}}},
+                                 {"type": "raid_go_v2", "raid": "x"}, {"type": "raid_go_v2", "raid": {"id": [1]}},
+                                 {"type": "goal_achieved", "data": {"goal": []}},
+                                 {"type": "pin-message", "data": {"message": 5, "pinned_by": "x"}},
+                                 {"type": "chat_rich_embed", "data": {"title": 3, "twitch_metadata": "x"}},
+                                 {"type": "session-started",
+                                  "data": {"session": {"participants": ["x", {"channel_id": 1}]}}},
+                                 {"type": "reward-redeemed", "data": {"redemption": {"user": 1, "reward": "x"}}}])
 def test_broken_payloads_never_raise(kind, msg):
     assert isinstance(HermesEvents().text(kind, msg), str)
 
@@ -237,3 +244,74 @@ def test_no_connection_without_twitch_channels(monkeypatch):
 def test_default_connect_does_not_wait_for_the_closing_handshake():
     client = th.HermesClient(dict, lambda ev, key: None, lambda *_: False, lambda: None)
     assert client.connect.keywords["close_timeout"] <= 1
+
+
+# ---- more of the website's events (payloads as recorded 17/18 Nov 2026) ---- #
+def test_redemptions_without_text_raids_shoutouts_goals():
+    ev = HermesEvents()
+    red = {"type": "reward-redeemed", "data": {"redemption": {"user": {"login": "susi", "display_name": "Susi"},
+                                                              "reward": {"title": "Hydrate", "cost": 1000}}}}
+    assert ev.text("redemption", red) == "Susi redeemed Hydrate"
+    red["data"]["redemption"]["user_input"] = "hello"  # comes as a chat message over IRC already
+    assert ev.text("redemption", red) == ""
+    raid = {"type": "raid_go_v2", "raid": {"id": "r1", "target_display_name": "Friend", "viewer_count": 8616}}
+    assert ev.text("raid", raid) == "Raiding Friend with 8616 viewers"
+    assert ev.text("raid", raid) == ""  # Twitch sends it several times
+    assert ev.text("raid", {**raid, "type": "raid_update_v2"}) == ""
+    assert ev.text("shoutout", {"type": "create", "data": {"targetUserDisplayName": "CptMary"}}) == \
+        "Shoutout to CptMary"
+    goal = {"type": "goal_achieved", "data": {"goal": {"id": "g1", "contributionType": "SUBS", "description": "",
+                                                       "targetContributions": 6900}}}
+    assert ev.text("goal", goal) == "Goal reached: 6900 subs"
+    assert ev.text("goal", goal) == ""
+    assert ev.text("goal", {**goal, "type": "goal_updated"}) == ""
+
+
+def test_pins_clip_previews_and_shared_chat_sessions(monkeypatch):
+    from multichat.chat import twitch_events
+
+    monkeypatch.setattr(twitch_events, "ROOMS", type(twitch_events.ROOMS)())
+    ev = HermesEvents()
+    pin = {"type": "pin-message", "data": {"pinned_by": {"display_name": "Mod"},
+                                           "message": {"content": {"text": "read  the\nrules"}}}}
+    assert ev.text("pin", pin) == "Mod pinned: read the rules"
+    assert ev.text("pin", {"type": "update-message", "data": {"id": "x"}}) == ""
+    assert ev.text("pin", {"type": "unpin-message", "data": {}}) == "Pinned message removed"
+    clip = {"type": "chat_rich_embed", "data": {"title": "Charity LAN", "twitch_metadata": {
+        "clip_metadata": {"channel_display_name": "Gnu_Live"}}}}
+    assert ev.text("embed", clip) == "Clip: Charity LAN (Gnu_Live)"
+    assert ev.text("embed", {"type": "updated_room", "data": {}}) == ""
+    session = {"type": "session-started", "data": {"session": {"participants": [
+        {"channel_id": "1", "channel_login": "a", "channel_display_name": "A", "status": "ACTIVE"},
+        {"channel_id": "2", "channel_login": "b", "channel_display_name": "B", "status": "LEFT"}]}}}
+    assert ev.text("shared_chat", session) == "Shared chat started: A"
+    assert twitch_events.ROOMS == {"1": "A", "2": "B"}  # for "Shared chat: <channel>" on IRC lines
+    assert ev.text("shared_chat", {**session, "type": "session-updated"}) == ""
+    assert ev.text("shared_chat", {**session, "type": "session-ended"}) == "Shared chat ended"
+
+
+def test_names_of_shared_chat_channels_are_looked_up_once():
+    from multichat.chat import twitch_events
+
+    twitch_events.ROOMS.clear()
+    twitch_events.WANTED.clear()
+    tags = {"source-room-id": "77", "room-id": "1"}
+    assert twitch_events.shared_from(tags) == ""  # not known yet → asked for
+    assert twitch_events.shared_from({"source-room-id": "x;1", "room-id": "1"}) == ""  # not an ID: not asked
+    asked = []
+
+    async def lookup_name(room_id):
+        asked.append(room_id)
+        if room_id == "88":
+            raise ValueError("unknown channel")
+        return "Partner"
+
+    client = th.HermesClient(dict, lambda ev, key: None, lambda *_: False, lambda: None, lookup_name=lookup_name)
+    twitch_events.shared_from({"source-room-id": "88", "room-id": "1"})
+    asyncio.run(client._name_rooms())
+    assert sorted(asked) == ["77", "88"] and twitch_events.shared_from(tags) == "Partner"
+    twitch_events.shared_from({"source-room-id": "88", "room-id": "1"})
+    asyncio.run(client._name_rooms())
+    assert sorted(asked) == ["77", "88"]  # a failed one isn't asked again
+    twitch_events.ROOMS.clear()
+    twitch_events.WANTED.clear()

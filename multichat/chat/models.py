@@ -42,6 +42,9 @@ class ChatMessage:
     # account name where it differs from the shown name (Twitch: display names in other
     # scripts or with different spelling) – it is what an @mention needs, see mention_name()
     login: str = ""
+    # Twitch shared chat: the message's ID in the channel it was written in – the same one in
+    # every channel of the session, so a group with two of them shows it once
+    shared_id: str = ""
 
     def __post_init__(self) -> None:
         # Everything here comes from a platform's servers. They limit lengths themselves

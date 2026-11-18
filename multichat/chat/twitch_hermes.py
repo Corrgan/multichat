@@ -1,7 +1,8 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 Corrgan
-"""Twitch polls, predictions and hype trains for every connected channel, read the way the
-Twitch website does for a viewer who isn't logged in: its event feed "Hermes" over
+"""Twitch polls, predictions, hype trains and the other events of twitch_hermes_events.py
+for every connected channel, read the way the Twitch website does for a viewer who isn't
+logged in: its event feed "Hermes" over
 WebSocket with the website's client ID, the channel IDs from its GraphQL API. Both are
 undocumented and may change or close at any time – then these lines are just missing,
 the chat itself doesn't depend on them.
@@ -25,6 +26,7 @@ import aiohttp
 import websockets
 
 from .models import Backoff, ChatMessage
+from .twitch_events import WANTED, remember_room
 from .twitch_hermes_events import TOPICS, HermesEvents
 
 log = logging.getLogger("multichat.chat")
@@ -33,6 +35,8 @@ WEB_CLIENT_ID = "kimne78kx3ncx6brgo4mv6wki5h1ko"  # the Twitch website's own
 HERMES_URL = f"wss://hermes.twitch.tv/v1?clientId={WEB_CLIENT_ID}"
 GQL_URL = "https://gql.twitch.tv/gql"
 GQL_CHANNEL_ID = "query($login: String!) { user(login: $login) { id } }"
+GQL_CHANNEL_NAME = "query($id: ID!) { user(id: $id) { login displayName } }"
+NAMES_PER_ROUND = 5  # shared chat channel names looked up per POLL
 POLL = 5.0  # seconds between looks at the connected channels
 KEEPALIVE_BUFFER = 5.0  # seconds on top of the announced keepalive before the connection counts as dead
 WELCOME_TIMEOUT = 10.0
@@ -40,7 +44,8 @@ DEFAULT_KEEPALIVE = 15
 CLOSE_TIMEOUT = 0.5  # don't hold up the shutdown waiting for the closing handshake
 # kind → the EventSub subscription that brings it for your own channel
 EVENTSUB_TYPES = {"poll": "channel.poll.begin", "prediction": "channel.prediction.begin",
-                  "hype_train": "channel.hype_train.begin"}
+                  "hype_train": "channel.hype_train.begin",
+                  "redemption": "channel.channel_points_custom_reward_redemption.add"}
 
 
 class HermesClient:
@@ -49,13 +54,16 @@ class HermesClient:
     whether EventSub brings that already; session() → the aiohttp session for the IDs."""
 
     def __init__(self, channels: Callable[[], dict[str, str]], emit: Callable,
-                 covered: Callable[[str, str], bool], session: Callable, connect=None, lookup=None) -> None:
+                 covered: Callable[[str, str], bool], session: Callable, connect=None, lookup=None,
+                 lookup_name=None) -> None:
         self.channels = channels
         self.emit = emit
         self.covered = covered
         self.session = session
         self.connect = connect or functools.partial(websockets.connect, close_timeout=CLOSE_TIMEOUT)
         self.lookup = lookup or self._lookup
+        self.lookup_name = lookup_name or self._lookup_name
+        self.unnamed: set[str] = set()  # shared chat channel IDs whose name lookup failed (not asked again)
         self.ids: dict[str, str] = {}  # login → channel ID
         self.warned: set[str] = set()  # logins whose ID lookup failed (logged once)
 
@@ -91,6 +99,7 @@ class HermesClient:
                     if not logins:
                         return
                     await self._subscribe(ws, sorted(logins - joined), subs, joined)
+                    await self._name_rooms()
                     due = time.monotonic() + POLL
                 try:
                     raw = await asyncio.wait_for(ws.recv(), POLL)
@@ -162,7 +171,7 @@ class HermesClient:
         if not target or not isinstance(payload, dict):
             return True
         login, what = target
-        if self.covered(login, EVENTSUB_TYPES[what]):
+        if what in EVENTSUB_TYPES and self.covered(login, EVENTSUB_TYPES[what]):
             return True
         text = events.text(what, payload)
         if not text:
@@ -172,6 +181,31 @@ class HermesClient:
                 self.emit(ChatMessage(platform="twitch", channel=channel, user="Twitch", text="",
                                       event="notice", event_text=text), key)
         return True
+
+    async def _name_rooms(self) -> None:
+        """Shared chat: the names of the other channels of a session, for "Shared chat:
+        <channel>" (twitch_events.shared_from asks for them). A few per round; one whose
+        lookup fails is left without a name."""
+        for room_id in [r for r in WANTED if r not in self.unnamed][:NAMES_PER_ROUND]:
+            WANTED.pop(room_id, None)
+            try:
+                remember_room(room_id, await self.lookup_name(room_id))
+            except Exception as e:  # noqa: BLE001 – network, HTTP or unexpected answer
+                self.unnamed.add(room_id)
+                log.info("Twitch Hermes: no channel name for %s (%s)", room_id, e)
+
+    async def _lookup_name(self, room_id: str) -> str:
+        body = {"query": GQL_CHANNEL_NAME, "variables": {"id": room_id}}
+        async with self.session().post(GQL_URL, json=body, headers={"Client-Id": WEB_CLIENT_ID},
+                                       timeout=aiohttp.ClientTimeout(total=10)) as r:
+            if r.status != 200:
+                raise ValueError(f"HTTP {r.status}")
+            data = await r.json(content_type=None)
+        user = (((data or {}).get("data") or {}).get("user") or {})
+        name = user.get("displayName") or user.get("login")
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError("unknown channel")
+        return name
 
     async def _lookup(self, login: str) -> str:
         body = {"query": GQL_CHANNEL_ID, "variables": {"login": login}}

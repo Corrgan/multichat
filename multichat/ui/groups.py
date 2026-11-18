@@ -9,6 +9,8 @@ reads "chat 1 | videos 1 | chat 2 | videos 2".
 """
 from __future__ import annotations
 
+from collections import OrderedDict
+
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QCheckBox, QHBoxLayout, QLabel, QLineEdit, QPushButton, QSizePolicy, QSplitter, QStyle, QToolButton,
@@ -116,6 +118,8 @@ class GroupPanel(QWidget):
         self.index = index
         self.unread = 0
         self.mentions = 0
+        # Twitch shared chat: shared_id → uid of the copy this group shows (see panels_for)
+        self.shared_seen: OrderedDict[str, int] = OrderedDict()
 
         self.name = QLineEdit(config.get("name", ""))
         self.name.setMaxLength(40)

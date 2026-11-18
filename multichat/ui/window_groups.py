@@ -21,6 +21,7 @@ from .moderation import ActionBar
 log = logging.getLogger("multichat")
 
 MAX_MESSAGES = 1000  # chat lines per group
+MAX_SHARED_SEEN = 5000  # shared chat message IDs remembered per group (more than it shows)
 _live_icon: QIcon | None = None
 
 
@@ -314,8 +315,22 @@ class GroupsMixin:
         """Groups that show this message. Every reader sets the source; a message without one
         (only possible from code that adds messages directly) goes to the first group."""
         if msg.source:
-            return self._route.get(msg.source, [])
+            panels = self._route.get(msg.source, [])
+            if getattr(msg, "shared_id", ""):  # Twitch shared chat: one copy per group, not one per channel
+                panels = [pn for pn in panels if pn.shared_seen.get(msg.shared_id, msg.uid) == msg.uid]
+            return panels
         return [self.panels[0]]
+
+    def note_shared(self, msg) -> None:
+        """Remembers the first copy of a shared chat message in each of its groups (before panels_for)."""
+        if not msg.shared_id or not msg.source:
+            return
+        for panel in self._route.get(msg.source, []):
+            seen = panel.shared_seen
+            if msg.shared_id not in seen:
+                seen[msg.shared_id] = msg.uid
+                while len(seen) > MAX_SHARED_SEEN:
+                    seen.popitem(last=False)
 
     def toggle_low_latency(self, on: bool) -> None:
         """View → Low video delay: running streams are opened again with the new setting."""

@@ -12,7 +12,9 @@ import websockets
 from .models import Backoff, ChatMessage, Deletion, Emit, Part, Status, roles, twitch_channel, with_extra_emotes as _extra
 
 from .cheermotes import cheer_parts
-from .twitch_events import _int, message_note, moderation_notice, twitch_event  # noqa: F401 – twitch_event is imported from here elsewhere
+from .twitch_events import (  # noqa: F401 – twitch_event is imported from here elsewhere
+    _int, message_note, moderation_notice, remember_room, shared_from, shared_id, twitch_event,
+)
 
 log = logging.getLogger("multichat.chat")
 
@@ -95,6 +97,8 @@ async def run_twitch(channel: str, emit: Emit, status: Status, emotes=None) -> N
                         if not line:
                             continue
                         tags, prefix, cmd, params = parse_irc(line)
+                        if tags.get("room-id") and cmd == "ROOMSTATE":
+                            remember_room(tags["room-id"], channel)
                         if emotes and tags.get("room-id"):
                             emotes.schedule_channel("twitch", channel, tags["room-id"])
                         if cmd == "PING":
@@ -105,8 +109,9 @@ async def run_twitch(channel: str, emit: Emit, status: Status, emotes=None) -> N
                                 text = text[8:].rstrip("\x01")
                             parts = twitch_parts(text, tags.get("emotes"))
                             if tags.get("bits"):
-                                event = {"event": "bits", "event_value": _int(tags["bits"])}
                                 parts = cheer_parts(parts)
+                            if tags.get("bits") and shared_from(tags) is None:  # another channel's bits: no alert here
+                                event = {"event": "bits", "event_value": _int(tags["bits"])}
                             elif note := message_note(tags):
                                 event = {"event": "notice", "event_text": note}
                             else:
@@ -123,6 +128,7 @@ async def run_twitch(channel: str, emit: Emit, status: Status, emotes=None) -> N
                                     msg_id=tags.get("id"),
                                     user_id=tags.get("user-id"),
                                     badges=roles(b.split("/")[0] for b in (tags.get("badges") or "").split(",") if b),
+                                    shared_id=shared_id(tags),
                                     **event,
                                 )
                             )
@@ -143,6 +149,7 @@ async def run_twitch(channel: str, emit: Emit, status: Status, emotes=None) -> N
                                     user_id=tags.get("user-id"),
                                     badges=roles(b.split("/")[0] for b in (tags.get("badges") or "").split(",") if b),
                                     event=ev[0], event_value=ev[1], event_text=ev[2],
+                                    shared_id=shared_id(tags),
                                 )
                             )
                         elif cmd == "NOTICE" and params and params[-1].strip():

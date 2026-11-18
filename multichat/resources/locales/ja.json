@@ -256,5 +256,21 @@
   "Hype Train ended (level {level})": "ハイプトレイン終了 (レベル {level})",
   "Ad break ({n} s)": "広告休憩 ({n} 秒)",
   "Hype Train ended": "ハイプトレイン終了",
-  "Hype Train level {level}": "ハイプトレイン レベル {level}"
+  "Hype Train level {level}": "ハイプトレイン レベル {level}",
+  "Shared chat: {channel}": "共有チャット: {channel}",
+  "Shared chat": "共有チャット",
+  "Reply to {user}: {text}": "{user} への返信: {text}",
+  "Reply to {user}": "{user} への返信",
+  "Raiding {channel} with {n} viewers": "{n} 人の視聴者で {channel} にレイド",
+  "Goal reached: {goal}": "目標達成: {goal}",
+  "Goal reached": "目標達成",
+  "Shoutout to {channel}": "{channel} にシャウトアウト",
+  "Pinned message removed": "ピン留めメッセージを解除",
+  "{user} pinned: {text}": "{user} がピン留め: {text}",
+  "Pinned: {text}": "ピン留め: {text}",
+  "Clip: {title} ({channel})": "クリップ: {title}（{channel}）",
+  "Clip: {title}": "クリップ: {title}",
+  "Link: {title}": "リンク: {title}",
+  "Shared chat started: {channels}": "共有チャット開始: {channels}",
+  "Shared chat ended": "共有チャット終了"
 }

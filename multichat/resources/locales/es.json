@@ -256,5 +256,21 @@
   "Hype Train ended (level {level})": "Hype Train terminado (nivel {level})",
   "Ad break ({n} s)": "Pausa publicitaria ({n} s)",
   "Hype Train ended": "Hype Train terminado",
-  "Hype Train level {level}": "Hype Train nivel {level}"
+  "Hype Train level {level}": "Hype Train nivel {level}",
+  "Shared chat: {channel}": "Chat compartido: {channel}",
+  "Shared chat": "Chat compartido",
+  "Reply to {user}: {text}": "Respuesta a {user}: {text}",
+  "Reply to {user}": "Respuesta a {user}",
+  "Raiding {channel} with {n} viewers": "Raid a {channel} con {n} espectadores",
+  "Goal reached: {goal}": "Meta alcanzada: {goal}",
+  "Goal reached": "Meta alcanzada",
+  "Shoutout to {channel}": "Shoutout a {channel}",
+  "Pinned message removed": "Mensaje fijado eliminado",
+  "{user} pinned: {text}": "{user} fijó: {text}",
+  "Pinned: {text}": "Fijado: {text}",
+  "Clip: {title} ({channel})": "Clip: {title} ({channel})",
+  "Clip: {title}": "Clip: {title}",
+  "Link: {title}": "Enlace: {title}",
+  "Shared chat started: {channels}": "Chat compartido iniciado: {channels}",
+  "Shared chat ended": "Chat compartido finalizado"
 }
