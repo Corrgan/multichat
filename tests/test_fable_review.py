@@ -61,7 +61,7 @@ def test_f3_only_the_platforms_own_domain_is_taken_over(monkeypatch):
 
     jar = [C("kick.com", "session_token"), C(".kick.com", "XSRF-TOKEN"), C("web.kick.com", "a"),
            C("sidekick.com", "secret"), C(".notkick.com", "secret2"), C("youtube.com.evil", "SAPISID")]
-    monkeypatch.setattr(yt_dlp.cookies, "extract_cookies_from_browser", lambda b: jar)
+    monkeypatch.setattr(yt_dlp.cookies, "extract_cookies_from_browser", lambda b, *a: jar)
     assert sorted(web.read_browser_cookies("firefox", "kick")) == ["XSRF-TOKEN", "a", "session_token"]
     assert web.read_browser_cookies("firefox", "youtube") == {}
 

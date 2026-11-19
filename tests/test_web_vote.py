@@ -92,7 +92,7 @@ def test_take_over_keeps_only_what_a_vote_needs(monkeypatch):
                         C(".twitch.tv", "tracking", "no"), C(".kick.com", "session_token", "old", expires=1),
                         C("www.example.com", "auth-token", "no")]}
     import yt_dlp.cookies
-    monkeypatch.setattr(yt_dlp.cookies, "extract_cookies_from_browser", lambda b: jars.get(b, []))
+    monkeypatch.setattr(yt_dlp.cookies, "extract_cookies_from_browser", lambda b, *a: jars.get(b, []))
     w = webmod.WebLogins(Store(), lambda: None)
     assert w.take_over("twitch", "firefox") == "corrganx"
     assert w.cookies("twitch") == {"auth-token": "TOK", "login": "corrganx"} and w.has("twitch")
@@ -224,23 +224,52 @@ def test_the_vote_setting_survives_a_restart(tmp_path, monkeypatch):
     assert config.load_config()["web_vote"] is False  # wrong type: the default
 
 
-def test_a_missing_browser_profile_says_what_to_do(monkeypatch):
+def test_a_missing_browser_profile_says_what_to_do(monkeypatch, tmp_path):
     """In the Flatpak the sandbox hides the browser profiles: yt-dlp only says "could not find … database"."""
     import yt_dlp.cookies
 
-    def missing(browser):
+    def missing(browser, *a, **k):
         raise FileNotFoundError(f"could not find {browser} cookies database in '/home/x/.mozilla/firefox'")
 
+    monkeypatch.setenv("HOME", str(tmp_path))  # no browser folders here
     monkeypatch.setattr(yt_dlp.cookies, "extract_cookies_from_browser", missing)
     monkeypatch.setenv("FLATPAK_ID", "io.github.Corrgan.MultiChat")
     with pytest.raises(webmod.NotLoggedIn) as e:
         webmod.read_browser_cookies("firefox", "twitch")
-    assert ("flatpak override --user --filesystem=~/.mozilla/firefox:ro "
+    assert ("flatpak override --user --filesystem=~/.config/mozilla/firefox:ro --filesystem=~/.mozilla/firefox:ro "
             "--filesystem=~/.var/app/org.mozilla.firefox:ro io.github.Corrgan.MultiChat") in str(e.value)
     with pytest.raises(webmod.NotLoggedIn) as e:
-        webmod.read_browser_cookies("chrome", "twitch")  # a permission alone doesn't help there
-    assert "AppImage" in str(e.value) and "flatpak override" not in str(e.value)
+        webmod.read_browser_cookies("chrome", "twitch")
+    assert ("flatpak override --user --filesystem=~/.config/google-chrome:ro "
+            "--filesystem=~/.var/app/com.google.Chrome:ro io.github.Corrgan.MultiChat") in str(e.value)
     monkeypatch.delenv("FLATPAK_ID")
     with pytest.raises(webmod.NotLoggedIn) as e:
         webmod.read_browser_cookies("firefox", "twitch")
     assert "Firefox" in str(e.value) and "flatpak" not in str(e.value).lower()
+
+
+def test_the_browser_profile_written_last_is_used(monkeypatch, tmp_path):
+    """MultiChat finds the profiles itself: in the Flatpak yt-dlp looks under the sandbox's ~/.config only."""
+    import os
+
+    import yt_dlp.cookies
+
+    def db(rel, age):
+        f = tmp_path / rel
+        f.parent.mkdir(parents=True)
+        f.write_bytes(b"")
+        os.utime(f, (1_700_000_000 - age, 1_700_000_000 - age))
+
+    db(".mozilla/firefox/old.default-release/cookies.sqlite", 1000)
+    db(".config/mozilla/firefox/new.default-release/cookies.sqlite", 10)
+    db(".var/app/com.google.Chrome/config/google-chrome/Default/Network/Cookies", 5)
+    db(".config/google-chrome/Default/Cache/x/y/Cookies", 0)  # deeper than a profile: not looked at
+    monkeypatch.setenv("HOME", str(tmp_path))
+    assert webmod.find_profile("firefox") == str(tmp_path / ".config/mozilla/firefox")
+    assert webmod.find_profile("chrome") == str(tmp_path / ".var/app/com.google.Chrome/config/google-chrome")
+    assert webmod.find_profile("brave") is None
+    asked = []
+    monkeypatch.setattr(yt_dlp.cookies, "extract_cookies_from_browser", lambda b, *a: asked.append((b, *a)) or [])
+    webmod.read_browser_cookies("chrome", "twitch")
+    webmod.read_browser_cookies("brave", "twitch")
+    assert asked == [("chrome", str(tmp_path / ".var/app/com.google.Chrome/config/google-chrome")), ("brave",)]
