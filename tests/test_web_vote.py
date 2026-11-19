@@ -166,7 +166,8 @@ def test_twitch_vote_requests():
                      (200, [{"data": {"voteInPoll": {"error": None}}}]),
                      (200, {"data": {"makePrediction": {"error": None}}}),
                      (200, [{"errors": [{"message": "failed integrity check"}]}]),
-                     (200, {"data": {"makePrediction": {"error": {"code": "NOT_ENOUGH_POINTS"}}}})])
+                     (200, {"data": {"makePrediction": {"error": {"code": "NOT_ENOUGH_POINTS"}}}}),
+                     (200, {"data": {"makePrediction": {"error": {"code": "EVENT_MANAGER"}}}})])
     w = webmod.WebLogins(Store({"twitch": {"cookies": {"auth-token": "TOK", "unique_id": "dev1"}}}), lambda: s)
     asyncio.run(w.twitch_poll("p1", "c2"))
     _m, url, kw = s.sent[1]
@@ -183,7 +184,9 @@ def test_twitch_vote_requests():
     assert (inp["eventID"], inp["outcomeID"], inp["points"]) == ("e1", "o1", 100) and inp["transactionID"]
     with pytest.raises(ApiError, match="integrity"):
         asyncio.run(w.twitch_poll("p1", "c1"))
-    with pytest.raises(ApiError, match="NOT_ENOUGH_POINTS"):
+    with pytest.raises(ApiError, match="not enough channel points"):
+        asyncio.run(w.twitch_prediction("e1", "o1", 100))
+    with pytest.raises(ApiError, match="own channel"):  # seen in the first live test (no integrity check)
         asyncio.run(w.twitch_prediction("e1", "o1", 100))
 
 

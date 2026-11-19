@@ -304,5 +304,14 @@
   "To vote from here: Accounts → Vote in other channels (unofficial) …": "Para votar desde aquí: Cuentas → Votar en otros canales (no oficial) …",
   "bets locked": "apuestas cerradas",
   "ended": "terminada",
-  "Twitch doesn't let you bet in the predictions of your own channel": "Twitch no te deja apostar en las predicciones de tu propio canal"
+  "Twitch doesn't let you bet in the predictions of your own channel": "Twitch no te deja apostar en las predicciones de tu propio canal",
+  "you manage this prediction (your own channel) – Twitch doesn't let you bet": "gestionas esta predicción (tu propio canal): Twitch no te deja apostar",
+  "the bets are closed": "las apuestas están cerradas",
+  "not enough channel points": "no hay suficientes puntos del canal",
+  "more points than allowed on one prediction": "más puntos de los permitidos en una predicción",
+  "you already bet on another outcome": "ya apostaste por otro resultado",
+  "accept the predictions terms on the Twitch website once first": "acepta primero una vez las condiciones de predicciones en el sitio de Twitch",
+  "too many at once – try again in a moment": "demasiados a la vez: inténtalo de nuevo en un momento",
+  "not available in your region": "no disponible en tu región",
+  "not allowed in this channel": "no permitido en este canal"
 }

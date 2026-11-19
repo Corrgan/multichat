@@ -304,5 +304,14 @@
   "To vote from here: Accounts → Vote in other channels (unofficial) …": "要在此投票：账户 → 在其他频道投票（非官方） …",
   "bets locked": "已锁定下注",
   "ended": "已结束",
-  "Twitch doesn't let you bet in the predictions of your own channel": "Twitch 不允许你在自己频道的预测中下注"
+  "Twitch doesn't let you bet in the predictions of your own channel": "Twitch 不允许你在自己频道的预测中下注",
+  "you manage this prediction (your own channel) – Twitch doesn't let you bet": "你在管理这个预测（自己的频道）——Twitch 不允许你下注",
+  "the bets are closed": "下注已关闭",
+  "not enough channel points": "频道积分不足",
+  "more points than allowed on one prediction": "超过单个预测允许的积分",
+  "you already bet on another outcome": "你已经押了另一个结果",
+  "accept the predictions terms on the Twitch website once first": "请先在 Twitch 网站上接受一次预测条款",
+  "too many at once – try again in a moment": "操作过多——请稍后再试",
+  "not available in your region": "你所在的地区不可用",
+  "not allowed in this channel": "此频道不允许"
 }

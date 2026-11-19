@@ -55,6 +55,22 @@ class NotLoggedIn(ApiError):
     pass
 
 
+def _twitch_reason(code: str) -> str:
+    """Twitch's error codes for votes and bets (from the website code) → what to show."""
+    reasons = {
+        "EVENT_MANAGER": _("you manage this prediction (your own channel) – Twitch doesn't let you bet"),
+        "EVENT_NOT_ACTIVE": _("the bets are closed"),
+        "NOT_ENOUGH_POINTS": _("not enough channel points"),
+        "MAX_POINTS_PER_EVENT": _("more points than allowed on one prediction"),
+        "MULTIPLE_OUTCOMES": _("you already bet on another outcome"),
+        "MUST_ACCEPT_TOS": _("accept the predictions terms on the Twitch website once first"),
+        "RATE_LIMITED": _("too many at once – try again in a moment"),
+        "REGION_LOCKED": _("not available in your region"),
+        "FORBIDDEN": _("not allowed in this channel"),
+    }
+    return reasons.get(code, code or "?")
+
+
 def read_browser_cookies(browser: str, platform: str) -> dict[str, str]:
     """The platform's cookies from a browser profile on this computer (blocking: run in a thread)."""
     from yt_dlp.cookies import extract_cookies_from_browser
@@ -177,14 +193,14 @@ class WebLogins:
             "extensions": {"persistedQuery": {"version": 1, "sha256Hash": VOTE_IN_POLL}}}])
         error = (((res[0].get("data") or {}).get("voteInPoll") or {}).get("error") or {}) if res else {}
         if error:
-            raise ApiError(_("Twitch refused the vote: {reason}").format(reason=error.get("code") or "?"))
+            raise ApiError(_("Twitch refused the vote: {reason}").format(reason=_twitch_reason(error.get("code"))))
 
     async def twitch_prediction(self, event_id: str, outcome_id: str, points: int) -> None:
         res = await self._gql({"operationName": "MakePrediction", "query": MAKE_PREDICTION, "variables": {"input": {
             "eventID": event_id, "outcomeID": outcome_id, "points": points, "transactionID": uuid.uuid4().hex}}})
         error = (((res[0].get("data") or {}).get("makePrediction") or {}).get("error") or {}) if res else {}
         if error:
-            raise ApiError(_("Twitch refused the prediction: {reason}").format(reason=error.get("code") or "?"))
+            raise ApiError(_("Twitch refused the prediction: {reason}").format(reason=_twitch_reason(error.get("code"))))
 
     # ---- YouTube ---------------------------------------------------------- #
     def _youtube_headers(self) -> dict:

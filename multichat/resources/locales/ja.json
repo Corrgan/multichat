@@ -304,5 +304,14 @@
   "To vote from here: Accounts → Vote in other channels (unofficial) …": "ここから投票するには: アカウント → 他のチャンネルで投票（非公式） …",
   "bets locked": "締め切り済み",
   "ended": "終了",
-  "Twitch doesn't let you bet in the predictions of your own channel": "Twitch では自分のチャンネルの予想には賭けられません"
+  "Twitch doesn't let you bet in the predictions of your own channel": "Twitch では自分のチャンネルの予想には賭けられません",
+  "you manage this prediction (your own channel) – Twitch doesn't let you bet": "この予想を管理しています（自分のチャンネル）。Twitch では賭けられません",
+  "the bets are closed": "予想は締め切られています",
+  "not enough channel points": "チャンネルポイントが足りません",
+  "more points than allowed on one prediction": "1 つの予想に賭けられる上限を超えています",
+  "you already bet on another outcome": "すでに別の結果に賭けています",
+  "accept the predictions terms on the Twitch website once first": "まず Twitch のウェブサイトで予想の規約に一度同意してください",
+  "too many at once – try again in a moment": "一度に多すぎます。少ししてからもう一度",
+  "not available in your region": "お住まいの地域では利用できません",
+  "not allowed in this channel": "このチャンネルでは許可されていません"
 }
