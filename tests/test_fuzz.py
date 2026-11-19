@@ -217,6 +217,11 @@ KEYS = [
     "targetItemId",
     "markChatItemsByAuthorAsDeletedAction",
     "externalChannelId",
+    "removeChatItemAction",
+    "removeChatItemByAuthorAction",
+    "replaceChatItemAction",
+    "replacementItem",
+    "liveChatPlaceholderItemRenderer",
     "liveChatTextMessageRenderer",
     "liveChatPaidMessageRenderer",
     "liveChatMembershipItemRenderer",
@@ -316,6 +321,9 @@ yt_action = st.one_of(
     ),
     txt.map(lambda t: {"markChatItemAsDeletedAction": {"targetItemId": t}}),
     txt.map(lambda t: {"markChatItemsByAuthorAsDeletedAction": {"externalChannelId": t}}),
+    txt.map(lambda t: {"removeChatItemAction": {"targetItemId": t}}),
+    txt.map(lambda t: {"removeChatItemByAuthorAction": {"externalChannelId": t}}),
+    st.builds(lambda t, i: {"replaceChatItemAction": {"targetItemId": t, "replacementItem": i}}, txt, yt_item),
     shaped_dict,
 )
 

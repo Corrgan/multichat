@@ -139,6 +139,11 @@ def parse_actions(actions: list, video_id: str) -> list:
     events: list = []
     for a in actions:
         a = a.get("replayChatItemAction", {}).get("actions", [{}])[0] if "replayChatItemAction" in a else a
+        rep = a.get("replaceChatItemAction")
+        if isinstance(rep, dict) and isinstance(rep.get("replacementItem"), dict) and any(
+                k in rep["replacementItem"] for k in _RENDERERS):
+            # a held-back message released by YouTube: until now only a placeholder (not shown) stood there
+            a = {"addChatItemAction": {"item": rep["replacementItem"]}}
         if "addChatItemAction" in a:
             item = a["addChatItemAction"].get("item") or {}
             kind = next((k for k in item if k in _RENDERERS), None)
@@ -175,14 +180,24 @@ def parse_actions(actions: list, video_id: str) -> list:
                 badges=_badges(r),
                 event=event, event_value=value, event_text=etext,
             ))
-        elif "markChatItemAsDeletedAction" in a:
-            mid = a["markChatItemAsDeletedAction"].get("targetItemId")
-            if mid:
+        # YouTube now sends remove…Action (Nov 2026: 20,000 in one night, mark…AsDeleted not once);
+        # the old names stay for replays and older chats.
+        elif "markChatItemAsDeletedAction" in a or "removeChatItemAction" in a:
+            d = a.get("markChatItemAsDeletedAction") or a.get("removeChatItemAction")
+            mid = d.get("targetItemId") if isinstance(d, dict) else None
+            if isinstance(mid, str) and mid:
                 events.append(Deletion("youtube", msg_id=mid))
-        elif "markChatItemsByAuthorAsDeletedAction" in a:
-            uid = a["markChatItemsByAuthorAsDeletedAction"].get("externalChannelId")
-            if uid:
+        elif "markChatItemsByAuthorAsDeletedAction" in a or "removeChatItemByAuthorAction" in a:
+            d = a.get("markChatItemsByAuthorAsDeletedAction") or a.get("removeChatItemByAuthorAction")
+            uid = d.get("externalChannelId") if isinstance(d, dict) else None
+            if isinstance(uid, str) and uid:
                 events.append(Deletion("youtube", user_id=uid))
+        elif "replaceChatItemAction" in a:  # a shown message replaced by a placeholder = removed by YouTube
+            d = a["replaceChatItemAction"] if isinstance(a["replaceChatItemAction"], dict) else {}
+            mid = d.get("targetItemId")
+            if (isinstance(mid, str) and mid and isinstance(d.get("replacementItem"), dict)
+                    and "liveChatPlaceholderItemRenderer" in d["replacementItem"]):
+                events.append(Deletion("youtube", msg_id=mid))
     return events
 
 
