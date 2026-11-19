@@ -22,13 +22,14 @@ import asyncio
 import hashlib
 import json
 import logging
+import os
 import time
 import uuid
 from urllib.parse import unquote
 
 import aiohttp
 
-from ..core.constants import BROWSER_UA
+from ..core.constants import APP_ID, BROWSER_UA
 from ..core.i18n import _
 from .oauth import ApiError
 
@@ -42,6 +43,8 @@ COOKIES = {
     "youtube": (".youtube.com", None),
 }
 LOGIN_COOKIE = {"twitch": "auth-token", "kick": "session_token", "youtube": "SAPISID"}
+# where yt-dlp looks for Firefox inside the Flatpak sandbox (its XDG config home is the sandbox's own)
+FLATPAK_FIREFOX = ("~/.mozilla/firefox", "~/.var/app/org.mozilla.firefox")
 
 TWITCH_GQL = "https://gql.twitch.tv/gql"
 TWITCH_WEB_CLIENT = "kimne78kx3ncx6brgo4mv6wki5h1ko"  # the Twitch website's own client ID
@@ -71,12 +74,29 @@ def _twitch_reason(code: str) -> str:
     return reasons.get(code, code or "?")
 
 
+def no_profile(browser: str) -> str:
+    """Why the browser profile wasn't found – in the Flatpak, what to allow (the sandbox hides it)."""
+    if not os.environ.get("FLATPAK_ID"):
+        return _("No {browser} profile found on this computer").format(browser=browser.capitalize())
+    if browser != "firefox":
+        # yt-dlp looks for these under the sandbox's own ~/.config, so a permission alone doesn't help
+        return _("As a Flatpak, MultiChat can only take the login over from Firefox. "
+                 "Use Firefox or the AppImage for {browser}.").format(browser=browser.capitalize())
+    command = "flatpak override --user " + " ".join(f"--filesystem={d}:ro" for d in FLATPAK_FIREFOX) + " " + APP_ID
+    return _("The Flatpak may not read the Firefox profile. Allow it once in a terminal (read-only), "
+             "then restart MultiChat:\n\n{command}").format(command=command)
+
+
 def read_browser_cookies(browser: str, platform: str) -> dict[str, str]:
     """The platform's cookies from a browser profile on this computer (blocking: run in a thread)."""
     from yt_dlp.cookies import extract_cookies_from_browser
 
     domain, names = COOKIES[platform]
-    jar = extract_cookies_from_browser(browser)
+    try:
+        jar = extract_cookies_from_browser(browser)
+    except FileNotFoundError as e:  # yt-dlp: "could not find firefox cookies database in …"
+        log.info("Web login %s: %s", browser, e)
+        raise NotLoggedIn(no_profile(browser)) from e
     now = time.time()
     found = {}
     for c in jar:
