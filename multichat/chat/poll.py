@@ -54,7 +54,10 @@ class ChatPoll:
 
     def vote(self, msg: ChatMessage) -> bool:
         """Counts `msg` if it is a vote in one of the poll's channels. True if the tally changed."""
-        if self.ended or msg.event or msg.source not in self.sources or msg.platform in self.native:
+        # "notice" with a real sender is a chat message with a label (reply, first message, highlighted …);
+        # alerts (bits, subs …) and the platforms' own lines (no user ID) are no votes
+        if (self.ended or (msg.event and msg.event != "notice") or (msg.event and not msg.user_id)
+                or msg.source not in self.sources or msg.platform in self.native):
             return False
         m = _VOTE.match(msg.text or "")
         if not m:

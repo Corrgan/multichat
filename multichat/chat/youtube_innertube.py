@@ -58,7 +58,7 @@ def _cfg(page: str, key: str) -> str | None:
 
 
 # what a response in an unexpected shape raises while it is taken apart
-_SHAPE_ERRORS = (KeyError, IndexError, TypeError, AttributeError, ValueError)
+_SHAPE_ERRORS = (KeyError, IndexError, TypeError, AttributeError, ValueError, OverflowError)
 
 
 def _continuation(conts: list) -> tuple[str, float]:

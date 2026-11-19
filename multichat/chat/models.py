@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import itertools
+import math
 import random
 import re
 import time
@@ -52,6 +53,10 @@ class ChatMessage:
         # should depend on that: clamp once, here.
         self.user = _CONTROL_RE.sub("", _SPOOF_RE.sub("", str(self.user)))[:MAX_USER].strip() or "?"
         self.login = _LOGIN_RE.sub("", str(self.login or ""))[:MAX_USER]
+        # IDs from the platforms are text; anything else (a number, an object in odd data) would break the
+        # dict keys of user history and notes and the overlay's JSON
+        self.user_id = self.user_id if isinstance(self.user_id, str) and self.user_id else None
+        self.msg_id = self.msg_id if isinstance(self.msg_id, str) and self.msg_id else None
         self.text = _clean_text(self.text)[:MAX_TEXT]
         # a one-liner that may quote other people's text (replies, pins, clip titles): no direction
         # overrides, they would also turn round the message shown below it
@@ -187,6 +192,15 @@ def user_key(m: "ChatMessage") -> str:
 MAX_POLL_OPTIONS = 10
 
 
+def _count(v) -> float:
+    """A vote count/points/percentage from a platform: finite and ≥ 0 (inf/NaN would break share())."""
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return 0.0
+    return f if math.isfinite(f) and f > 0 else 0.0
+
+
 @dataclass
 class PollState:
     """The running state of a poll or prediction (chat/poll_state.py makes them), for the box
@@ -206,7 +220,7 @@ class PollState:
 
     def __post_init__(self) -> None:  # from the platforms' servers: clamp like ChatMessage
         self.title = _SPOOF_RE.sub(" ", _clean_text(self.title))[:MAX_EVENT_TEXT]
-        self.options = [[str(o[0])[:100], _SPOOF_RE.sub(" ", _clean_text(str(o[1])))[:60], max(0.0, float(o[2]))]
+        self.options = [[str(o[0])[:100], _SPOOF_RE.sub(" ", _clean_text(str(o[1])))[:60], _count(o[2])]
                         for o in self.options[:MAX_POLL_OPTIONS]]
 
     @property

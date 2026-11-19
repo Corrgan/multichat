@@ -5,7 +5,7 @@ from __future__ import annotations
 import threading
 from collections import OrderedDict, deque
 
-from ..chat.models import ChatMessage, Deletion, Event
+from ..chat.models import Deletion, Event
 
 
 class IncomingEvents:
@@ -35,8 +35,8 @@ class IncomingEvents:
 
     def _discard(self, key: str) -> bool:
         queue = self._queues[key]
-        for index, event in enumerate(queue):
-            if isinstance(event, ChatMessage):
+        for index, event in enumerate(queue):  # first a chat line or poll update, a deletion only last
+            if not isinstance(event, Deletion):
                 del queue[index]
                 self._size -= 1
                 self.dropped += 1

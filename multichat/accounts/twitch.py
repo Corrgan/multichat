@@ -14,6 +14,7 @@ log = logging.getLogger("multichat.accounts")
 
 MAX_EMOTES = 5000  # emote suggestions per channel
 CHATTERS_TTL = 60  # seconds a channel's chatter list is reused for routing "@" mentions
+MODERATED_RETRY = 600  # s until a login without user:read:moderated_channels is asked again
 MAX_CHATTER_PAGES = 20  # 1000 per page
 
 
@@ -109,6 +110,9 @@ class TwitchAccount(Account):
         if login == self.user_name.lower():
             return True
         key = ("moderated", self.user_id)
+        denied = self._cache.get(("moderated-denied", self.user_id))
+        if key not in self._cache and denied and time.monotonic() - denied < MODERATED_RETRY:
+            return None  # asked recently and the login lacks the scope – EventSub asks every 5 s
         if key not in self._cache:
             channels, cursor = set(), None
             try:
@@ -122,6 +126,7 @@ class TwitchAccount(Account):
             except ApiError as e:
                 if e.status in (401, 403):  # login from before this scope existed
                     log.info("Twitch: can't list moderated channels (%s) – log in again to enable", e)
+                    self._cache[("moderated-denied", self.user_id)] = time.monotonic()
                     return None
                 raise
             self._cache[key] = channels
