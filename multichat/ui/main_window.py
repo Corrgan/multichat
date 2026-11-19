@@ -49,6 +49,7 @@ from .window_connections import ConnectionsMixin
 from .window_groups import MAX_MESSAGES, GroupsMixin
 from .window_messages import FLUSH_MS, MessagesMixin
 from .window_send import SendMixin
+from .poll import PollMixin
 from .vote import VoteMixin
 from ..core.config import MAX_GROUPS
 
@@ -70,7 +71,7 @@ class Bridge(QObject):
     update = pyqtSignal(str, str)  # newer version, release page
 
 
-class MainWindow(GroupsMixin, ConnectionsMixin, MessagesMixin, SendMixin, VoteMixin, QMainWindow):
+class MainWindow(GroupsMixin, ConnectionsMixin, MessagesMixin, SendMixin, PollMixin, VoteMixin, QMainWindow):
     """The window itself: construction, menus, settings, accounts, overlay, shutdown. The
     rest lives in the mixins: groups (window_groups), chat connections (window_connections),
     the message pipeline (window_messages) and the send line (window_send)."""
@@ -285,6 +286,7 @@ class MainWindow(GroupsMixin, ConnectionsMixin, MessagesMixin, SendMixin, VoteMi
         root.addLayout(filters)
         root.addLayout(tab_row)
         root.addWidget(self.side, 1)
+        root.addWidget(self._build_poll())
         root.addLayout(send)
         central = QWidget()
         central.setLayout(root)
@@ -320,6 +322,10 @@ class MainWindow(GroupsMixin, ConnectionsMixin, MessagesMixin, SendMixin, VoteMi
         view.setToolTipsVisible(True)
         self.latency_action.toggled.connect(self.toggle_low_latency)
         view.addAction(_("Alerts …")).triggered.connect(self.edit_alerts)
+        poll = view.addAction(_("Chat poll …"))
+        poll.setShortcut(QKeySequence("Ctrl+P"))
+        poll.triggered.connect(self.start_poll_dialog)
+        view.addAction(_("Twitch prediction …")).triggered.connect(self.start_prediction_dialog)
         font = view.addMenu(_("Chat font size"))
         for label, keys, step in ((_("Larger"), ("Ctrl++", "Ctrl+="), 2), (_("Smaller"), ("Ctrl+-",), -2),
                                   (_("Default size"), ("Ctrl+0",), 0)):

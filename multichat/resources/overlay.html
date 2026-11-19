@@ -16,8 +16,17 @@ img.pi{width:1em;height:1em;vertical-align:-.12em;margin-right:.35em;filter:drop
 .h{font-size:.85em;opacity:.85}
 .m.alert{background:rgba(20,10,40,.55);border-left:.25em solid var(--ac);padding:.25em .5em;border-radius:6px;margin:6px 0}
 .m.alert .h{opacity:1;color:var(--ac);font-weight:800}
+#poll{position:fixed;left:10px;right:10px;top:10px;background:rgba(20,10,40,.7);border-radius:8px;
+  padding:.4em .6em;display:none;animation:in .25s ease-out;transition:opacity .8s}
+#poll.out{opacity:0}
+#poll .q{font-weight:800;margin-bottom:.2em}
+#poll .o{position:relative;margin:.15em 0;padding:.05em .4em;border-radius:4px;overflow:hidden;background:rgba(255,255,255,.12)}
+#poll .bar{position:absolute;left:0;top:0;bottom:0;background:rgba(191,148,255,.55);transition:width .4s}
+#poll .o.win .bar{background:rgba(95,211,141,.7)}
+#poll .t{position:relative;display:flex;justify-content:space-between;gap:1em}
+#poll .f{font-size:.75em;opacity:.85;margin-top:.2em}
 @keyframes in{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
-</style></head><body><div id="chat"></div>
+</style></head><body><div id="poll"></div><div id="chat"></div>
 <script>
 const q=new URLSearchParams(location.search);
 const fade=+q.get("fade")||0, max=+q.get("max")||40;
@@ -75,9 +84,30 @@ function del(e){
     if(e.all||(e.msg_id&&d.dataset.mid===e.msg_id)||(e.user_id&&d.dataset.uid===e.user_id))d.remove();
   }
 }
+const pollBox=document.getElementById("poll");let pollHide=0;
+function poll(e){
+  if(q.get("poll")==="0")return;
+  if(group&&!(e.groups||[]).includes(group))return;
+  clearTimeout(pollHide);pollBox.classList.remove("out");
+  if(e.state==="closed"){pollBox.style.display="none";return;}
+  pollBox.replaceChildren();
+  const h=document.createElement("div");h.className="q";h.textContent=e.question;pollBox.append(h);
+  for(const o of e.options){
+    const r=document.createElement("div");r.className="o"+(o.win?" win":"");
+    const b=document.createElement("div");b.className="bar";b.style.width=o.pct+"%";
+    const t=document.createElement("div");t.className="t";
+    const l=document.createElement("span");l.textContent=(o.win?"✔ ":"")+"!"+o.n+" "+o.text;
+    const v=document.createElement("span");v.textContent=o.pct+"%";
+    t.append(l,v);r.append(b,t);pollBox.append(r);
+  }
+  const f=document.createElement("div");f.className="f";f.textContent=e.label;pollBox.append(f);
+  pollBox.style.display="block";
+  if(e.state==="ended")pollHide=setTimeout(()=>{pollBox.classList.add("out");
+    pollHide=setTimeout(()=>{pollBox.style.display="none";},900);},(+q.get("pollshow")||20)*1000);
+}
 function connect(){
   const ws=new WebSocket(`ws://${location.host}/ws`);
-  ws.onmessage=ev=>{const e=JSON.parse(ev.data);e.type==="msg"?add(e):del(e);};
+  ws.onmessage=ev=>{const e=JSON.parse(ev.data);e.type==="msg"?add(e):e.type==="poll"?poll(e):del(e);};
   ws.onclose=()=>setTimeout(connect,2000);
 }
 connect();

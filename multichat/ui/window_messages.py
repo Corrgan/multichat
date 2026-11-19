@@ -107,6 +107,7 @@ class MessagesMixin:
                 self.overlay.publish(message_payload(msg, self.view.alerts_cfg, groups))
             self.mod.observe(msg)
         self._msg_count += len(batch)
+        self.count_votes(batch)
         if len(self.messages) > self._trim_at:
             self._trim_messages()
         visible = self._visible_panels()

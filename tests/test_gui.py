@@ -914,6 +914,169 @@ def test_shared_chat_message_shows_once_per_group(window):
     assert [m.text for m in w.messages.values() if b in w.panels_for(m)] == ["hello", "plain"]
 
 
+def test_chat_poll_counts_the_active_group_and_shows_the_result(window, monkeypatch):
+    w = window
+    a = w.panels[0]
+    a.rows["twitch"].edit.setText("chan_a")
+    a.rows["kick"].edit.setText("chan_b")
+    sent, published = [], []
+    monkeypatch.setattr(w, "_send_options", lambda: [("twitch:chan_a", "twitch", "chan_a", "Twitch")])
+    monkeypatch.setattr(w, "_send_all", lambda text, options: sent.append((text, [o[0] for o in options])))
+    monkeypatch.setattr(type(w.overlay), "running", property(lambda self: True))
+    monkeypatch.setattr(w.overlay, "publish", published.append)
+    w.start_poll("Next game?", ["WoW", "Werkstatt"], 0, announce=True)
+    assert sent == [("Poll: Next game? – !1 WoW / !2 Werkstatt", ["twitch:chan_a"])]
+    assert w.poll_bar.isVisibleTo(w) and published[-1]["state"] == "active" and published[-1]["groups"] == [1]
+
+    def chat(platform, chan, user, text):
+        m = ChatMessage(platform, chan, user, text, user_id=user)
+        m.source = f"{platform}:{chan}"
+        w.add_message(m)
+
+    chat("twitch", "chan_a", "Alice", "!1")
+    chat("kick", "chan_b", "Bob", "!2")
+    chat("kick", "chan_b", "Carol", "!2 klar")
+    chat("youtube", "other", "Dave", "!1")  # not in this group
+    w._flush_messages()
+    assert w.poll.counts == [1, 2]
+    assert [b.value() for b in w.poll_bar.bars] == [33, 67] and "Werkstatt – 2 (67 %)" in w.poll_bar.bars[1].text()
+    w.start_poll_dialog()  # a second one while it runs: refused, no dialog
+    assert "running" in w.statusBar().currentMessage()
+    w.end_poll()
+    assert sent[-1][0] == "Poll ended: Next game? – winner: Werkstatt (3 votes) – WoW 33% · Werkstatt 67%"
+    assert published[-1]["state"] == "ended" and w.poll_bar.close_btn.isVisibleTo(w)
+    chat("twitch", "chan_a", "Late", "!1")
+    w._flush_messages()
+    assert w.poll.counts == [1, 2]
+    w.close_poll()
+    assert not w.poll_bar.isVisibleTo(w) and w.poll is None and published[-1]["state"] == "closed"
+
+
+def test_poll_dialog_needs_a_question_and_two_options(window):
+    from multichat.ui.poll import PollDialog
+
+    d = PollDialog(window, can_send=False)
+    ok = d.bb.button(d.bb.StandardButton.Ok)
+    assert not ok.isEnabled() and not d.announce.isEnabled()
+    d.question.setText("Pizza?")
+    d.options[0].setText("Ja")
+    assert not ok.isEnabled()
+    d.options[3].setText("Nein")  # gaps are fine
+    assert ok.isEnabled() and d.choices() == ["Ja", "Nein"]
+    d.close()
+
+
+def _wait(app, predicate, timeout=3):
+    import time as _t
+
+    end = _t.monotonic() + timeout
+    while _t.monotonic() < end and not predicate():
+        app.processEvents()
+        _t.sleep(0.005)
+    assert predicate(), "expected result did not arrive"
+
+
+def test_poll_with_twitch_and_youtube_polls_alongside(window, app, monkeypatch):
+    """The platforms' own polls run alongside: their votes are added, the chat's !1 there doesn't count."""
+    w = window
+    a = w.panels[0]
+    a.rows["twitch"].edit.setText("corrgan")
+    a.rows["kick"].edit.setText("corrgan")
+    a.rows["youtube"].edit.setText("@corrgan")
+    tw, yt = w.accounts["twitch"], w.accounts["youtube"]
+    monkeypatch.setattr(type(tw), "logged_in", property(lambda self: True))
+    monkeypatch.setattr(type(yt), "logged_in", property(lambda self: True))
+    monkeypatch.setattr(type(tw), "user_name", property(lambda self: "Corrgan"))
+    calls, votes = [], {"twitch": [2, 0], "youtube": [1, 3]}
+
+    def fake(platform, name, result):
+        async def f(*args):
+            calls.append((platform, name, args))
+            return result() if callable(result) else result
+        monkeypatch.setattr(w.accounts[platform], name, f)
+
+    fake("twitch", "create_poll", "tp1")
+    fake("twitch", "poll_votes", lambda: ("ACTIVE", votes["twitch"]))
+    fake("twitch", "end_poll", lambda: ("TERMINATED", [4, 0]))
+    fake("youtube", "create_poll", ("chat1", "ym1"))
+    fake("youtube", "poll_votes", lambda: ("active", votes["youtube"]))
+    fake("youtube", "end_poll", lambda: ("closed", [1, 5]))
+    sent = []
+    monkeypatch.setattr(w, "_send_options", lambda: [("twitch:corrgan", "twitch", "corrgan", "Twitch"),
+                                                     ("kick:corrgan", "kick", "corrgan", "Kick")])
+    monkeypatch.setattr(w, "_send_all", lambda text, options: sent.append((options[0][1], text)))
+    assert w._native_reasons() == ("", "")
+    w.start_poll("Next game?", ["WoW", "Werkstatt"], 0, announce=True, natives={"twitch", "youtube"})
+    assert sent == [("twitch", "Poll: Next game? – WoW / Werkstatt"), ("kick", "Poll: Next game? – !1 WoW / !2 Werkstatt")]
+    _wait(app, lambda: set(w._native) == {"twitch", "youtube"})
+    assert calls[0] == ("twitch", "create_poll", ("Next game?", ["WoW", "Werkstatt"], 1800))
+    for chan, platform, user in (("corrgan", "twitch", "T"), ("corrgan", "kick", "K")):
+        m = ChatMessage(platform, chan, user, "!2", user_id=user)
+        m.source = f"{platform}:{chan}"
+        w.add_message(m)
+    w._flush_messages()
+    w._native_wait = {"twitch": 1, "youtube": 1}
+    w._poll_second()
+    _wait(app, lambda: w.poll.native == {"twitch": [2, 0], "youtube": [1, 3]})
+    assert w.poll.counts == [3, 4]  # Twitch 2/0 + YouTube 1/3 + Kick's !2 (Twitch's !2 doesn't count)
+    w.end_poll()
+    _wait(app, lambda: len(sent) == 4)
+    assert w.poll.counts == [5, 6] and sent[2][1].startswith("Poll ended: Next game? – winner: Werkstatt (11 votes)")
+    assert {c[:2] for c in calls} >= {("twitch", "end_poll"), ("youtube", "end_poll")}
+
+
+def test_platform_poll_refused_lets_the_chat_count_again(window, app, monkeypatch):
+    w = window
+    w.panels[0].rows["twitch"].edit.setText("corrgan")
+    tw = w.accounts["twitch"]
+    monkeypatch.setattr(type(tw), "logged_in", property(lambda self: True))
+    monkeypatch.setattr(type(tw), "user_name", property(lambda self: "Corrgan"))
+
+    async def refused(*args):
+        from multichat.accounts import ApiError
+        raise ApiError("Twitch (403): The broadcaster is not a partner or affiliate.", status=403)
+
+    monkeypatch.setattr(tw, "create_poll", refused)
+    w.start_poll("Q?", ["a", "b"], 0, announce=False, natives={"twitch"})
+    _wait(app, lambda: "twitch" not in w.poll.native)
+    assert "affiliate" in w.statusBar().currentMessage()
+    m = ChatMessage("twitch", "corrgan", "T", "!1", user_id="t")
+    m.source = "twitch:corrgan"
+    w.add_message(m)
+    w._flush_messages()
+    assert w.poll.counts == [1, 0]
+    w.end_poll()
+
+
+def test_twitch_prediction_lock_and_resolve(window, app, monkeypatch):
+    w = window
+    w.panels[0].rows["twitch"].edit.setText("corrgan")
+    tw = w.accounts["twitch"]
+    monkeypatch.setattr(type(tw), "logged_in", property(lambda self: True))
+    monkeypatch.setattr(type(tw), "user_name", property(lambda self: "Corrgan"))
+    calls = []
+
+    async def create(title, outcomes, seconds):
+        calls.append(("create", title, outcomes, seconds))
+        return "pr1", ["o1", "o2"]
+
+    async def end(pid, status, winner=None):
+        calls.append(("end", pid, status, winner))
+
+    monkeypatch.setattr(tw, "create_prediction", create)
+    monkeypatch.setattr(tw, "end_prediction", end)
+    w.start_prediction("Boss?", ["Ja", "Nein"], 120)
+    _wait(app, lambda: w.prediction is not None)
+    assert w.prediction_bar.isVisibleTo(w) and [b.text() for b in w.prediction_bar.buttons] == [
+        "Lock bets", "Winner: Ja", "Winner: Nein", "Cancel (points back)"]
+    w.prediction_bar.buttons[0].click()
+    _wait(app, lambda: w.prediction["locked"])
+    assert [b.text() for b in w.prediction_bar.buttons][0] == "Winner: Ja"
+    w.prediction_bar.buttons[1].click()  # Nein wins
+    _wait(app, lambda: w.prediction is None)
+    assert calls[-1] == ("end", "pr1", "RESOLVED", "o2") and not w.prediction_bar.isVisibleTo(w)
+
+
 def _wait_for(app, predicate, timeout=3):
     import time as _t
 

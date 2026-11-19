@@ -51,6 +51,11 @@ You don't configure **permissions** (scopes) in the Twitch app; MultiChat reques
 user card) and `user:read:moderated_channels` (which channels you moderate – mod actions are
 hidden elsewhere).
 
+> **Twitch polls and predictions from MultiChat** (View → Chat poll …, View → Twitch prediction …) need two
+> more permissions (`channel:manage:polls`, `channel:manage:predictions`): log out and in again once
+> (**Accounts → Twitch – log out**, then log in). Twitch polls only work for affiliates and partners,
+> predictions need channel points.
+
 > **Logged in with a version before 0.50?** Log out and in again once (**Accounts → Twitch – log
 > out**, then log in) so Twitch grants the two new permissions. Until then everything else keeps
 > working; only followage and the moderator check are missing.

@@ -217,10 +217,27 @@ The URL can be customised:
 | `group` | only this channel group (1 = first tab) – **Overlay → Copy overlay URL for the active group** | `group=2` |
 | `badges` | hide platform icons | `badges=0` |
 | `alerts` | no highlight for alerts (subs, bits, raids …) | `alerts=0` |
+| `poll` | no box for chat polls | `poll=0` |
+| `pollshow` | show a poll's result for X seconds (default 20) | `pollshow=60` |
 
 Example: `http://127.0.0.1:17564/?fade=30&size=24&platforms=twitch,youtube`
 
 Deleted messages and banned users disappear from the overlay as well – only in the channel where they were deleted or banned.
+
+## Chat poll
+
+**View → Chat poll …** (Ctrl+P): a question with 2–6 options, answered with `!1`, `!2` … in the chat –
+on Twitch, Kick and YouTube at once. MultiChat counts the channels of the active group: one vote per
+person and platform, a later vote replaces the earlier one. A bar above the input shows the votes, the
+OBS overlay a box at the top; it ends after the chosen time or with **End poll**. If you are logged in,
+MultiChat can announce the poll and its result in the chats.
+
+With your own channel in the group, the poll can also run as a **Twitch poll** (affiliates and partners,
+up to 5 options) and a **YouTube poll** (your live stream, up to 4 options) at the same time: viewers
+click there, MultiChat adds those votes (Twitch every 5 s, YouTube every 20 s – 5 quota units each),
+and the chat's `!1` … don't count on that platform, so nobody votes twice. **View → Twitch prediction …**
+starts a prediction in your channel; lock the bets, pick the winner or cancel it in the bar above the input.
+For both, log in to Twitch again once (two new permissions, see [docs/LOGIN.md](docs/LOGIN.md)).
 
 With several channel groups, the overlay shows all of them; add one browser source per group with `group=` to keep them apart. The number is the group's position in the tabs, so it changes when a group in front of it is removed or the tabs are put in another order.
 
