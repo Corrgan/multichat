@@ -21,6 +21,7 @@ import aiohttp
 
 from .alerts import parse_amount
 from .models import ChatMessage, Deletion, Emit, Part, roles
+from .poll_state import youtube_state
 from .youtube_notices import _text, chat_command, notice
 
 log = logging.getLogger("multichat.chat")
@@ -134,11 +135,19 @@ _RENDERERS = (
 )
 
 
+_POLL_ACTIONS = ("showLiveChatActionPanelAction", "updateLiveChatPollAction", "addBannerToLiveChatCommand",
+                 "closeLiveChatActionPanelAction", "removeBannerForLiveChatCommand")
+
+
 def parse_actions(actions: list, video_id: str) -> list:
     """InnerTube actions → ChatMessage/Deletion events (unknown kinds are skipped)."""
     events: list = []
     for a in actions:
         a = a.get("replayChatItemAction", {}).get("actions", [{}])[0] if "replayChatItemAction" in a else a
+        if not isinstance(a, dict):
+            continue
+        if any(k in a for k in _POLL_ACTIONS) and (state := youtube_state(a, video_id)):
+            events.append(state)  # the box above the chat
         rep = a.get("replaceChatItemAction")
         if isinstance(rep, dict) and isinstance(rep.get("replacementItem"), dict) and any(
                 k in rep["replacementItem"] for k in _RENDERERS):

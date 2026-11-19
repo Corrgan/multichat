@@ -20,14 +20,16 @@ import logging
 import time
 import uuid
 from collections.abc import Callable
+from dataclasses import replace
 from datetime import datetime, timezone
 
 import aiohttp
 import websockets
 
 from .models import Backoff, ChatMessage
+from .poll_state import twitch_hermes_state
 from .twitch_events import WANTED, remember_room
-from .twitch_hermes_events import TOPICS, HermesEvents, twitch_vote
+from .twitch_hermes_events import TOPICS, HermesEvents
 
 log = logging.getLogger("multichat.chat")
 
@@ -174,13 +176,17 @@ class HermesClient:
         login, what = target
         if what in EVENTSUB_TYPES and self.covered(login, EVENTSUB_TYPES[what]):
             return True
+        if what in ("poll", "prediction") and (state := twitch_hermes_state(what, payload, login)):
+            for key, channel in self.channels().items():  # the box above the chat
+                if channel == login:
+                    self.emit(replace(state), key)
         text = events.text(what, payload)
         if not text:
             return True
         for key, channel in self.channels().items():
             if channel == login:
                 self.emit(ChatMessage(platform="twitch", channel=channel, user="Twitch", text="",
-                                      event="notice", event_text=text, vote=twitch_vote(what, payload)), key)
+                                      event="notice", event_text=text), key)
         return True
 
     async def _name_rooms(self) -> None:

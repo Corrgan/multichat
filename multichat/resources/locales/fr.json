@@ -297,5 +297,11 @@
   "not taken over": "non repris",
   "reading …": "lecture …",
   "taken over ({name})": "repris ({name})",
-  "{platform} login taken over": "Connexion {platform} reprise"
+  "{platform} login taken over": "Connexion {platform} reprise",
+  " points": " points",
+  "Hide": "Masquer",
+  "Poll": "Sondage",
+  "To vote from here: Accounts → Vote in other channels (unofficial) …": "Pour voter d'ici : Comptes → Voter dans d'autres chaînes (non officiel) …",
+  "bets locked": "paris bloqués",
+  "ended": "terminé"
 }

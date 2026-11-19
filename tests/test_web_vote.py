@@ -9,8 +9,6 @@ import pytest
 from multichat.accounts import web as webmod
 from multichat.accounts.oauth import ApiError
 from multichat.chat import kick, youtube_innertube as yti
-from multichat.chat.kick_events import kick_vote
-from multichat.chat.twitch_hermes_events import twitch_vote
 
 
 class Store:
@@ -27,34 +25,62 @@ class Store:
         self.data.pop(p, None)
 
 
-def test_vote_info_on_the_lines_that_start_a_poll_or_prediction():
-    assert kick_vote("App\\Events\\PollUpdateEvent", {"poll": {"title": "ja oder nein", "options": [
-        {"id": 0, "label": "ja", "votes": 0}, {"id": 1, "label": "ne", "votes": 0}]}}) == {
-        "kind": "poll", "id": "", "options": [["0", "ja"], ["1", "ne"]]}
-    pred = {"prediction": {"id": "01M7", "title": "Boss?", "state": "ACTIVE",
-                           "outcomes": [{"id": "o1", "title": "Klar!"}, {"id": "o2", "title": "Nee"}]}}
-    assert kick_vote("PredictionCreated", pred)["options"] == [["o1", "Klar!"], ["o2", "Nee"]]
-    assert kick_vote("PredictionUpdated", {"prediction": {**pred["prediction"], "state": "RESOLVED"}}) is None
-    assert kick_vote("PollUpdateEvent", {"poll": "broken"}) is None
+def test_poll_state_from_every_platform():
+    """The box above the chat follows the state each platform sends (shapes from Nov 2026 captures)."""
+    import time as _t
+
+    from multichat.chat.poll_state import kick_state, twitch_eventsub_state, twitch_hermes_state, youtube_state
+
+    s = kick_state("App\\Events\\PollUpdateEvent", {"poll": {"title": "ja oder nein", "options": [
+        {"id": 0, "label": "ja", "votes": 1}, {"id": 1, "label": "ne", "votes": 3}], "duration": 60, "remaining": 58,
+        "result_display_duration": 60}}, "corrgan")
+    assert (s.kind, s.id, s.status, s.options) == ("poll", "ja oder nein", "active", [["0", "ja", 1.0], ["1", "ne", 3.0]])
+    assert s.share(1) == 75 and 50 < s.ends_at - _t.time() <= 58
+    assert kick_state("PollUpdateEvent", {"poll": {"title": "q", "options": [], "remaining": 0}}, "c").status == "ended"
+    pred = {"prediction": {"id": "01M7", "title": "Sitzt Top 10 drin?", "state": "RESOLVED", "duration": 60,
+                           "created_at": "2026-11-18T09:58:04Z", "winning_outcome_id": "o1", "outcomes": [
+                               {"id": "o1", "title": "Klar!", "total_vote_amount": 37966},
+                               {"id": "o2", "title": "Neeeeee!", "total_vote_amount": 23095}]}}
+    s = kick_state("PredictionUpdated", pred, "c")
+    assert (s.kind, s.status, s.winner, s.share(0)) == ("prediction", "ended", "o1", 62)
+
+    poll = {"type": "POLL_UPDATE", "data": {"poll": {"poll_id": "p1", "title": "OPINIÓN", "status": "ACTIVE",
+            "started_at": "2026-11-17T21:32:39.009641497Z", "duration_seconds": 300, "choices": [
+                {"choice_id": "c1", "title": "GTA", "votes": {"total": 5}}, {"choice_id": "c2", "title": "WoW",
+                                                                             "votes": {"total": 15}}]}}}
+    s = twitch_hermes_state("poll", poll, "peereira7")
+    assert (s.id, s.options[1], s.share(1)) == ("p1", ["c2", "WoW", 15.0], 75)
+    import datetime as _dt
+    start = _dt.datetime(2026, 11, 17, 21, 32, 39, tzinfo=_dt.timezone.utc).timestamp()
+    assert s.ends_at == start + 300
+    ev = {"type": "event-updated", "data": {"event": {"id": "e1", "title": "Erster?", "status": "LOCKED",
+          "created_at": "2026-11-17T21:40:06Z", "prediction_window_seconds": 300, "outcomes": [
+              {"id": "b", "title": "Ja", "total_points": 100}, {"id": "p", "title": "Nein", "total_points": 300}]}}}
+    assert twitch_hermes_state("prediction", ev, "giggand").status == "locked"
+    archived = {"data": {"poll": {**poll["data"]["poll"], "status": "ARCHIVED"}}}
+    assert twitch_hermes_state("poll", archived, "x").status == "gone"
+    s = twitch_eventsub_state("channel.poll.progress", {"id": "p9", "title": "Q", "ends_at": "2026-11-19T12:05:00Z",
+                              "choices": [{"id": "a", "title": "A", "votes": 2}, {"id": "b", "title": "B", "votes": 0}]}, "corrganx")
+    assert (s.status, s.options[0][2]) == ("active", 2.0)
+    s = twitch_eventsub_state("channel.prediction.end", {"id": "e", "title": "Q", "status": "resolved",
+                              "winning_outcome_id": "x", "outcomes": [{"id": "x", "title": "X", "channel_points": 5}]}, "c")
+    assert (s.status, s.winner) == ("ended", "x")
+    assert twitch_eventsub_state("channel.poll.begin", "broken", "c") is None
+
+    show = {"showLiveChatActionPanelAction": {"panelToShow": {"liveChatActionPanelRenderer": {"contents": {
+        "pollRenderer": {"liveChatPollId": "yp1", "choices": [{"text": {"runs": [{"text": "A"}]}, "voteRatio": 0.24},
+                                                             {"text": {"runs": [{"text": "B"}]}, "voteRatio": 0.76}],
+                         "header": {"pollHeaderRenderer": {"pollQuestion": {"runs": [{"text": "Q?"}]}}}}}}}}}
+    s = youtube_state(show, "vid")
+    assert (s.id, s.title, s.percent, s.share(1)) == ("yp1", "Q?", True, 76)
+    assert youtube_state({"closeLiveChatActionPanelAction": {"targetPanelId": "yp1"}}, "vid").status == "ended"
+    ev = yti.parse_actions([show], "vid")
+    assert [type(e).__name__ for e in ev] == ["PollState", "ChatMessage"]  # the box and the line
     got = []
-    kick._handle_event("App\\Events\\PollUpdateEvent", {"poll": {"title": "Q-vote?", "options": [
-        {"id": 0, "label": "a"}, {"id": 1, "label": "b"}]}}, "corrgan", got.append, None)
-    assert got[0].vote["options"] == [["0", "a"], ["1", "b"]]
-
-    tw_poll = {"type": "POLL_CREATE", "data": {"poll": {"poll_id": "p1", "title": "T", "status": "ACTIVE", "choices": [
-        {"choice_id": "c1", "title": "GTA"}, {"choice_id": "c2", "title": "WoW"}]}}}
-    assert twitch_vote("poll", tw_poll) == {"kind": "poll", "id": "p1", "options": [["c1", "GTA"], ["c2", "WoW"]]}
-    assert twitch_vote("poll", {**tw_poll, "type": "POLL_UPDATE"}) is None
-    tw_pred = {"type": "event-created", "data": {"event": {"id": "e1", "status": "ACTIVE", "outcomes": [
-        {"id": "b", "title": "Ja"}, {"id": "p", "title": "Nein"}]}}}
-    assert twitch_vote("prediction", tw_pred)["id"] == "e1"
-    assert twitch_vote("prediction", "x") is None
-
-    ev = yti.parse_actions([{"showLiveChatActionPanelAction": {"panelToShow": {"liveChatActionPanelRenderer": {
-        "contents": {"pollRenderer": {"liveChatPollId": "yp-vote", "choices": [
-            {"text": {"runs": [{"text": "A"}]}}, {"text": {"runs": [{"text": "B"}]}}],
-            "header": {"pollHeaderRenderer": {"pollQuestion": {"runs": [{"text": "Q?"}]}}}}}}}}}], "vid")
-    assert ev[0].vote == {"kind": "poll", "id": "yp-vote", "options": [["0", "A"], ["1", "B"]]}
+    kick._handle_event("App\\Events\\PollUpdateEvent", {"poll": {"title": "box?", "options": [
+        {"id": 0, "label": "a", "votes": 0}, {"id": 1, "label": "b", "votes": 0}], "remaining": 30}}, "corrgan",
+        got.append, None)
+    assert type(got[0]).__name__ == "PollState" and got[0].channel == "corrgan"
 
 
 def test_take_over_keeps_only_what_a_vote_needs(monkeypatch):

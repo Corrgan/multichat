@@ -228,8 +228,10 @@ The overlay only answers requests from this computer (`127.0.0.1` / `localhost`)
 
 ## Voting in other channels (unofficial)
 
-**Accounts → Vote in other channels (unofficial) …**: vote in polls and bet in predictions of other channels
-right from the chat – links like `[1 Yes] [2 No]` under the poll line, a prediction asks for the channel points.
+Running polls and predictions (channel bets) of a group's channels show up in a box above its chat, like on
+the websites: the question, a button per option with a bar and its share, the time left, the winner at the end
+(× hides one). **Accounts → Vote in other channels (unofficial) …** makes the buttons vote – a prediction asks for
+the channel points.
 The platforms have no interface for viewers to vote, so MultiChat does what their websites do, with your
 **website login**: **Take over login** reads it from a browser on this computer where you are logged in
 (Firefox, Chrome, Chromium, Brave, Edge, Vivaldi, Opera – the same way as yt-dlp's `--cookies-from-browser`) and

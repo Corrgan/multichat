@@ -17,6 +17,7 @@ from ..video.tiles import VideoPanel
 from .chat_view import ChatView
 from .groups import GroupPanel, normalize_channel, uptime_text
 from .moderation import ActionBar
+from .poll_box import PollBox
 
 log = logging.getLogger("multichat")
 
@@ -78,8 +79,8 @@ class GroupsMixin:
         v.image_failed.connect(self._image_changed)
         v.image_restored.connect(self._image_changed)
         v.name_context.connect(self.on_name_context)
-        v.vote_clicked.connect(self.vote_clicked)
-        v.vote_platforms = self.vote_platforms()
+        panel.poll_box = PollBox(self.poll_box_vote)  # running polls/predictions, above the chat
+        panel.chat_lay.insertWidget(panel.chat_lay.indexOf(panel.action_bar), panel.poll_box)
         v.follow_changed.connect(lambda following, pn=panel: self._follow_changed(pn, following))
         v.held = False  # messages arrived while scrolled up
         if self.panels:  # same look as the others

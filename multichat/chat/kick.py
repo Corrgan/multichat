@@ -11,7 +11,8 @@ import re
 import websockets
 
 from ..core.i18n import _
-from .kick_events import ban_notice, kick_event, kick_notice, kick_vote  # noqa: F401 – kick_event is imported from here elsewhere
+from .kick_events import ban_notice, kick_event, kick_notice  # noqa: F401 – kick_event is imported from here elsewhere
+from .poll_state import kick_state
 from .models import Backoff, ChatMessage, Deletion, Emit, Part, Status, TTLCache, kick_channel, roles, with_extra_emotes as _extra
 
 log = logging.getLogger("multichat.chat")
@@ -176,11 +177,13 @@ def _kick_get(url: str, slug: str) -> dict:
 
 
 def _handle_event(name: str, data: dict, slug: str, emit: Emit, emotes) -> None:
+    if state := kick_state(name, data, slug):  # the box above the chat (polls, predictions)
+        emit(state)
     if notice := kick_notice(name, data, slug):
         user, headline, message = notice
         emit(ChatMessage(platform="kick", channel=slug, user=user, text=_KICK_EMOTE_RE.sub(r"\2", message),
                          parts=_extra(emotes, "kick", slug, kick_parts(message)) if message else [],
-                         event="notice", event_text=headline, vote=kick_vote(name, data)))
+                         event="notice", event_text=headline))
         return
     if name.endswith("ChatMessageEvent"):
         sender = data.get("sender") or {}
@@ -256,9 +259,12 @@ async def run_kick(channel: str, emit: Emit, status: Status, emotes=None) -> Non
                                 _kick_pusher_bad.add(key)
                                 raise KickKeyRejected(f"Kick rejected Pusher key {key} – trying the next one")
                         elif name == "pusher_internal:subscription_succeeded":
-                            log.info("Kick %s: chat subscribed (key %s)", slug, key)
-                            status("kick", "connected ({channel})", channel=slug)
-                            backoff.connected()
+                            if evt.get("channel") in (None, f"chatrooms.{room_id}.v2"):  # not once per extra topic
+                                log.info("Kick %s: chat subscribed (key %s)", slug, key)
+                                status("kick", "connected ({channel})", channel=slug)
+                                backoff.connected()
+                            else:
+                                log.debug("Kick %s: subscribed to %s", slug, evt.get("channel"))
                         else:
                             log.debug("Kick Pusher: %s %s", name, str(evt.get("data"))[:200])
                         continue

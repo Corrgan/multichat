@@ -297,5 +297,11 @@
   "not taken over": "未导入",
   "reading …": "读取中 …",
   "taken over ({name})": "已导入（{name}）",
-  "{platform} login taken over": "已导入 {platform} 登录"
+  "{platform} login taken over": "已导入 {platform} 登录",
+  " points": " 积分",
+  "Hide": "隐藏",
+  "Poll": "投票",
+  "To vote from here: Accounts → Vote in other channels (unofficial) …": "要在此投票：账户 → 在其他频道投票（非官方） …",
+  "bets locked": "已锁定下注",
+  "ended": "已结束"
 }

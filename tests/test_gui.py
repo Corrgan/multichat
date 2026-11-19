@@ -924,27 +924,31 @@ def _wait_for(app, predicate, timeout=3):
     assert predicate(), "expected result did not arrive"
 
 
-def test_vote_links_under_polls_with_the_website_login(window, app, monkeypatch):
-    """Vote links only with the option on and a website login for that platform; a click votes,
-    a prediction asks for the points, the chosen option is marked."""
+def test_poll_box_shows_polls_and_votes_with_the_website_login(window, app, monkeypatch):
+    """Running polls/predictions of a group's channels in a box above its chat, like the websites:
+    a button per option with its share; voting only with the option on and the website login."""
+    from multichat.chat.models import PollState
+
     w = window
     w.panels[0].rows["kick"].edit.setText("corrgan")
     w.config["web_vote"] = False
-    m = ChatMessage("kick", "corrgan", "Kick", "", event="notice", event_text="Poll: Q?",
-                    vote={"kind": "poll", "id": "", "options": [["0", "ja"], ["1", "ne"]]})
-    m.source = "kick:corrgan"
-    p = ChatMessage("kick", "corrgan", "Kick", "", event="notice", event_text="Prediction: Boss?",
-                    vote={"kind": "prediction", "id": "pr1", "options": [["o1", "Klar"], ["o2", "Nee"]]})
-    p.source = "kick:corrgan"
-    w.add_message(m)
-    w.add_message(p)
+
+    def state(**kw):
+        s = PollState(**{"platform": "kick", "channel": "corrgan", "kind": "poll", "id": "ja oder nein",
+                         "title": "ja oder nein", "options": [["0", "ja", 1], ["1", "ne", 3]], **kw})
+        s.source = "kick:corrgan"
+        return s
+
+    w.add_message(state())
     w._flush_messages()
-    assert "vote:" not in w.view.message_html(m)
+    box = w.panels[0].poll_box
+    card = next(iter(box.cards.values()))
+    assert box.isVisibleTo(w) and [b.text() for b in card.buttons] == ["ja   25 % · 1", "ne   75 % · 3"]
+    assert not card.buttons[0].isEnabled() and "Accounts" in card.buttons[0].toolTip()  # voting is off
     monkeypatch.setattr(w.web, "has", lambda platform: platform == "kick")
     w.config["web_vote"] = True
     w._refresh_votes()
-    html_ = w.view.message_html(m)
-    assert "href='vote:0'" in html_ and "[2 ne]" in html_
+    assert card.buttons[0].isEnabled()
     calls = []
 
     async def poll(slug, option):
@@ -955,19 +959,37 @@ def test_vote_links_under_polls_with_the_website_login(window, app, monkeypatch)
 
     monkeypatch.setattr(w.web, "kick_poll", poll)
     monkeypatch.setattr(w.web, "kick_prediction", pred)
-    w.vote_clicked(m.uid, 1)
-    _wait_for(app, lambda: m.vote.get("chosen") == 1)
-    assert calls == [("poll", "corrgan", 1)] and "✔ 2 ne" in w.view.message_html(m)
+    card.buttons[1].click()
+    _wait_for(app, lambda: card.chosen == 1)
+    assert calls == [("poll", "corrgan", 1)] and card.buttons[1].text().startswith("✔ ne")
+    # a channel bet (prediction): asks for the points
     from multichat.ui import vote as vote_ui
     monkeypatch.setattr(vote_ui.QInputDialog, "getInt", lambda *a, **k: (250, True))
-    w.vote_clicked(p.uid, 0)
-    _wait_for(app, lambda: p.vote.get("chosen") == 0)
+    w.add_message(state(kind="prediction", id="pr1", title="Boss?", options=[["o1", "Klar", 0], ["o2", "Nee", 0]]))
+    w._flush_messages()
+    bet = box.cards[("kick:corrgan", "prediction", "pr1")]
+    bet.buttons[0].click()
+    _wait_for(app, lambda: bet.chosen == 0)
     assert calls[-1] == ("pred", "corrgan", "o1", 250)
-    w.vote_clicked(m.uid, 7)  # no such option: nothing
-    assert len(calls) == 2
-    yt = ChatMessage("youtube", "vid", "YouTube", "", event="notice", event_text="Poll: Q?",
-                     vote={"kind": "poll", "id": "yp", "options": [["0", "A"], ["1", "B"]]})
-    assert "vote:" not in w.view.message_html(yt)  # no YouTube website login
+    w.add_message(state(kind="prediction", id="pr1", title="Boss?", options=[["o1", "Klar", 250], ["o2", "Nee", 750]],
+                        status="ended", winner="o2"))
+    w._flush_messages()
+    assert bet.buttons[1].text().startswith("🏆") and not bet.buttons[0].isEnabled() and bet.info.text() == "ended"
+    bet.ended_at -= 60
+    box.tick()
+    assert ("kick:corrgan", "prediction", "pr1") not in box.cards and len(box.cards) == 1
+    w.add_message(state(id="neu", title="neu?"))  # a new Kick poll replaces the old one
+    w._flush_messages()
+    assert list(box.cards) == [("kick:corrgan", "poll", "neu")]
+    box.close_card(("kick:corrgan", "poll", "neu"))  # × hides it, also its later updates
+    w.add_message(state(id="neu", title="neu?"))
+    w._flush_messages()
+    assert not box.cards and not box.isVisibleTo(w)
+    other = state(id="x")
+    other.source = "kick:somebodyelse"  # not in this group
+    w.add_message(other)
+    w._flush_messages()
+    assert not box.cards
 
 
 def test_vote_dialog_is_readable_at_once(window, app):

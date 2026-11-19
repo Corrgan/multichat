@@ -299,7 +299,7 @@ def test_parse_actions_gifts_polls_and_pinned_messages():
         {"updateLiveChatPollAction": "broken"},
         {"closeLiveChatActionPanelAction": {"targetPanelId": 7}},
     ]
-    ev = it.parse_actions(actions, "vid")
+    ev = [e for e in it.parse_actions(actions, "vid") if isinstance(e, ChatMessage)]  # without the box's PollStates
     assert [(m.user, alerts.headline(m), m.text) for m in ev] == [
         ("@syedmustafa3639", "@syedmustafa3639 sent Star", ""),
         ("YouTube", "Poll: Acordar o Renato com qual carro? – Mustang / Porsche GT3 RS", ""),

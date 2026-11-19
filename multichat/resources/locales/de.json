@@ -297,5 +297,11 @@
   "not taken over": "nicht übernommen",
   "reading …": "lese …",
   "taken over ({name})": "übernommen ({name})",
-  "{platform} login taken over": "{platform}-Login übernommen"
+  "{platform} login taken over": "{platform}-Login übernommen",
+  " points": " Punkte",
+  "Hide": "Ausblenden",
+  "Poll": "Umfrage",
+  "To vote from here: Accounts → Vote in other channels (unofficial) …": "Zum Abstimmen von hier: Konten → In anderen Kanälen abstimmen (inoffiziell) …",
+  "bets locked": "Wetten gesperrt",
+  "ended": "beendet"
 }

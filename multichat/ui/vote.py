@@ -6,9 +6,18 @@ click on a vote link under a poll line does. Mixed into MainWindow."""
 from __future__ import annotations
 
 import logging
+from dataclasses import replace
 
+from PyQt6.QtCore import QTimer
 from PyQt6.QtWidgets import (
-    QCheckBox, QComboBox, QDialog, QDialogButtonBox, QGridLayout, QInputDialog, QLabel, QPushButton,
+    QCheckBox,
+    QComboBox,
+    QDialog,
+    QDialogButtonBox,
+    QGridLayout,
+    QInputDialog,
+    QLabel,
+    QPushButton,
     QVBoxLayout,
 )
 
@@ -94,18 +103,35 @@ class WebVoteDialog(QDialog):
 
 
 class VoteMixin:
-    """Vote part of MainWindow (expects web, config, panels, message_by_uid, update_lines, run)."""
+    """Vote part of MainWindow (expects web, config, panels, _route and run): feeds each group's
+    PollBox (ui/poll_box.py) and votes when one of its buttons is clicked."""
 
-    def vote_platforms(self) -> set[str]:
-        if not self.config.get("web_vote"):
-            return set()
-        return {p for p in PLATFORMS if self.web.has(p)}
+    def can_vote(self, platform: str) -> bool:
+        return bool(self.config.get("web_vote")) and self.web.has(platform)
+
+    def _vote_hint(self) -> str:
+        return _("To vote from here: Accounts → Vote in other channels (unofficial) …")
+
+    def poll_box_state(self, state) -> None:
+        """A poll/prediction started, changed or ended in one of the channels."""
+        for panel in self._route.get(state.source, []):
+            panel.poll_box.update_state(replace(state), self.can_vote(state.platform),
+                                        self._vote_hint())
+        if not hasattr(self, "_poll_box_timer"):
+            self._poll_box_timer = QTimer(self, interval=1000)
+            self._poll_box_timer.timeout.connect(self._poll_box_tick)
+        if not self._poll_box_timer.isActive():
+            self._poll_box_timer.start()
+
+    def _poll_box_tick(self) -> None:
+        for panel in self.panels:
+            panel.poll_box.tick()
+        if not any(panel.poll_box.cards for panel in self.panels):
+            self._poll_box_timer.stop()
 
     def _refresh_votes(self) -> None:
-        platforms = self.vote_platforms()
         for panel in self.panels:
-            panel.view.vote_platforms = platforms
-        self.render_all()
+            panel.poll_box.refresh(self.can_vote, self._vote_hint())
 
     def edit_web_vote(self) -> None:
         dlg = WebVoteDialog(self, self.web, bool(self.config.get("web_vote")))
@@ -114,32 +140,31 @@ class VoteMixin:
         self.save_config()
         self._refresh_votes()
 
-    def vote_clicked(self, uid: int, index: int) -> None:
-        msg = self.message_by_uid(uid)
-        v = msg.vote if msg else None
-        if not v or msg.platform not in self.vote_platforms() or not 0 <= index < len(v["options"]):
+    def poll_box_vote(self, card, index: int) -> None:
+        s = card.state
+        if s.status != "active" or not self.can_vote(s.platform) or not 0 <= index < len(s.options):
             return
-        option_id, label = v["options"][index]
+        option_id, label, _value = s.options[index]
         amount = 0
-        if v["kind"] == "prediction":
+        if s.kind == "prediction":
             amount, ok = QInputDialog.getInt(self, _("Prediction"), _("Channel points on “{outcome}”:").format(
                 outcome=label), 100, 1, 1_000_000)
             if not ok:
                 return
-        web, p = self.web, msg.platform
+        web, p = self.web, s.platform
         if p == "kick":
-            coro = web.kick_poll(msg.channel, int(option_id)) if v["kind"] == "poll" else \
-                web.kick_prediction(msg.channel, option_id, amount)
+            coro = web.kick_poll(s.channel, int(option_id)) if s.kind == "poll" else \
+                web.kick_prediction(s.channel, option_id, amount)
         elif p == "twitch":
-            coro = web.twitch_poll(v["id"], option_id) if v["kind"] == "poll" else \
-                web.twitch_prediction(v["id"], option_id, amount)
-        elif p == "youtube" and v["kind"] == "poll":
-            coro = web.youtube_poll(msg.channel, v["id"], index)
+            coro = web.twitch_poll(s.id, option_id) if s.kind == "poll" else \
+                web.twitch_prediction(s.id, option_id, amount)
+        elif p == "youtube" and s.kind == "poll":
+            coro = web.youtube_poll(s.channel, s.id, index)
         else:
             return
-        log.info("Vote: %s %s %s option %d", p, v["kind"], msg.channel, index)
+        log.info("Vote: %s %s %s option %d", p, s.kind, s.channel, index)
 
         def done(_result) -> None:
-            v["chosen"] = index
-            self.update_lines([msg])
+            card.chosen = index
+            card.update_state(card.state, self.can_vote(p), self._vote_hint())
         self.run(coro, then=done, label=_("Voted for “{option}”").format(option=label))

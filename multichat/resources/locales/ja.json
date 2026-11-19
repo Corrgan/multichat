@@ -297,5 +297,11 @@
   "not taken over": "未引き継ぎ",
   "reading …": "読み取り中 …",
   "taken over ({name})": "引き継ぎ済み（{name}）",
-  "{platform} login taken over": "{platform} のログインを引き継ぎました"
+  "{platform} login taken over": "{platform} のログインを引き継ぎました",
+  " points": " ポイント",
+  "Hide": "非表示",
+  "Poll": "投票",
+  "To vote from here: Accounts → Vote in other channels (unofficial) …": "ここから投票するには: アカウント → 他のチャンネルで投票（非公式） …",
+  "bets locked": "締め切り済み",
+  "ended": "終了"
 }

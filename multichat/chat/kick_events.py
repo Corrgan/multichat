@@ -106,22 +106,6 @@ def kick_notice(name: str, data: dict, slug: str) -> tuple[str, str, str] | None
     return None
 
 
-def kick_vote(name: str, data: dict) -> dict | None:
-    """The poll or prediction an event starts, for voting from MultiChat (see ChatMessage.vote)."""
-    if name.endswith("PollUpdateEvent"):
-        poll = data.get("poll") if isinstance(data.get("poll"), dict) else {}
-        options = [[str(o.get("id")), str(o.get("label") or "").strip()] for o in poll.get("options") or []
-                   if isinstance(o, dict) and isinstance(o.get("id"), int)]
-        return {"kind": "poll", "id": "", "options": options} if len(options) >= 2 else None
-    if name.endswith(("PredictionCreated", "PredictionUpdated")):
-        p = data.get("prediction") if isinstance(data.get("prediction"), dict) else {}
-        options = [[str(o.get("id")), str(o.get("title") or "").strip()] for o in p.get("outcomes") or []
-                   if isinstance(o, dict) and isinstance(o.get("id"), str) and o["id"]]
-        if str(p.get("state") or "").upper() == "ACTIVE" and isinstance(p.get("id"), str) and len(options) >= 2:
-            return {"kind": "prediction", "id": p["id"], "options": options}
-    return None
-
-
 def ban_notice(data: dict) -> str:
     """UserBannedEvent → "X was banned" / "X was timed out for 10 min" ("" if no name)."""
     user = data.get("user") if isinstance(data.get("user"), dict) else {}

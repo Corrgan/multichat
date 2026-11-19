@@ -10,6 +10,7 @@ import time
 from collections import OrderedDict
 
 from ..chat import ChatMessage, Deletion
+from ..chat.models import PollState
 from ..core.constants import FAVICONS
 from ..core.i18n import _
 from ..overlay.server import deletion_payload, message_payload
@@ -92,6 +93,9 @@ class MessagesMixin:
         for msg in events:
             if isinstance(msg, Deletion):
                 self._apply_deletion(msg)
+                continue
+            if isinstance(msg, PollState):
+                self.poll_box_state(msg)
                 continue
             self.note_shared(msg)
             if msg.shared_id and not self.panels_for(msg):
