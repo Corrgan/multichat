@@ -243,6 +243,32 @@ With several channel groups, the overlay shows all of them; add one browser sour
 
 The overlay only answers requests from this computer (`127.0.0.1` / `localhost`); other websites open in your browser cannot read the chat through it. Use the URL as copied – addresses such as the machine's LAN IP are rejected.
 
+## Voting in other channels (unofficial)
+
+Running polls and predictions (channel bets) of a group's channels show up in a box above its chat, like on
+the websites: the question, a button per option with a bar and its share, the time left, the winner at the end
+(× hides one). **Accounts → Vote in other channels (unofficial) …** makes the buttons vote – a prediction asks for
+the channel points.
+The platforms have no interface for viewers to vote, so MultiChat does what their websites do, with your
+**website login**: **Take over login** reads it from a browser on this computer where you are logged in
+(Firefox, Chrome, Chromium, Brave, Edge, Vivaldi, Opera – the same way as yt-dlp's `--cookies-from-browser`) and
+keeps only the cookies a vote needs in the system keyring. It is **off by default**:
+
+- the platforms don't allow it in their terms – in the worst case they can restrict your account,
+- it stops working when a website changes,
+- MultiChat only votes when you click.
+
+| Platform | Polls | Predictions |
+|---|---|---|
+| Kick | ✔ | ✔ (channel points) |
+| Twitch | ✔ | ✔ (channel points) – if Twitch asks for its website's integrity check, MultiChat says so; vote in the browser then |
+| YouTube | ✔ | – (YouTube has none) |
+
+Log out in the browser and the taken-over login ends too – take it over again. **Flatpak:** the sandbox doesn't let
+MultiChat read browser profiles; allow it once, e.g. for Firefox:
+`flatpak override --user --filesystem=~/.mozilla:ro io.github.Corrgan.MultiChat`
+(Chrome: `~/.config/google-chrome:ro`, Chromium: `~/.config/chromium:ro`).
+
 ## Troubleshooting / log
 
 - **Help → Copy log** puts the last 300 lines on the clipboard, ready to paste into a chat or an issue.

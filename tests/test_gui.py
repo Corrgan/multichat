@@ -1075,3 +1075,126 @@ def test_twitch_prediction_lock_and_resolve(window, app, monkeypatch):
     w.prediction_bar.buttons[1].click()  # Nein wins
     _wait(app, lambda: w.prediction is None)
     assert calls[-1] == ("end", "pr1", "RESOLVED", "o2") and not w.prediction_bar.isVisibleTo(w)
+
+
+def _wait_for(app, predicate, timeout=3):
+    import time as _t
+
+    end = _t.monotonic() + timeout
+    while _t.monotonic() < end and not predicate():
+        app.processEvents()
+        _t.sleep(0.005)
+    assert predicate(), "expected result did not arrive"
+
+
+def test_poll_box_shows_polls_and_votes_with_the_website_login(window, app, monkeypatch):
+    """Running polls/predictions of a group's channels in a box above its chat, like the websites:
+    a button per option with its share; voting only with the option on and the website login."""
+    from PyQt6.QtWidgets import QToolButton
+
+    from multichat.chat.models import PollState
+
+    w = window
+    w.panels[0].rows["kick"].edit.setText("corrgan")
+    w.config["web_vote"] = False
+
+    def state(**kw):
+        s = PollState(**{"platform": "kick", "channel": "corrgan", "kind": "poll", "id": "ja oder nein",
+                         "title": "ja oder nein", "options": [["0", "ja", 1], ["1", "ne", 3]], **kw})
+        s.source = "kick:corrgan"
+        return s
+
+    w.add_message(state())
+    w._flush_messages()
+    box = w.panels[0].poll_box
+    card = next(iter(box.cards.values()))
+    assert box.isVisibleTo(w) and [b.text() for b in card.buttons] == ["ja   25 % · 1", "ne   75 % · 3"]
+    assert not card.buttons[0].isEnabled() and "Accounts" in card.buttons[0].toolTip()  # voting is off
+    monkeypatch.setattr(w.web, "has", lambda platform: platform == "kick")
+    w.config["web_vote"] = True
+    w._refresh_votes()
+    assert card.buttons[0].isEnabled()
+    calls = []
+
+    async def poll(slug, option):
+        calls.append(("poll", slug, option))
+
+    async def pred(slug, outcome, amount):
+        calls.append(("pred", slug, outcome, amount))
+
+    monkeypatch.setattr(w.web, "kick_poll", poll)
+    monkeypatch.setattr(w.web, "kick_prediction", pred)
+    card.buttons[1].click()
+    _wait_for(app, lambda: card.chosen == 1)
+    assert calls == [("poll", "corrgan", 1)] and card.buttons[1].text().startswith("✔ ne")
+    # a channel bet (prediction): asks for the points
+    from multichat.ui import vote as vote_ui
+    monkeypatch.setattr(vote_ui.QInputDialog, "getInt", lambda *a, **k: (250, True))
+    w.add_message(state(kind="prediction", id="pr1", title="Boss?", options=[["o1", "Klar", 0], ["o2", "Nee", 0]]))
+    w._flush_messages()
+    bet = box.cards[("kick:corrgan", "prediction", "pr1")]
+    bet.buttons[0].click()
+    _wait_for(app, lambda: bet.chosen == 0)
+    assert calls[-1] == ("pred", "corrgan", "o1", 250)
+    w.add_message(state(kind="prediction", id="pr1", title="Boss?", options=[["o1", "Klar", 250], ["o2", "Nee", 750]],
+                        status="ended", winner="o2"))
+    w._flush_messages()
+    assert bet.buttons[1].text().startswith("🏆") and not bet.buttons[0].isEnabled() and bet.info.text() == "ended"
+    bet.ended_at -= 60
+    box.tick()
+    assert ("kick:corrgan", "prediction", "pr1") not in box.cards and len(box.cards) == 1
+    w.add_message(state(id="neu", title="neu?"))  # a new Kick poll replaces the old one
+    w._flush_messages()
+    assert list(box.cards) == [("kick:corrgan", "poll", "neu")]
+    x = next(b for b in box.cards[("kick:corrgan", "poll", "neu")].findChildren(QToolButton) if b.text() == "×")
+    x.click()  # × hides it, also its later updates (a real click: clicked(bool) once swallowed the key)
+    w.add_message(state(id="neu", title="neu?"))
+    w._flush_messages()
+    assert not box.cards and not box.isVisibleTo(w)
+    other = state(id="x")
+    other.source = "kick:somebodyelse"  # not in this group
+    w.add_message(other)
+    w._flush_messages()
+    assert not box.cards
+
+
+def test_vote_dialog_is_readable_at_once(window, app):
+    """It opened too narrow: the warning wrapped into a long column and had to be dragged wider."""
+    from PyQt6.QtGui import QFont
+
+    from multichat.ui.vote import WebVoteDialog
+
+    old = app.font()
+    try:
+        for size in (10, 16):
+            f = QFont(old)
+            f.setPointSizeF(size)
+            app.setFont(f)
+            dlg = WebVoteDialog(window, window.web, False)
+            dlg.show()
+            app.processEvents()
+            assert dlg.width() >= dlg.fontMetrics().averageCharWidth() * 90
+            assert dlg.height() >= dlg.layout().totalHeightForWidth(dlg.width()) - 1  # nothing cut off
+            dlg.close()
+    finally:
+        app.setFont(old)
+
+
+def test_poll_box_says_why_your_own_twitch_prediction_takes_no_bets(window, monkeypatch):
+    """Twitch doesn't let the broadcaster bet in their own predictions: say so instead of greyed buttons."""
+    from multichat.chat.models import PollState
+
+    w = window
+    w.panels[0].rows["twitch"].edit.setText("corrganx")
+    monkeypatch.setattr(w.web, "has", lambda platform: True)
+    monkeypatch.setattr(w.web, "name", lambda platform: "corrganx")
+    w.config["web_vote"] = True
+    for kind, chan in (("prediction", "corrganx"), ("poll", "corrganx")):
+        s = PollState("twitch", chan, kind, f"{kind}1", "Q?", [["a", "A", 0], ["b", "B", 0]])
+        s.source = "twitch:corrganx"
+        w.add_message(s)
+    w._flush_messages()
+    box = w.panels[0].poll_box
+    bet, poll = box.cards[("twitch:corrganx", "prediction", "prediction1")], box.cards[("twitch:corrganx", "poll", "poll1")]
+    assert not bet.buttons[0].isEnabled() and "own channel" in bet.buttons[0].toolTip()
+    assert poll.buttons[0].isEnabled()  # a poll in your own channel: you may vote

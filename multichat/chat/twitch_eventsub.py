@@ -16,11 +16,13 @@ import json
 import logging
 import time
 from collections.abc import Callable
+from dataclasses import replace
 
 import websockets
 
 from ..accounts.oauth import ApiError
 from .models import Backoff, ChatMessage
+from .poll_state import twitch_eventsub_state
 from .twitch_eventsub_events import SUBSCRIPTIONS, eventsub_text
 from .twitch_hermes import HermesClient
 
@@ -163,6 +165,10 @@ class EventSubClient:
     def _notify(self, sub_type: str, event) -> None:
         text = eventsub_text(sub_type, event)
         login = str(event.get("broadcaster_user_login") or "").lower() if isinstance(event, dict) else ""
+        if state := twitch_eventsub_state(sub_type, event, login):  # the box above the chat
+            for key, channel in self.channels().items():
+                if channel == login:
+                    self.emit(replace(state), key)
         if not text:
             return
         for key, channel in self.channels().items():  # a channel that was disconnected meanwhile gets nothing

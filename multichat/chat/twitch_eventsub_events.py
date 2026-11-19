@@ -14,8 +14,10 @@ SUBSCRIPTIONS: dict[str, tuple[str, bool]] = {
     "channel.follow": ("2", False),
     "channel.channel_points_custom_reward_redemption.add": ("1", True),
     "channel.poll.begin": ("1", True),
+    "channel.poll.progress": ("1", True),  # votes, for the box above the chat (no line)
     "channel.poll.end": ("1", True),
     "channel.prediction.begin": ("1", True),
+    "channel.prediction.progress": ("1", True),
     "channel.prediction.lock": ("1", True),
     "channel.prediction.end": ("1", True),
     "channel.hype_train.begin": ("2", True),

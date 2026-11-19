@@ -184,6 +184,42 @@ def user_key(m: "ChatMessage") -> str:
     return m.user_id or m.user.lower()
 
 
+MAX_POLL_OPTIONS = 10
+
+
+@dataclass
+class PollState:
+    """The running state of a poll or prediction (chat/poll_state.py makes them), for the box
+    above the chat. status: "active", "locked" (prediction: no more bets), "ended" (result,
+    shown a little longer) or "gone" (archived: away at once)."""
+    platform: str
+    channel: str
+    kind: str  # "poll" | "prediction"
+    id: str
+    title: str
+    options: list  # [[option ID, label, votes or points], …] – YouTube: percentages (percent=True)
+    status: str = "active"
+    ends_at: float = 0.0  # Unix time when voting ends, 0 if unknown
+    winner: str = ""  # option ID
+    percent: bool = False
+    source: str = ""  # like ChatMessage.source
+
+    def __post_init__(self) -> None:  # from the platforms' servers: clamp like ChatMessage
+        self.title = _SPOOF_RE.sub(" ", _clean_text(self.title))[:MAX_EVENT_TEXT]
+        self.options = [[str(o[0])[:100], _SPOOF_RE.sub(" ", _clean_text(str(o[1])))[:60], max(0.0, float(o[2]))]
+                        for o in self.options[:MAX_POLL_OPTIONS]]
+
+    @property
+    def total(self) -> float:
+        return sum(o[2] for o in self.options)
+
+    def share(self, i: int) -> int:
+        """Percent of option i."""
+        if self.percent:
+            return round(self.options[i][2])
+        return round(100 * self.options[i][2] / self.total) if self.total else 0
+
+
 @dataclass
 class Deletion:
     platform: str

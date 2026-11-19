@@ -117,7 +117,7 @@ class Harness:
         monkeypatch.setattr(th, "POLL", 0.02)
         monkeypatch.setattr(th, "KEEPALIVE_BUFFER", 0.0)
         monkeypatch.setattr(th, "Backoff", lambda: type("B", (), {"connected": lambda s: None, "next": lambda s: 0})())
-        self.sockets, self.events, self.log, self.lookups = [], [], [], []
+        self.sockets, self.events, self.log, self.lookups, self.states = [], [], [], [], []
         self.channels = channels if channels is not None else {"twitch:alpha": "alpha", "twitch:me": "me"}
         self.covered = set(covered)  # (login, EventSub type)
 
@@ -134,7 +134,8 @@ class Harness:
                 raise ValueError("unknown channel")
             return {"alpha": "100", "me": "10", "beta": "200"}[login]
 
-        self.client = th.HermesClient(lambda: self.channels, lambda ev, key: self.events.append((key, ev.event_text)),
+        self.client = th.HermesClient(lambda: self.channels, lambda ev, key: self.events.append((key, ev.event_text))
+                                      if hasattr(ev, "event_text") else self.states.append((key, ev)),
                                       lambda login, kind: (login, kind) in self.covered, lambda: None, connect, lookup)
 
     async def until(self, pred, what="condition"):
@@ -184,6 +185,7 @@ def test_what_eventsub_brings_is_left_out(monkeypatch):
         await h.until(lambda: h.events, "prediction")
         await asyncio.sleep(0.05)
         assert h.events == [("twitch:me", "Prediction: Win? – Yes / No")]
+        assert [(k, s.kind, s.status) for k, s in h.states] == [("twitch:me", "prediction", "active")]  # the box
 
     run(scenario, monkeypatch, covered={("me", "channel.poll.begin")})
 

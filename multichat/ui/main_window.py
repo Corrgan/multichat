@@ -25,6 +25,7 @@ from PyQt6.QtWidgets import (
 
 from ..accounts import KickAccount, SecretStore, TwitchAccount, YouTubeAccount
 from ..accounts.store import choose_backend
+from ..accounts.web import WebLogins
 from ..chat import ChatMessage, EmoteStore
 from ..core import i18n
 from ..core.config import CONF_DIR, OVERLAY_PORT, clean_groups, load_config, load_config_apps, save_config
@@ -49,6 +50,7 @@ from .window_groups import MAX_MESSAGES, GroupsMixin
 from .window_messages import FLUSH_MS, MessagesMixin
 from .window_send import SendMixin
 from .poll import PollMixin
+from .vote import VoteMixin
 from ..core.config import MAX_GROUPS
 
 log = logging.getLogger("multichat")
@@ -69,7 +71,7 @@ class Bridge(QObject):
     update = pyqtSignal(str, str)  # newer version, release page
 
 
-class MainWindow(GroupsMixin, ConnectionsMixin, MessagesMixin, SendMixin, PollMixin, QMainWindow):
+class MainWindow(GroupsMixin, ConnectionsMixin, MessagesMixin, SendMixin, PollMixin, VoteMixin, QMainWindow):
     """The window itself: construction, menus, settings, accounts, overlay, shutdown. The
     rest lives in the mixins: groups (window_groups), chat connections (window_connections),
     the message pipeline (window_messages) and the send line (window_send)."""
@@ -107,6 +109,8 @@ class MainWindow(GroupsMixin, ConnectionsMixin, MessagesMixin, SendMixin, PollMi
         log.info("Secrets: stored in %s", backend.name)
         args = (store, self.app_creds, lambda: self.session)
         self.accounts = {"twitch": TwitchAccount(*args), "kick": KickAccount(*args), "youtube": YouTubeAccount(*args)}
+        # website logins taken over from a browser, to vote in other channels (off by default, ui/vote.py)
+        self.web = WebLogins(SecretStore("web", backend, files), lambda: self.session)
         self.overlay = OverlayServer(self.loop)
         qt_formats = {bytes(f).decode().lower() for f in QImageReader.supportedImageFormats()}
         # gif before png: 7TV only offers GIF (not PNG) for animated emotes when WebP is unavailable
@@ -382,6 +386,7 @@ class MainWindow(GroupsMixin, ConnectionsMixin, MessagesMixin, SendMixin, PollMi
                 a = m.addAction(_("Log in to {platform} …").format(platform=NAMES[p]))
                 a.triggered.connect(lambda _checked=False, p=p: self.login(p))
         m.addSeparator()
+        m.addAction(_("Vote in other channels (unofficial) …")).triggered.connect(self.edit_web_vote)
         m.addAction(_("Set up developer apps …")).triggered.connect(self.edit_apps)
 
     # ---- Helpers --------------------------------------------------------- #

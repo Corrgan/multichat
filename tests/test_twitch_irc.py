@@ -156,8 +156,9 @@ def test_kick_rewards_pins_polls_and_replies_are_shown():
 
     got = []
 
-    def feed(name, data):
-        kick._handle_event(name, data, "examplekick", got.append, None)
+    def feed(name, data):  # the chat lines (the box above the chat gets PollStates, see test_web_vote)
+        kick._handle_event(name, data, "examplekick", lambda ev: got.append(ev) if hasattr(ev, "event_text") else None,
+                           None)
 
     feed("RewardRedeemedEvent", {"username": "Viewer", "reward_title": "Hydrate", "user_input": "drink!"})
     feed("App\\Events\\PinnedMessageCreatedEvent", {"message": {"content": "Rules: be nice", "sender": {"username": "Mod"}}})
@@ -270,9 +271,11 @@ def test_kick_reads_kicks_rewards_and_gifted_subs_topics(monkeypatch):
 
     from multichat.chat import alerts, kick
 
-    sent, got = [], []
+    sent, got, statuses = [], [], []
     frames = [
         {"event": "pusher_internal:subscription_succeeded", "channel": "chatrooms.3852600.v2"},
+        {"event": "pusher_internal:subscription_succeeded", "channel": "chatroom_3852600"},
+        {"event": "pusher_internal:subscription_succeeded", "channel": "channel_3862536"},
         {"event": "RewardRedeemedEvent", "channel": "chatroom_3852600", "data": json.dumps(
             {"reward_title": "Hydrate", "user_id": 80807837, "channel_id": 3862536, "username": "wilito_qp",
              "user_input": "", "reward_background_color": "#FFFFFF"})},
@@ -311,7 +314,8 @@ def test_kick_reads_kicks_rewards_and_gifted_subs_topics(monkeypatch):
     monkeypatch.setattr(kick, "_fetch_kick_pusher_creds", lambda: ("key", "us2"))
     monkeypatch.setattr(kick.websockets, "connect", lambda url: Socket())
     try:  # time limit: on any error run_kick retries forever instead of failing
-        asyncio.run(asyncio.wait_for(kick.run_kick("examplekick", got.append, lambda *a, **kw: None), 5))
+        asyncio.run(asyncio.wait_for(kick.run_kick("examplekick", lambda ev: hasattr(ev, "event_text") and got.append(ev),
+                                                   lambda _p, template, **kw: statuses.append(template)), 5))
     except asyncio.CancelledError:
         pass
     assert [s["data"]["channel"] for s in sent] == ["chatrooms.3852600.v2", "chatroom_3852600", "channel_3862536",
@@ -322,6 +326,7 @@ def test_kick_reads_kicks_rewards_and_gifted_subs_topics(monkeypatch):
         ("alkubaisy94", "gift", alerts.headline(got[2])),
     ]
     assert got[1].event_value == 100 and got[2].event_value == 1
+    assert statuses.count("connected ({channel})") == 1  # one per connection, not one per topic
 
 
 def test_kick_topics_without_channel_id():
@@ -338,8 +343,9 @@ def test_kick_predictions_and_goals():
 
     got = []
 
-    def feed(name, data):
-        kick._handle_event(name, data, "examplekick", got.append, None)
+    def feed(name, data):  # the chat lines (the box above the chat gets PollStates, see test_web_vote)
+        kick._handle_event(name, data, "examplekick", lambda ev: got.append(ev) if hasattr(ev, "event_text") else None,
+                           None)
 
     outcomes = [{"id": "o1", "title": "Klar!", "total_vote_amount": 0, "vote_count": 0, "top_users": []},
                 {"id": "o2", "title": "Neeeeee!", "total_vote_amount": 0, "vote_count": 0, "top_users": []}]
