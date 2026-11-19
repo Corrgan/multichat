@@ -67,6 +67,10 @@ class WebVoteDialog(QDialog):
         bb.rejected.connect(self.accept)
         lay.addWidget(bb)
         self._show()
+        # wide enough for the warning and the rows at the current font, as high as the wrapped text needs
+        # (Qt's own guess for word-wrapped labels was a narrow, unreadable window)
+        width = max(self.sizeHint().width(), self.fontMetrics().averageCharWidth() * 95)
+        self.resize(width, max(self.sizeHint().height(), lay.totalHeightForWidth(width)))
 
     def _show(self) -> None:
         for p, label in self.status.items():

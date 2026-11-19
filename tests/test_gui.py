@@ -968,3 +968,25 @@ def test_vote_links_under_polls_with_the_website_login(window, app, monkeypatch)
     yt = ChatMessage("youtube", "vid", "YouTube", "", event="notice", event_text="Poll: Q?",
                      vote={"kind": "poll", "id": "yp", "options": [["0", "A"], ["1", "B"]]})
     assert "vote:" not in w.view.message_html(yt)  # no YouTube website login
+
+
+def test_vote_dialog_is_readable_at_once(window, app):
+    """It opened too narrow: the warning wrapped into a long column and had to be dragged wider."""
+    from PyQt6.QtGui import QFont
+
+    from multichat.ui.vote import WebVoteDialog
+
+    old = app.font()
+    try:
+        for size in (10, 16):
+            f = QFont(old)
+            f.setPointSizeF(size)
+            app.setFont(f)
+            dlg = WebVoteDialog(window, window.web, False)
+            dlg.show()
+            app.processEvents()
+            assert dlg.width() >= dlg.fontMetrics().averageCharWidth() * 90
+            assert dlg.height() >= dlg.layout().totalHeightForWidth(dlg.width()) - 1  # nothing cut off
+            dlg.close()
+    finally:
+        app.setFont(old)
