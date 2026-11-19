@@ -314,7 +314,8 @@ def test_kick_reads_kicks_rewards_and_gifted_subs_topics(monkeypatch):
         asyncio.run(asyncio.wait_for(kick.run_kick("examplekick", got.append, lambda *a, **kw: None), 5))
     except asyncio.CancelledError:
         pass
-    assert [s["data"]["channel"] for s in sent] == ["chatrooms.3852600.v2", "chatroom_3852600", "channel_3862536"]
+    assert [s["data"]["channel"] for s in sent] == ["chatrooms.3852600.v2", "chatroom_3852600", "channel_3862536",
+                                                    "predictions-channel-3862536"]
     assert [(m.user, m.event, alerts.headline(m)) for m in got] == [
         ("wilito_qp", "notice", "wilito_qp redeemed Hydrate"),
         ("finnysfinn", "bits", alerts.headline(got[1])),
@@ -327,4 +328,37 @@ def test_kick_topics_without_channel_id():
     from multichat.chat import kick
 
     assert kick.kick_topics(5, None) == ["chatrooms.5.v2", "chatroom_5"]
-    assert kick.kick_topics(5, 9) == ["chatrooms.5.v2", "chatroom_5", "channel_9"]
+    assert kick.kick_topics(5, 9) == ["chatrooms.5.v2", "chatroom_5", "channel_9", "predictions-channel-9"]
+
+
+def test_kick_predictions_and_goals():
+    """Start and result of a prediction once each (every bet sends an update), a goal reached.
+    Payloads from a Nov 2026 capture."""
+    from multichat.chat import alerts, kick
+
+    got = []
+
+    def feed(name, data):
+        kick._handle_event(name, data, "examplekick", got.append, None)
+
+    outcomes = [{"id": "o1", "title": "Klar!", "total_vote_amount": 0, "vote_count": 0, "top_users": []},
+                {"id": "o2", "title": "Neeeeee!", "total_vote_amount": 0, "vote_count": 0, "top_users": []}]
+    pred = {"id": "01M7Q1F40N3QYM6TAADBHX51HN", "channel_id": 5818636, "title": "Sitzt Top 10 drin?",
+            "outcomes": outcomes, "duration": 60}
+    feed("PredictionCreated", {"prediction": {**pred, "state": "ACTIVE"}})
+    feed("PredictionUpdated", {"prediction": {**pred, "state": "ACTIVE"}})  # a bet: no line
+    feed("PredictionUpdated", {"prediction": {**pred, "state": "LOCKED"}})
+    feed("PredictionUpdated", {"prediction": {**pred, "state": "RESOLVED", "winning_outcome_id": "o1"}})
+    feed("PredictionUpdated", {"prediction": {**pred, "state": "RESOLVED", "winning_outcome_id": "o1"}})
+    feed("PredictionUpdated", {"prediction": {**pred, "id": "other", "state": "CANCELLED"}})
+    feed("PredictionUpdated", {"prediction": "broken"})
+    feed("GoalAchievedEvent", {"id": "chgoal_01M5SYJ2HBN75WMYZE7J93XAZY", "type": "subscriptions",
+                               "target_value": 4000, "current_value": 4000, "status": "achieved"})
+    feed("GoalAchievedEvent", {"id": "chgoal_01M5SYJ2HBN75WMYZE7J93XAZY", "type": "subscriptions",
+                               "target_value": 4000, "current_value": 4000, "status": "achieved"})
+    assert [alerts.headline(m) for m in got] == [
+        "Prediction: Sitzt Top 10 drin? – Klar! / Neeeeee!",
+        "Prediction ended: Sitzt Top 10 drin? – winner: Klar!",
+        "Prediction canceled: Sitzt Top 10 drin?",
+        "Goal reached: 4000 subscriptions",
+    ]

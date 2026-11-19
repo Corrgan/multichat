@@ -118,11 +118,12 @@ def _fetch_kick_channel(slug: str) -> tuple[int, str, int | None]:
 
 
 def kick_topics(room_id: int, channel_id: int | None) -> list[str]:
-    """Pusher channels to read: the chat itself plus the two older topics where Kick sends
-    Kicks (channel_<id>), redeemed rewards and gifted subs (chatroom_<id>) – the handlers for
-    those existed, but nothing subscribed them (Nov 2026 capture: 2,500 Kicks, 5,900 rewards a night).
-    chatrooms.<id> and predictions-channel-<id> are left out: duplicates resp. not shown."""
-    return [f"chatrooms.{room_id}.v2", f"chatroom_{room_id}"] + ([f"channel_{channel_id}"] if channel_id else [])
+    """Pusher channels to read: the chat itself plus the older topics where Kick sends Kicks and
+    goals (channel_<id>), redeemed rewards and gifted subs (chatroom_<id>) and predictions
+    (predictions-channel-<id>) – the handlers for those existed, but nothing subscribed them
+    (Nov 2026 capture: 2,500 Kicks, 5,900 rewards a night). chatrooms.<id> is left out: duplicates."""
+    return [f"chatrooms.{room_id}.v2", f"chatroom_{room_id}"] + (
+        [f"channel_{channel_id}", f"predictions-channel-{channel_id}"] if channel_id else [])
 
 
 def fetch_kick_json(slug: str) -> dict:

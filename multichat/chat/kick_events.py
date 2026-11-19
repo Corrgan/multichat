@@ -42,11 +42,22 @@ def kick_event(name: str, data: dict) -> tuple[str, str, float, str] | None:
 
 
 _polls_shown: OrderedDict[tuple[str, str], None] = OrderedDict()  # a poll sends an update per vote
+_predictions_shown: OrderedDict[tuple[str, str], None] = OrderedDict()  # (prediction ID, state) – an update per bet
+
+
+def _first(store: OrderedDict, key) -> bool:
+    """True the first time `key` is seen (the last 50 are remembered)."""
+    if key in store:
+        return False
+    store[key] = None
+    while len(store) > 50:
+        store.popitem(last=False)
+    return True
 
 
 def kick_notice(name: str, data: dict, slug: str) -> tuple[str, str, str] | None:
     """What else Kick shows in its chat → (user, headline, message): redeemed rewards,
-    pinned messages, polls. These website events are undocumented – anything that does
+    pinned messages, polls, predictions (start and result), goals reached. These website events are undocumented – anything that does
     not look as expected is left to the verbose log (kick_event) instead of guessed at."""
     def text(value) -> str:
         return value.strip() if isinstance(value, str) else ""
@@ -71,6 +82,27 @@ def kick_notice(name: str, data: dict, slug: str) -> tuple[str, str, str] | None
             while len(_polls_shown) > 50:
                 _polls_shown.popitem(last=False)
             return "Kick", _("Poll: {title}").format(title=title), " · ".join(options)
+    elif name.endswith(("PredictionCreated", "PredictionUpdated")):  # predictions-channel-<channel ID>
+        p = data.get("prediction") if isinstance(data.get("prediction"), dict) else {}
+        pid, title, state = text(p.get("id")), text(p.get("title")) or "?", text(p.get("state")).upper()
+        outcomes = {text(o.get("id")): text(o.get("title")) for o in p.get("outcomes") or [] if isinstance(o, dict)}
+        # every bet sends an update: one line when it starts (also when MultiChat connects during it) and one at the end
+        if pid and state == "ACTIVE" and _first(_predictions_shown, (pid, "ACTIVE")):
+            options = " / ".join(o for o in outcomes.values() if o)
+            return "Kick", (_("Prediction: {title} – {options}").format(title=title, options=options) if options
+                            else _("Prediction: {title}").format(title=title)), ""
+        if pid and state == "RESOLVED" and _first(_predictions_shown, (pid, "END")):
+            winner = outcomes.get(text(p.get("winning_outcome_id")), "")
+            return "Kick", (_("Prediction ended: {title} – winner: {winner}").format(title=title, winner=winner) if winner
+                            else _("Prediction ended: {title}").format(title=title)), ""
+        if pid and state in ("CANCELLED", "CANCELED") and _first(_predictions_shown, (pid, "END")):
+            return "Kick", _("Prediction canceled: {title}").format(title=title), ""
+    elif name.endswith("GoalAchievedEvent"):  # channel_<channel ID>
+        target = data.get("target_value")
+        kind = text(data.get("type")).replace("_", " ")
+        what = f"{target} {kind}".strip() if isinstance(target, int) and target > 0 else kind
+        if _first(_predictions_shown, (text(data.get("id")) or what, "GOAL")):
+            return "Kick", _("Goal reached: {goal}").format(goal=what) if what else _("Goal reached"), ""
     return None
 
 

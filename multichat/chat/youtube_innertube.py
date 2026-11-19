@@ -21,7 +21,7 @@ import aiohttp
 
 from .alerts import parse_amount
 from .models import ChatMessage, Deletion, Emit, Part, roles
-from .youtube_notices import _text, notice
+from .youtube_notices import _text, chat_command, notice
 
 log = logging.getLogger("multichat.chat")
 
@@ -198,6 +198,8 @@ def parse_actions(actions: list, video_id: str) -> list:
             if (isinstance(mid, str) and mid and isinstance(d.get("replacementItem"), dict)
                     and "liveChatPlaceholderItemRenderer" in d["replacementItem"]):
                 events.append(Deletion("youtube", msg_id=mid))
+        elif line := chat_command(a, video_id):  # polls, pinned messages
+            events.append(line)
     return events
 
 
