@@ -31,12 +31,30 @@ class ChatPoll:
         self.ends_at = now() + seconds if seconds > 0 else None
         self.ended = False
         self.votes: dict[tuple[str, str], int] = {}  # (platform, voter) → option index
-        self.counts = [0] * len(options)
+        self.chat_counts = [0] * len(options)
         self.per_platform: dict[str, list[int]] = {}
+        # the platforms' own polls running alongside ("twitch", "youtube" → votes per option);
+        # there the chat's !1 … don't count, so nobody votes twice
+        self.native: dict[str, list[int]] = {}
+
+    def add_native(self, platform: str) -> None:
+        self.native[platform] = [0] * len(self.options)
+
+    def set_native(self, platform: str, votes: list[int]) -> bool:
+        """The latest votes of a platform's own poll. True if they changed."""
+        votes = [max(0, int(v)) for v in votes[:len(self.options)]] + [0] * max(0, len(self.options) - len(votes))
+        if platform not in self.native or self.native[platform] == votes:
+            return False
+        self.native[platform] = votes
+        return True
+
+    @property
+    def counts(self) -> list[int]:
+        return [c + sum(n[i] for n in self.native.values()) for i, c in enumerate(self.chat_counts)]
 
     def vote(self, msg: ChatMessage) -> bool:
         """Counts `msg` if it is a vote in one of the poll's channels. True if the tally changed."""
-        if self.ended or msg.event or msg.source not in self.sources:
+        if self.ended or msg.event or msg.source not in self.sources or msg.platform in self.native:
             return False
         m = _VOTE.match(msg.text or "")
         if not m:
@@ -49,16 +67,16 @@ class ChatPoll:
         if old == choice or (old is None and len(self.votes) >= MAX_VOTERS):
             return False
         if old is not None:
-            self.counts[old] -= 1
+            self.chat_counts[old] -= 1
             self.per_platform[msg.platform][old] -= 1
         self.votes[key] = choice
-        self.counts[choice] += 1
+        self.chat_counts[choice] += 1
         self.per_platform.setdefault(msg.platform, [0] * len(self.options))[choice] += 1
         return True
 
     @property
     def total(self) -> int:
-        return len(self.votes)
+        return len(self.votes) + sum(sum(n) for n in self.native.values())
 
     def remaining(self) -> int | None:
         """Seconds left (None without a time limit)."""
@@ -71,14 +89,19 @@ class ChatPoll:
         self.ended = True
 
     def percent(self, i: int) -> int:
-        return round(100 * self.counts[i] / self.total) if self.total else 0
+        total = self.total
+        return round(100 * self.counts[i] / total) if total else 0
 
     def winners(self) -> list[int]:
-        best = max(self.counts)
-        return [i for i, n in enumerate(self.counts) if n == best] if best else []
+        counts = self.counts
+        best = max(counts)
+        return [i for i, n in enumerate(counts) if n == best] if best else []
 
-    def announcement(self) -> str:
-        """What is sent to the chats when the poll starts."""
+    def announcement(self, platform: str = "") -> str:
+        """What is sent to a chat when the poll starts – where the platform's own poll runs,
+        without the !1 … (people vote there)."""
+        if platform in self.native:
+            return _("Poll: {title} – {options}").format(title=self.question, options=" / ".join(self.options))
         options = " / ".join(f"!{i + 1} {o}" for i, o in enumerate(self.options))
         return _("Poll: {title} – {options}").format(title=self.question, options=options)
 
@@ -95,8 +118,8 @@ class ChatPoll:
         """For the OBS overlay."""
         return {
             "type": "poll", "state": "ended" if self.ended else "active", "question": self.question,
-            "options": [{"n": i + 1, "text": o, "votes": self.counts[i], "pct": self.percent(i),
-                         "win": self.ended and i in self.winners()} for i, o in enumerate(self.options)],
+            "options": [{"n": i + 1, "text": o, "votes": n, "pct": self.percent(i),
+                         "win": self.ended and i in self.winners()} for i, (o, n) in enumerate(zip(self.options, self.counts))],
             "total": self.total, "remaining": self.remaining(), "groups": groups or [],
             "label": _("{n} votes").format(n=self.total) if self.ended
             else _("{n} votes · answer with !1, !2 …").format(n=self.total),

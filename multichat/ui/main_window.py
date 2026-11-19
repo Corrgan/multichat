@@ -321,6 +321,7 @@ class MainWindow(GroupsMixin, ConnectionsMixin, MessagesMixin, SendMixin, PollMi
         poll = view.addAction(_("Chat poll …"))
         poll.setShortcut(QKeySequence("Ctrl+P"))
         poll.triggered.connect(self.start_poll_dialog)
+        view.addAction(_("Twitch prediction …")).triggered.connect(self.start_prediction_dialog)
         font = view.addMenu(_("Chat font size"))
         for label, keys, step in ((_("Larger"), ("Ctrl++", "Ctrl+="), 2), (_("Smaller"), ("Ctrl+-",), -2),
                                   (_("Default size"), ("Ctrl+0",), 0)):
