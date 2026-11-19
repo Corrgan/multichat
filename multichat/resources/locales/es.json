@@ -303,5 +303,6 @@
   "Poll": "Encuesta",
   "To vote from here: Accounts → Vote in other channels (unofficial) …": "Para votar desde aquí: Cuentas → Votar en otros canales (no oficial) …",
   "bets locked": "apuestas cerradas",
-  "ended": "terminada"
+  "ended": "terminada",
+  "Twitch doesn't let you bet in the predictions of your own channel": "Twitch no te deja apostar en las predicciones de tu propio canal"
 }

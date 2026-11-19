@@ -109,14 +109,21 @@ class VoteMixin:
     def can_vote(self, platform: str) -> bool:
         return bool(self.config.get("web_vote")) and self.web.has(platform)
 
-    def _vote_hint(self) -> str:
-        return _("To vote from here: Accounts → Vote in other channels (unofficial) …")
+    def vote_block(self, state) -> str:
+        """Why a click can't vote in this poll/prediction ("" = it can)."""
+        if not self.can_vote(state.platform):
+            return _("To vote from here: Accounts → Vote in other channels (unofficial) …")
+        if state.platform == "twitch" and state.kind == "prediction":
+            own = {n.lower() for n in (self.web.name("twitch"), self.accounts["twitch"].user_name) if n}
+            if state.channel.lower() in own:
+                return _("Twitch doesn't let you bet in the predictions of your own channel")
+        return ""
 
     def poll_box_state(self, state) -> None:
         """A poll/prediction started, changed or ended in one of the channels."""
+        why = self.vote_block(state)
         for panel in self._route.get(state.source, []):
-            panel.poll_box.update_state(replace(state), self.can_vote(state.platform),
-                                        self._vote_hint())
+            panel.poll_box.update_state(replace(state), not why, why)
         if not hasattr(self, "_poll_box_timer"):
             self._poll_box_timer = QTimer(self, interval=1000)
             self._poll_box_timer.timeout.connect(self._poll_box_tick)
@@ -131,7 +138,7 @@ class VoteMixin:
 
     def _refresh_votes(self) -> None:
         for panel in self.panels:
-            panel.poll_box.refresh(self.can_vote, self._vote_hint())
+            panel.poll_box.refresh(self.vote_block)
 
     def edit_web_vote(self) -> None:
         dlg = WebVoteDialog(self, self.web, bool(self.config.get("web_vote")))
@@ -142,7 +149,7 @@ class VoteMixin:
 
     def poll_box_vote(self, card, index: int) -> None:
         s = card.state
-        if s.status != "active" or not self.can_vote(s.platform) or not 0 <= index < len(s.options):
+        if s.status != "active" or self.vote_block(s) or not 0 <= index < len(s.options):
             return
         option_id, label, _value = s.options[index]
         amount = 0
@@ -166,5 +173,6 @@ class VoteMixin:
 
         def done(_result) -> None:
             card.chosen = index
-            card.update_state(card.state, self.can_vote(p), self._vote_hint())
+            why = self.vote_block(card.state)
+            card.update_state(card.state, not why, why)
         self.run(coro, then=done, label=_("Voted for “{option}”").format(option=label))

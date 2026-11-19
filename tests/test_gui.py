@@ -1012,3 +1012,23 @@ def test_vote_dialog_is_readable_at_once(window, app):
             dlg.close()
     finally:
         app.setFont(old)
+
+
+def test_poll_box_says_why_your_own_twitch_prediction_takes_no_bets(window, monkeypatch):
+    """Twitch doesn't let the broadcaster bet in their own predictions: say so instead of greyed buttons."""
+    from multichat.chat.models import PollState
+
+    w = window
+    w.panels[0].rows["twitch"].edit.setText("corrganx")
+    monkeypatch.setattr(w.web, "has", lambda platform: True)
+    monkeypatch.setattr(w.web, "name", lambda platform: "corrganx")
+    w.config["web_vote"] = True
+    for kind, chan in (("prediction", "corrganx"), ("poll", "corrganx")):
+        s = PollState("twitch", chan, kind, f"{kind}1", "Q?", [["a", "A", 0], ["b", "B", 0]])
+        s.source = "twitch:corrganx"
+        w.add_message(s)
+    w._flush_messages()
+    box = w.panels[0].poll_box
+    bet, poll = box.cards[("twitch:corrganx", "prediction", "prediction1")], box.cards[("twitch:corrganx", "poll", "poll1")]
+    assert not bet.buttons[0].isEnabled() and "own channel" in bet.buttons[0].toolTip()
+    assert poll.buttons[0].isEnabled()  # a poll in your own channel: you may vote

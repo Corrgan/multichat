@@ -303,5 +303,6 @@
   "Poll": "投票",
   "To vote from here: Accounts → Vote in other channels (unofficial) …": "ここから投票するには: アカウント → 他のチャンネルで投票（非公式） …",
   "bets locked": "締め切り済み",
-  "ended": "終了"
+  "ended": "終了",
+  "Twitch doesn't let you bet in the predictions of your own channel": "Twitch では自分のチャンネルの予想には賭けられません"
 }

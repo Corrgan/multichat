@@ -159,10 +159,11 @@ class PollBox(QWidget):
         self._remove(key)
         self.setVisible(bool(self.cards))
 
-    def refresh(self, can_vote, why: str) -> None:
-        """After the vote setting or a login changed."""
+    def refresh(self, block) -> None:
+        """After the vote setting or a login changed – block(state): why one can't vote ("" = can)."""
         for card in self.cards.values():
-            card.update_state(card.state, can_vote(card.state.platform), why)
+            why = block(card.state)
+            card.update_state(card.state, not why, why)
 
     def _remove(self, key: tuple) -> None:
         card = self.cards.pop(key, None)

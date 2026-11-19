@@ -303,5 +303,6 @@
   "Poll": "投票",
   "To vote from here: Accounts → Vote in other channels (unofficial) …": "要在此投票：账户 → 在其他频道投票（非官方） …",
   "bets locked": "已锁定下注",
-  "ended": "已结束"
+  "ended": "已结束",
+  "Twitch doesn't let you bet in the predictions of your own channel": "Twitch 不允许你在自己频道的预测中下注"
 }
