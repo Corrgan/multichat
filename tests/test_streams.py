@@ -107,13 +107,13 @@ def test_kick_channel_info_is_shared(monkeypatch):
     def slow(url, slug):
         calls.append(url)
         _time.sleep(0.2)
-        return {"chatroom": {"id": 5}, "user_id": 7}
+        return {"chatroom": {"id": 5}, "user_id": 7, "id": 9}
 
     monkeypatch.setattr(kick, "_kick_get", slow)
     both = [threading.Thread(target=kick.fetch_kick_json, args=("examplekick",)) for _ in range(2)]
     for t in both:
         t.start()
-    assert kick._fetch_kick_channel("Examplekick") == (5, "7")
+    assert kick._fetch_kick_channel("Examplekick") == (5, "7", 9)
     for t in both:
         t.join()
     assert len(calls) == 1  # three callers at once, one request

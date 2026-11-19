@@ -260,3 +260,71 @@ def test_quoted_text_cannot_turn_round_the_message_below(monkeypatch):
     got = _read("@reply-parent-display-name=Alice;reply-parent-msg-body=hi‮evil;display-name=Bob;id=r2;"
                 "room-id=1;user-id=8 :bob!bob@bob.tmi.twitch.tv PRIVMSG #examplechan :ok", monkeypatch)
     assert "‮" not in alerts.headline(got[0]) and alerts.headline(got[0]) == "Reply to Alice: hi evil"
+
+
+def test_kick_reads_kicks_rewards_and_gifted_subs_topics(monkeypatch):
+    """Kicks, redeemed rewards and gifted subs come on channel_<id> / chatroom_<id>, not on the
+    chat topic – the handlers existed but nothing subscribed them. Payloads from a Nov 2026 capture."""
+    import asyncio
+    import json
+
+    from multichat.chat import alerts, kick
+
+    sent, got = [], []
+    frames = [
+        {"event": "pusher_internal:subscription_succeeded", "channel": "chatrooms.3852600.v2"},
+        {"event": "RewardRedeemedEvent", "channel": "chatroom_3852600", "data": json.dumps(
+            {"reward_title": "Hydrate", "user_id": 80807837, "channel_id": 3862536, "username": "wilito_qp",
+             "user_input": "", "reward_background_color": "#FFFFFF"})},
+        {"event": "KicksGifted", "channel": "channel_3862536", "data": json.dumps(
+            {"gift_transaction_id": "ffbe6ae9", "message": "", "sender": {"id": 93325386, "username": "finnysfinn"},
+             "gift": {"gift_id": "full_send", "name": "Full Send", "amount": 100, "type": "BASIC"}})},
+        {"event": "GiftedSubscriptionsEvent", "channel": "chatroom_3852600", "data": json.dumps(
+            {"chatroom_id": 3852600, "gifted_usernames": ["gokhl"], "gifter_username": "alkubaisy94",
+             "gifted_total": 1, "gifter_total": 1, "chunk_details": None})},
+        # the same sub also comes as v2 SubscriptionEvent (shown) – these must not show it twice
+        {"event": "App\\Events\\ChannelSubscriptionEvent", "channel": "channel_3862536", "data": json.dumps(
+            {"user_ids": [21352035], "username": "killerG2G", "channel_id": 3862536})},
+        {"event": "App\\Events\\NewSubscriberUpdatedEvent", "channel": "channel_3862536", "data": json.dumps(
+            {"channel_id": 3862536, "last_subscriber": "killerG2G", "count": 1134})},
+    ]
+
+    class Socket:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_a):
+            return False
+
+        async def send(self, data):
+            sent.append(json.loads(data))
+
+        def __aiter__(self):
+            return self._frames()
+
+        async def _frames(self):
+            for f in frames:
+                yield json.dumps(f)
+            raise asyncio.CancelledError  # ends run_kick
+
+    monkeypatch.setattr(kick, "_fetch_kick_channel", lambda slug: (3852600, "7", 3862536))
+    monkeypatch.setattr(kick, "_fetch_kick_pusher_creds", lambda: ("key", "us2"))
+    monkeypatch.setattr(kick.websockets, "connect", lambda url: Socket())
+    try:  # time limit: on any error run_kick retries forever instead of failing
+        asyncio.run(asyncio.wait_for(kick.run_kick("examplekick", got.append, lambda *a, **kw: None), 5))
+    except asyncio.CancelledError:
+        pass
+    assert [s["data"]["channel"] for s in sent] == ["chatrooms.3852600.v2", "chatroom_3852600", "channel_3862536"]
+    assert [(m.user, m.event, alerts.headline(m)) for m in got] == [
+        ("wilito_qp", "notice", "wilito_qp redeemed Hydrate"),
+        ("finnysfinn", "bits", alerts.headline(got[1])),
+        ("alkubaisy94", "gift", alerts.headline(got[2])),
+    ]
+    assert got[1].event_value == 100 and got[2].event_value == 1
+
+
+def test_kick_topics_without_channel_id():
+    from multichat.chat import kick
+
+    assert kick.kick_topics(5, None) == ["chatrooms.5.v2", "chatroom_5"]
+    assert kick.kick_topics(5, 9) == ["chatrooms.5.v2", "chatroom_5", "channel_9"]

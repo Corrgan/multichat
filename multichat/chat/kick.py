@@ -110,10 +110,19 @@ def kick_parts(content: str) -> list[Part]:
     return out or [("text", "", "")]
 
 
-def _fetch_kick_channel(slug: str) -> tuple[int, str]:
-    """Returns (chatroom ID, streamer user ID)."""
+def _fetch_kick_channel(slug: str) -> tuple[int, str, int | None]:
+    """Returns (chatroom ID, streamer user ID, channel ID)."""
     data = fetch_kick_json(slug)
-    return int(data["chatroom"]["id"]), str(data.get("user_id") or "")
+    cid = data.get("id")
+    return int(data["chatroom"]["id"]), str(data.get("user_id") or ""), cid if isinstance(cid, int) else None
+
+
+def kick_topics(room_id: int, channel_id: int | None) -> list[str]:
+    """Pusher channels to read: the chat itself plus the two older topics where Kick sends
+    Kicks (channel_<id>), redeemed rewards and gifted subs (chatroom_<id>) – the handlers for
+    those existed, but nothing subscribed them (Nov 2026 capture: 2,500 Kicks, 5,900 rewards a night).
+    chatrooms.<id> and predictions-channel-<id> are left out: duplicates resp. not shown."""
+    return [f"chatrooms.{room_id}.v2", f"chatroom_{room_id}"] + ([f"channel_{channel_id}"] if channel_id else [])
 
 
 def fetch_kick_json(slug: str) -> dict:
@@ -219,21 +228,15 @@ async def run_kick(channel: str, emit: Emit, status: Status, emotes=None) -> Non
         key = ""
         try:
             status("kick", "getting chatroom ID …")
-            room_id, streamer_id = await asyncio.to_thread(_fetch_kick_channel, slug)
-            log.info("Kick %s: chatroom %s, streamer ID %s", slug, room_id, streamer_id)
+            room_id, streamer_id, channel_id = await asyncio.to_thread(_fetch_kick_channel, slug)
+            log.info("Kick %s: chatroom %s, streamer ID %s, channel ID %s", slug, room_id, streamer_id, channel_id)
             if emotes:
                 emotes.schedule_channel("kick", slug, streamer_id)
             status("kick", "connecting …")
             key, cluster = await asyncio.to_thread(_fetch_kick_pusher_creds)
             async with websockets.connect(kick_pusher_url(key, cluster)) as ws:
-                await ws.send(
-                    json.dumps(
-                        {
-                            "event": "pusher:subscribe",
-                            "data": {"auth": "", "channel": f"chatrooms.{room_id}.v2"},
-                        }
-                    )
-                )
+                for topic in kick_topics(room_id, channel_id):
+                    await ws.send(json.dumps({"event": "pusher:subscribe", "data": {"auth": "", "channel": topic}}))
                 status("kick", "subscribing to chat …")
                 async for raw in ws:
                     try:

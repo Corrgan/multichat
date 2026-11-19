@@ -228,3 +228,31 @@ def test_broken_page_shape_is_an_innertube_error():
             asyncio.run(chat.run(lambda ev: None))
     finally:
         it.aiohttp.ClientSession = real
+
+
+def test_parse_actions_current_deletion_actions():
+    """Real shapes from a night of 248 live chats (Nov 2026): YouTube deletes with remove…Action,
+    the old mark…AsDeleted names did not appear once – deleted messages stayed visible; messages
+    YouTube held back and released later (placeholder → replaceChatItemAction) never showed."""
+    ctp = {"clickTrackingParams": "CAEQl98BIhMIguy0lKaRmAMVDT2XCB3cliJ1ygEElORRXA=="}
+    actions = [
+        {**ctp, "removeChatItemAction": {"targetItemId": "ChwKGkNMSHJ0SXlta1pnREZjN0RQd1FkOWp3V3Rn"}},
+        {**ctp, "removeChatItemByAuthorAction": {"externalChannelId": "UCHYn2SAkNrPpZQrisot5w7Q"}},
+        {**ctp, "replaceChatItemAction": {"targetItemId": "held", "replacementItem": {
+            "liveChatPlaceholderItemRenderer": {"id": "held", "timestampUsec": "1794997198849711"}}}},
+        # a held-back message released: the placeholder (never shown) becomes the real message
+        {**ctp, "replaceChatItemAction": {"targetItemId": "freed", "replacementItem": {"liveChatTextMessageRenderer": {
+            "id": "freed", "message": {"runs": [{"text": "finally"}]}, "authorName": {"simpleText": "@late"},
+            "authorExternalChannelId": "UClate"}}}},
+        {"removeChatItemAction": {"targetItemId": 5}},  # not a string: ignored
+        {"removeChatItemByAuthorAction": "broken"},
+        {"replaceChatItemAction": None},
+    ]
+    ev = it.parse_actions(actions, "vid")
+    assert [(type(e), e.msg_id, e.user_id) for e in ev] == [
+        (Deletion, "ChwKGkNMSHJ0SXlta1pnREZjN0RQd1FkOWp3V3Rn", None),
+        (Deletion, None, "UCHYn2SAkNrPpZQrisot5w7Q"),
+        (Deletion, "held", None),
+        (ChatMessage, "freed", "UClate"),
+    ]
+    assert (ev[3].user, ev[3].text) == ("@late", "finally")
