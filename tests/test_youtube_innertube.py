@@ -256,3 +256,53 @@ def test_parse_actions_current_deletion_actions():
         (ChatMessage, "freed", "UClate"),
     ]
     assert (ev[3].user, ev[3].text) == ("@late", "finally")
+
+
+def test_parse_actions_gifts_polls_and_pinned_messages():
+    """Shapes from a Nov 2026 capture: gifts (giftMessageViewModel, 42,000 a night), a poll from
+    start to end (one update per vote), a pinned message, the auto-generated chat summary."""
+    from multichat.chat import alerts
+
+    def poll(percent=None):
+        return {"choices": [{"text": {"runs": [{"text": c}]}, "selected": False,
+                             **({"votePercentage": {"simpleText": p}} if p else {})}
+                            for c, p in zip(("Mustang", "Porsche GT3 RS"), percent or ("", ""))],
+                "liveChatPollId": "poll1",
+                "header": {"pollHeaderRenderer": {"pollQuestion": {"runs": [{"text": "Acordar o Renato com qual carro? "}]},
+                                                  "liveChatPollType": "LIVE_CHAT_POLL_TYPE_CREATOR"}}}
+
+    actions = [
+        {"addChatItemAction": {"item": {"giftMessageViewModel": {
+            "text": {"content": "sent Star", "styleRuns": [{"startIndex": 0, "length": 9}]},
+            "authorName": {"content": "@syedmustafa3639 "}, "id": "gift1",
+            "giftImageA11yLabel": "@syedmustafa3639 sent a gift, Star"}}}},
+        {"showLiveChatActionPanelAction": {"panelToShow": {"liveChatActionPanelRenderer": {
+            "contents": {"pollRenderer": poll()}, "id": "poll1", "targetId": "live-chat-action-panel"}}}},
+        {"addBannerToLiveChatCommand": {"bannerRenderer": {"liveChatBannerRenderer": {
+            "contents": {"pollRenderer": poll()}, "actionId": "poll1"}}}},  # the same poll as a banner: no 2nd line
+        {"updateLiveChatPollAction": {"pollToUpdate": {"pollRenderer": poll(("30%", "70%"))}}},
+        {"updateLiveChatPollAction": {"pollToUpdate": {"pollRenderer": poll(("24%", "76%"))}}},
+        {"closeLiveChatActionPanelAction": {"targetPanelId": "poll1", "skipOnDismissCommand": True}},
+        {"removeBannerForLiveChatCommand": {"targetActionId": "poll1"}},  # ended already: no 2nd line
+        {"addBannerToLiveChatCommand": {"bannerRenderer": {"liveChatBannerRenderer": {
+            "header": {"liveChatBannerHeaderRenderer": {"text": {"runs": [{"text": "Pinned by "}, {"text": "@IGN"}]}}},
+            "contents": {"liveChatTextMessageRenderer": {"message": {"runs": [{"text": "Questions after the show"}]},
+                                                         "authorName": {"simpleText": "@IGN"}}},
+            "actionId": "pin1"}}}},
+        {"addBannerToLiveChatCommand": {"bannerRenderer": {"liveChatBannerRenderer": {
+            "contents": {"liveChatTextMessageRenderer": {"message": {"runs": [{"text": "Questions after the show"}]},
+                                                         "authorName": {"simpleText": "@IGN"}}},
+            "actionId": "pin1"}}}},  # sent again (reconnect): shown once
+        {"addBannerToLiveChatCommand": {"bannerRenderer": {"liveChatBannerRenderer": {
+            "contents": {"liveChatBannerChatSummaryRenderer": {"chatSummary": {"runs": [{"text": "Chat summary"}]}}},
+            "actionId": "sum1"}}}},
+        {"updateLiveChatPollAction": "broken"},
+        {"closeLiveChatActionPanelAction": {"targetPanelId": 7}},
+    ]
+    ev = it.parse_actions(actions, "vid")
+    assert [(m.user, alerts.headline(m), m.text) for m in ev] == [
+        ("@syedmustafa3639", "@syedmustafa3639 sent Star", ""),
+        ("YouTube", "Poll: Acordar o Renato com qual carro? – Mustang / Porsche GT3 RS", ""),
+        ("YouTube", "Poll ended: Acordar o Renato com qual carro?", "Mustang 24% · Porsche GT3 RS 76%"),
+        ("@IGN", "Pinned message", "Questions after the show"),
+    ]
