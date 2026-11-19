@@ -927,6 +927,8 @@ def _wait_for(app, predicate, timeout=3):
 def test_poll_box_shows_polls_and_votes_with_the_website_login(window, app, monkeypatch):
     """Running polls/predictions of a group's channels in a box above its chat, like the websites:
     a button per option with its share; voting only with the option on and the website login."""
+    from PyQt6.QtWidgets import QToolButton
+
     from multichat.chat.models import PollState
 
     w = window
@@ -981,7 +983,8 @@ def test_poll_box_shows_polls_and_votes_with_the_website_login(window, app, monk
     w.add_message(state(id="neu", title="neu?"))  # a new Kick poll replaces the old one
     w._flush_messages()
     assert list(box.cards) == [("kick:corrgan", "poll", "neu")]
-    box.close_card(("kick:corrgan", "poll", "neu"))  # × hides it, also its later updates
+    x = next(b for b in box.cards[("kick:corrgan", "poll", "neu")].findChildren(QToolButton) if b.text() == "×")
+    x.click()  # × hides it, also its later updates (a real click: clicked(bool) once swallowed the key)
     w.add_message(state(id="neu", title="neu?"))
     w._flush_messages()
     assert not box.cards and not box.isVisibleTo(w)

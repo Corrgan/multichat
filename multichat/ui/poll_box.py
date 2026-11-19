@@ -52,7 +52,7 @@ class PollCard(QFrame):
         x.setText("×")
         x.setAutoRaise(True)
         x.setToolTip(_("Hide"))
-        x.clicked.connect(close)
+        x.clicked.connect(lambda _checked=False: close())  # clicked(bool) must not reach close
         head.addWidget(self.title, 1)
         head.addWidget(self.info)
         head.addWidget(x)
