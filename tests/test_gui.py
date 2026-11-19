@@ -912,3 +912,55 @@ def test_shared_chat_message_shows_once_per_group(window):
     w._flush_messages()
     assert [m.text for m in w.messages.values() if a in w.panels_for(m)] == ["hello", "plain"]
     assert [m.text for m in w.messages.values() if b in w.panels_for(m)] == ["hello", "plain"]
+
+
+def test_chat_poll_counts_the_active_group_and_shows_the_result(window, monkeypatch):
+    w = window
+    a = w.panels[0]
+    a.rows["twitch"].edit.setText("chan_a")
+    a.rows["kick"].edit.setText("chan_b")
+    sent, published = [], []
+    monkeypatch.setattr(w, "_send_options", lambda: [("twitch:chan_a", "twitch", "chan_a", "Twitch")])
+    monkeypatch.setattr(w, "_send_all", lambda text, options: sent.append((text, [o[0] for o in options])))
+    monkeypatch.setattr(type(w.overlay), "running", property(lambda self: True))
+    monkeypatch.setattr(w.overlay, "publish", published.append)
+    w.start_poll("Next game?", ["WoW", "Werkstatt"], 0, announce=True)
+    assert sent == [("Poll: Next game? – !1 WoW / !2 Werkstatt", ["twitch:chan_a"])]
+    assert w.poll_bar.isVisibleTo(w) and published[-1]["state"] == "active" and published[-1]["groups"] == [1]
+
+    def chat(platform, chan, user, text):
+        m = ChatMessage(platform, chan, user, text, user_id=user)
+        m.source = f"{platform}:{chan}"
+        w.add_message(m)
+
+    chat("twitch", "chan_a", "Alice", "!1")
+    chat("kick", "chan_b", "Bob", "!2")
+    chat("kick", "chan_b", "Carol", "!2 klar")
+    chat("youtube", "other", "Dave", "!1")  # not in this group
+    w._flush_messages()
+    assert w.poll.counts == [1, 2]
+    assert [b.value() for b in w.poll_bar.bars] == [33, 67] and "Werkstatt – 2 (67 %)" in w.poll_bar.bars[1].text()
+    w.start_poll_dialog()  # a second one while it runs: refused, no dialog
+    assert "running" in w.statusBar().currentMessage()
+    w.end_poll()
+    assert sent[-1][0] == "Poll ended: Next game? – winner: Werkstatt (3 votes) – WoW 33% · Werkstatt 67%"
+    assert published[-1]["state"] == "ended" and w.poll_bar.close_btn.isVisibleTo(w)
+    chat("twitch", "chan_a", "Late", "!1")
+    w._flush_messages()
+    assert w.poll.counts == [1, 2]
+    w.close_poll()
+    assert not w.poll_bar.isVisibleTo(w) and w.poll is None and published[-1]["state"] == "closed"
+
+
+def test_poll_dialog_needs_a_question_and_two_options(window):
+    from multichat.ui.poll import PollDialog
+
+    d = PollDialog(window, can_send=False)
+    ok = d.bb.button(d.bb.StandardButton.Ok)
+    assert not ok.isEnabled() and not d.announce.isEnabled()
+    d.question.setText("Pizza?")
+    d.options[0].setText("Ja")
+    assert not ok.isEnabled()
+    d.options[3].setText("Nein")  # gaps are fine
+    assert ok.isEnabled() and d.choices() == ["Ja", "Nein"]
+    d.close()
