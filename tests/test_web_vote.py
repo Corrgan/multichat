@@ -204,3 +204,18 @@ def test_youtube_vote_reads_the_chat_logged_in_and_sends_the_params(monkeypatch)
     assert vote[1].endswith("/youtubei/v1/live_chat/send_live_chat_vote") and vote[2]["json"]["params"] == "PB"
     assert webmod.vote_params({"a": [{"pollRenderer": {**poll, "liveChatPollId": "other"}}]}, "yp1") == []
 
+
+
+def test_the_vote_setting_survives_a_restart(tmp_path, monkeypatch):
+    """First test with the AppImage: after a restart the buttons were grey – load_config only keeps
+    keys it knows, and web_vote wasn't one of them."""
+    from multichat.core import config
+
+    monkeypatch.setattr(config, "CONFIG", tmp_path / "config.json")
+    cfg = config.load_config()
+    assert cfg["web_vote"] is False  # off by default
+    cfg["web_vote"] = True
+    config.save_config(cfg)
+    assert config.load_config()["web_vote"] is True
+    (tmp_path / "config.json").write_text('{"web_vote": "yes"}')
+    assert config.load_config()["web_vote"] is False  # wrong type: the default

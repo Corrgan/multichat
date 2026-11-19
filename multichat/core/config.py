@@ -65,6 +65,7 @@ def load_config() -> dict:
         "language": "auto",
         "chat_font": 14,
         "usercard_docked": False,
+        "web_vote": False,  # vote buttons in the poll box with the website login (ui/vote.py)
         "groups": clean_groups(None, {}),  # [{"name": str, "channels": [{"platform", "channel", "video"}]}]
         "active_group": 0,
         "side_by_side": False,
@@ -103,7 +104,7 @@ def load_config() -> dict:
     cfg["groups"] = clean_groups(data.get("groups"), cfg["channels"])
     cfg["active_group"] = max(0, min(len(cfg["groups"]) - 1, pick(data.get("active_group"), 0)))
     cfg["side_by_side"] = pick(data.get("side_by_side"), False)
-    for key in ("on_top", "extra_emotes", "debug_log", "check_updates"):
+    for key in ("on_top", "extra_emotes", "debug_log", "check_updates", "web_vote"):
         cfg[key] = pick(data.get(key), cfg[key])
     cfg["language"] = pick(data.get("language"), "auto") or "auto"
     cfg["chat_font"] = max(9, min(40, pick(data.get("chat_font"), 14)))
