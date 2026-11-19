@@ -45,6 +45,9 @@ class ChatMessage:
     # Twitch shared chat: the message's ID in the channel it was written in – the same one in
     # every channel of the session, so a group with two of them shows it once
     shared_id: str = ""
+    # a poll or prediction one can vote in from MultiChat (accounts/web.py): {"kind": "poll" |
+    # "prediction", "id": …, "options": [[option ID, label], …]} – only on the line that starts it
+    vote: dict | None = None
 
     def __post_init__(self) -> None:
         # Everything here comes from a platform's servers. They limit lengths themselves

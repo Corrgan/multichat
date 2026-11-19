@@ -80,9 +80,9 @@ def _poll_data(r) -> tuple[str, str, list[str], list[str]] | None:
     return r["liveChatPollId"], question, choices, percent
 
 
-def _line(video_id: str, headline: str, text: str = "", user: str = "YouTube") -> ChatMessage:
+def _line(video_id: str, headline: str, text: str = "", user: str = "YouTube", vote: dict | None = None) -> ChatMessage:
     return ChatMessage(platform="youtube", channel=video_id, user=user, text=text,
-                       parts=[("text", text, "")] if text else [], event="notice", event_text=headline)
+                       parts=[("text", text, "")] if text else [], event="notice", event_text=headline, vote=vote)
 
 
 def chat_command(a: dict, video_id: str) -> ChatMessage | None:
@@ -132,5 +132,7 @@ def _poll_line(poll, video_id: str) -> ChatMessage | None:
     if not new:
         return None
     title = question or "?"
+    vote = {"kind": "poll", "id": poll_id, "options": [[str(i), c] for i, c in enumerate(choices)]} \
+        if len(choices) >= 2 else None
     return _line(video_id, _("Poll: {title} – {options}").format(title=title, options=" / ".join(choices))
-                 if choices else _("Poll: {title}").format(title=title))
+                 if choices else _("Poll: {title}").format(title=title), vote=vote)

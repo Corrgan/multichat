@@ -68,6 +68,27 @@ def poll_text(msg: dict) -> str:
     return ""
 
 
+def twitch_vote(kind: str, msg) -> dict | None:
+    """The poll (POLL_CREATE) or prediction (status ACTIVE) a message starts, for voting from
+    MultiChat (see ChatMessage.vote)."""
+    if not isinstance(msg, dict):
+        return None
+    data = _dict(msg.get("data"))
+    if kind == "poll" and msg.get("type") == "POLL_CREATE":
+        poll = _dict(data.get("poll"))
+        options = [[_str(c.get("choice_id")), _str(c.get("title"))] for c in _list(poll.get("choices"))
+                   if isinstance(c, dict) and _str(c.get("choice_id"))]
+        return {"kind": "poll", "id": _str(poll.get("poll_id")), "options": options} \
+            if _str(poll.get("poll_id")) and len(options) >= 2 else None
+    if kind == "prediction":
+        event = _dict(data.get("event"))
+        options = [[_str(o.get("id")), _str(o.get("title"))] for o in _list(event.get("outcomes"))
+                   if isinstance(o, dict) and _str(o.get("id"))]
+        if _str(event.get("status")).upper() == "ACTIVE" and _str(event.get("id")) and len(options) >= 2:
+            return {"kind": "prediction", "id": _str(event.get("id")), "options": options}
+    return None
+
+
 class HermesEvents:
     """Turns the messages into lines. Predictions and hype trains resend their whole state
     on every bet or contribution: only a change of status (prediction) or level (hype train)

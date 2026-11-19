@@ -27,7 +27,7 @@ import websockets
 
 from .models import Backoff, ChatMessage
 from .twitch_events import WANTED, remember_room
-from .twitch_hermes_events import TOPICS, HermesEvents
+from .twitch_hermes_events import TOPICS, HermesEvents, twitch_vote
 
 log = logging.getLogger("multichat.chat")
 
@@ -180,7 +180,7 @@ class HermesClient:
         for key, channel in self.channels().items():
             if channel == login:
                 self.emit(ChatMessage(platform="twitch", channel=channel, user="Twitch", text="",
-                                      event="notice", event_text=text), key)
+                                      event="notice", event_text=text, vote=twitch_vote(what, payload)), key)
         return True
 
     async def _name_rooms(self) -> None:

@@ -11,7 +11,7 @@ import re
 import websockets
 
 from ..core.i18n import _
-from .kick_events import ban_notice, kick_event, kick_notice  # noqa: F401 – kick_event is imported from here elsewhere
+from .kick_events import ban_notice, kick_event, kick_notice, kick_vote  # noqa: F401 – kick_event is imported from here elsewhere
 from .models import Backoff, ChatMessage, Deletion, Emit, Part, Status, TTLCache, kick_channel, roles, with_extra_emotes as _extra
 
 log = logging.getLogger("multichat.chat")
@@ -180,7 +180,7 @@ def _handle_event(name: str, data: dict, slug: str, emit: Emit, emotes) -> None:
         user, headline, message = notice
         emit(ChatMessage(platform="kick", channel=slug, user=user, text=_KICK_EMOTE_RE.sub(r"\2", message),
                          parts=_extra(emotes, "kick", slug, kick_parts(message)) if message else [],
-                         event="notice", event_text=headline))
+                         event="notice", event_text=headline, vote=kick_vote(name, data)))
         return
     if name.endswith("ChatMessageEvent"):
         sender = data.get("sender") or {}

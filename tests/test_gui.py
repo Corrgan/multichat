@@ -912,3 +912,59 @@ def test_shared_chat_message_shows_once_per_group(window):
     w._flush_messages()
     assert [m.text for m in w.messages.values() if a in w.panels_for(m)] == ["hello", "plain"]
     assert [m.text for m in w.messages.values() if b in w.panels_for(m)] == ["hello", "plain"]
+
+
+def _wait_for(app, predicate, timeout=3):
+    import time as _t
+
+    end = _t.monotonic() + timeout
+    while _t.monotonic() < end and not predicate():
+        app.processEvents()
+        _t.sleep(0.005)
+    assert predicate(), "expected result did not arrive"
+
+
+def test_vote_links_under_polls_with_the_website_login(window, app, monkeypatch):
+    """Vote links only with the option on and a website login for that platform; a click votes,
+    a prediction asks for the points, the chosen option is marked."""
+    w = window
+    w.panels[0].rows["kick"].edit.setText("corrgan")
+    w.config["web_vote"] = False
+    m = ChatMessage("kick", "corrgan", "Kick", "", event="notice", event_text="Poll: Q?",
+                    vote={"kind": "poll", "id": "", "options": [["0", "ja"], ["1", "ne"]]})
+    m.source = "kick:corrgan"
+    p = ChatMessage("kick", "corrgan", "Kick", "", event="notice", event_text="Prediction: Boss?",
+                    vote={"kind": "prediction", "id": "pr1", "options": [["o1", "Klar"], ["o2", "Nee"]]})
+    p.source = "kick:corrgan"
+    w.add_message(m)
+    w.add_message(p)
+    w._flush_messages()
+    assert "vote:" not in w.view.message_html(m)
+    monkeypatch.setattr(w.web, "has", lambda platform: platform == "kick")
+    w.config["web_vote"] = True
+    w._refresh_votes()
+    html_ = w.view.message_html(m)
+    assert "href='vote:0'" in html_ and "[2 ne]" in html_
+    calls = []
+
+    async def poll(slug, option):
+        calls.append(("poll", slug, option))
+
+    async def pred(slug, outcome, amount):
+        calls.append(("pred", slug, outcome, amount))
+
+    monkeypatch.setattr(w.web, "kick_poll", poll)
+    monkeypatch.setattr(w.web, "kick_prediction", pred)
+    w.vote_clicked(m.uid, 1)
+    _wait_for(app, lambda: m.vote.get("chosen") == 1)
+    assert calls == [("poll", "corrgan", 1)] and "✔ 2 ne" in w.view.message_html(m)
+    from multichat.ui import vote as vote_ui
+    monkeypatch.setattr(vote_ui.QInputDialog, "getInt", lambda *a, **k: (250, True))
+    w.vote_clicked(p.uid, 0)
+    _wait_for(app, lambda: p.vote.get("chosen") == 0)
+    assert calls[-1] == ("pred", "corrgan", "o1", 250)
+    w.vote_clicked(m.uid, 7)  # no such option: nothing
+    assert len(calls) == 2
+    yt = ChatMessage("youtube", "vid", "YouTube", "", event="notice", event_text="Poll: Q?",
+                     vote={"kind": "poll", "id": "yp", "options": [["0", "A"], ["1", "B"]]})
+    assert "vote:" not in w.view.message_html(yt)  # no YouTube website login

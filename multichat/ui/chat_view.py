@@ -84,6 +84,7 @@ class ChatView(QTextBrowser):
     image_restored = pyqtSignal(str)  # a later attempt got it – its lines can show the image again
     name_context = pyqtSignal(QUrl)  # right-click on a user name ("msg:<uid>")
     name_clicked = pyqtSignal(QUrl)  # left click on a user name ("msg:<uid>")
+    vote_clicked = pyqtSignal(int, int)  # (message uid, option index): a vote link under a poll line
     follow_changed = pyqtSignal(bool)  # True: sticks to the newest message
 
     def __init__(self) -> None:
@@ -141,6 +142,7 @@ class ChatView(QTextBrowser):
         # References to the actual displayed messages, bounded by the owning group's
         # line limit. While paused they survive trimming of the shared live history.
         self.retained_messages: OrderedDict[int, ChatMessage] = OrderedDict()
+        self.vote_platforms: set[str] = set()  # platforms with a website login to vote with (window sets it)
         self._rebuild_anchor: tuple | None = None
         self.inserted = 0  # lines inserted since the last clear() (see COMPACT_AFTER)
         self._programmatic = 0
@@ -763,10 +765,17 @@ class ChatView(QTextBrowser):
         return QUrl(f"msg:{uid}") if uid > 0 else None
 
     def mouseReleaseEvent(self, event) -> None:  # noqa: N802
-        target = self.message_at(event.position().toPoint()) if event.button() == Qt.MouseButton.LeftButton else None
+        pos = event.position().toPoint()
+        left = event.button() == Qt.MouseButton.LeftButton
+        target = self.message_at(pos) if left else None
+        vote = self.anchorAt(pos) if left else ""
         super().mouseReleaseEvent(event)  # ends a selection drag; its anchorClicked isn't used
         if target is not None:
             self.name_clicked.emit(target)
+        elif vote.startswith("vote:") and vote[5:].isdigit():  # "vote:<option>" – few distinct links (see above)
+            uid = self.cursorForPosition(pos).block().userState()
+            if uid > 0:
+                self.vote_clicked.emit(uid, int(vote[5:]))
 
     def contextMenuEvent(self, event) -> None:  # noqa: N802
         target = self.message_at(event.pos())
@@ -786,6 +795,20 @@ class ChatView(QTextBrowser):
     def icon_html(self, name: str) -> str:
         h = round(self.font_px * 1.1)
         return f"<img src='mcicon:{name}' width='{h}' height='{h}' align='middle'>"
+
+    def _vote_html(self, m: ChatMessage) -> str:
+        """Links under a poll/prediction line to vote from MultiChat (only with the website login of
+        that platform and the option on): "[1 Yes] [2 No]", the chosen one marked."""
+        v = m.vote
+        if not v or m.platform not in self.vote_platforms or len(v.get("options") or []) > 10:
+            return ""
+        chosen = v.get("chosen")
+        links = []
+        for i, (_oid, label) in enumerate(v["options"]):
+            mark = "✔ " if chosen == i else ""
+            links.append(f"<a href='vote:{i}' style='color:#9ad;text-decoration:none'>[{mark}{i + 1} "
+                         f"{html.escape(label or '?')}]</a>")
+        return "<br>&nbsp;&nbsp;" + " ".join(links)
 
     def message_html(self, m: ChatMessage) -> str:
         color, tag = BADGES[m.platform]
@@ -815,8 +838,9 @@ class ChatView(QTextBrowser):
                          f"{self.icon_html(m.event)} {title}</span>")
             else:
                 title = f"<span style='color:#aaa'>{title}</span>"
+            votes = self._vote_html(m)
             # the name stays clickable (user card, moderation) through the link below or the headline
             if not m.parts:
-                return f"{head}<a href='msg:' style='text-decoration:none'>{title}</a>"
-            return f"{head}{title}<br>{roles}{name}: {body}"
+                return f"{head}<a href='msg:' style='text-decoration:none'>{title}</a>{votes}"
+            return f"{head}{title}<br>{roles}{name}: {body}{votes}"
         return f"{head}{roles}{name}: {body}"

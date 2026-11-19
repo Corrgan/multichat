@@ -78,6 +78,8 @@ class GroupsMixin:
         v.image_failed.connect(self._image_changed)
         v.image_restored.connect(self._image_changed)
         v.name_context.connect(self.on_name_context)
+        v.vote_clicked.connect(self.vote_clicked)
+        v.vote_platforms = self.vote_platforms()
         v.follow_changed.connect(lambda following, pn=panel: self._follow_changed(pn, following))
         v.held = False  # messages arrived while scrolled up
         if self.panels:  # same look as the others
