@@ -265,11 +265,11 @@ keeps only the cookies a vote needs in the system keyring. It is **off by defaul
 | YouTube | ✔ | – (YouTube has none) |
 
 Log out in the browser and the taken-over login ends too – take it over again. **Flatpak:** the sandbox doesn't let
-MultiChat read browser profiles; allow it once for Firefox (read-only), then restart MultiChat – the dialog shows the
-same command when it can't find the profile:
-`flatpak override --user --filesystem=~/.mozilla/firefox:ro --filesystem=~/.var/app/org.mozilla.firefox:ro io.github.Corrgan.MultiChat`.
-In the Flatpak only Firefox works (inside the sandbox the cookie reader looks for Chrome-based browsers under the
-sandbox's own `~/.config`, so a permission doesn't help); use the AppImage for those.
+MultiChat read browser profiles; allow your browser once (read-only), then restart MultiChat – the dialog shows the
+command for the chosen browser when it can't find the profile. Firefox:
+`flatpak override --user --filesystem=~/.config/mozilla/firefox:ro --filesystem=~/.mozilla/firefox:ro --filesystem=~/.var/app/org.mozilla.firefox:ro io.github.Corrgan.MultiChat`,
+Chrome: `flatpak override --user --filesystem=~/.config/google-chrome:ro --filesystem=~/.var/app/com.google.Chrome:ro io.github.Corrgan.MultiChat`
+(both cover the normal and the Flatpak browser). MultiChat takes the profile folder whose cookies were written last.
 
 ## Troubleshooting / log
 

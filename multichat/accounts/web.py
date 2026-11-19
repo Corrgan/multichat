@@ -23,6 +23,7 @@ import hashlib
 import json
 import logging
 import os
+import sys
 import time
 import uuid
 from urllib.parse import unquote
@@ -43,8 +44,50 @@ COOKIES = {
     "youtube": (".youtube.com", None),
 }
 LOGIN_COOKIE = {"twitch": "auth-token", "kick": "session_token", "youtube": "SAPISID"}
-# where yt-dlp looks for Firefox inside the Flatpak sandbox (its XDG config home is the sandbox's own)
-FLATPAK_FIREFOX = ("~/.mozilla/firefox", "~/.var/app/org.mozilla.firefox")
+# Where each browser keeps its profiles on Linux – normal install and Flatpak. MultiChat looks here itself:
+# inside the Flatpak sandbox yt-dlp searches the sandbox's own ~/.config (XDG_CONFIG_HOME) and misses them.
+# The Flatpak app folder (~/.var/app/<id>) is what to allow for a Flatpak browser.
+BROWSER_DIRS = {
+    "firefox": ("~/.config/mozilla/firefox", "~/.mozilla/firefox",  # Firefox 147+ / older installs
+                "~/.var/app/org.mozilla.firefox/config/mozilla/firefox",
+                "~/.var/app/org.mozilla.firefox/.mozilla/firefox", "~/snap/firefox/common/.mozilla/firefox"),
+    "chrome": ("~/.config/google-chrome", "~/.var/app/com.google.Chrome/config/google-chrome"),
+    "chromium": ("~/.config/chromium", "~/.var/app/org.chromium.Chromium/config/chromium",
+                 "~/snap/chromium/common/chromium"),
+    "brave": ("~/.config/BraveSoftware/Brave-Browser",
+              "~/.var/app/com.brave.Browser/config/BraveSoftware/Brave-Browser"),
+    "edge": ("~/.config/microsoft-edge", "~/.var/app/com.microsoft.Edge/config/microsoft-edge"),
+    "vivaldi": ("~/.config/vivaldi", "~/.var/app/com.vivaldi.Vivaldi/config/vivaldi"),
+    "opera": ("~/.config/opera", "~/.var/app/com.opera.Opera/config/opera"),
+}
+COOKIE_DB = {"firefox": "cookies.sqlite"}  # Chrome-based browsers: "Cookies"
+
+
+def _allow(browser: str) -> list[str]:
+    """What to allow the Flatpak for a browser: its profile folders, a Flatpak browser's whole app folder."""
+    out = []
+    for d in BROWSER_DIRS[browser]:
+        d = "/".join(d.split("/")[:4]) if d.startswith("~/.var/app/") else d
+        if d not in out and not d.startswith("~/snap/"):
+            out.append(d)
+    return out
+
+
+def find_profile(browser: str) -> str | None:
+    """The browser folder whose cookie database was written last (None = none here, or the sandbox hides them)."""
+    name, best, newest = COOKIE_DB.get(browser, "Cookies"), None, 0.0
+    for d in BROWSER_DIRS.get(browser, ()):
+        root = os.path.expanduser(d)
+        if not os.path.isdir(root):
+            continue
+        for path, dirs, files in os.walk(root):
+            if path[len(root):].count(os.sep) >= 3:  # profile/[Network/]Cookies – not the whole cache
+                dirs[:] = []
+            if name in files:
+                t = os.path.getmtime(os.path.join(path, name))
+                if t > newest:
+                    best, newest = root, t
+    return best
 
 TWITCH_GQL = "https://gql.twitch.tv/gql"
 TWITCH_WEB_CLIENT = "kimne78kx3ncx6brgo4mv6wki5h1ko"  # the Twitch website's own client ID
@@ -78,13 +121,9 @@ def no_profile(browser: str) -> str:
     """Why the browser profile wasn't found – in the Flatpak, what to allow (the sandbox hides it)."""
     if not os.environ.get("FLATPAK_ID"):
         return _("No {browser} profile found on this computer").format(browser=browser.capitalize())
-    if browser != "firefox":
-        # yt-dlp looks for these under the sandbox's own ~/.config, so a permission alone doesn't help
-        return _("As a Flatpak, MultiChat can only take the login over from Firefox. "
-                 "Use Firefox or the AppImage for {browser}.").format(browser=browser.capitalize())
-    command = "flatpak override --user " + " ".join(f"--filesystem={d}:ro" for d in FLATPAK_FIREFOX) + " " + APP_ID
-    return _("The Flatpak may not read the Firefox profile. Allow it once in a terminal (read-only), "
-             "then restart MultiChat:\n\n{command}").format(command=command)
+    command = "flatpak override --user " + " ".join(f"--filesystem={d}:ro" for d in _allow(browser)) + " " + APP_ID
+    return _("The Flatpak may not read the {browser} profile. Allow it once in a terminal (read-only), "
+             "then restart MultiChat:\n\n{command}").format(browser=browser.capitalize(), command=command)
 
 
 def read_browser_cookies(browser: str, platform: str) -> dict[str, str]:
@@ -92,8 +131,10 @@ def read_browser_cookies(browser: str, platform: str) -> dict[str, str]:
     from yt_dlp.cookies import extract_cookies_from_browser
 
     domain, names = COOKIES[platform]
+    profile = find_profile(browser) if sys.platform.startswith("linux") else None
     try:
-        jar = extract_cookies_from_browser(browser)
+        # with a folder yt-dlp takes the newest profile in it; without, its own places (Windows/macOS)
+        jar = extract_cookies_from_browser(browser, profile) if profile else extract_cookies_from_browser(browser)
     except FileNotFoundError as e:  # yt-dlp: "could not find firefox cookies database in …"
         log.info("Web login %s: %s", browser, e)
         raise NotLoggedIn(no_profile(browser)) from e
