@@ -8,7 +8,7 @@ from __future__ import annotations
 import logging
 from dataclasses import replace
 
-from PyQt6.QtCore import QTimer
+from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -17,11 +17,12 @@ from PyQt6.QtWidgets import (
     QGridLayout,
     QInputDialog,
     QLabel,
+    QMessageBox,
     QPushButton,
     QVBoxLayout,
 )
 
-from ..accounts.web import BROWSERS
+from ..accounts.web import BROWSERS, NotLoggedIn
 from ..core.constants import NAMES, PLATFORMS
 from ..core.i18n import _
 
@@ -89,13 +90,27 @@ class WebVoteDialog(QDialog):
     def take_over(self, platform: str) -> None:
         browser = self.browser[platform].currentData()
         self.status[platform].setText(_("reading …"))
+        self._error = ""
 
         async def read() -> str:
             import asyncio
-            return await asyncio.to_thread(self.web.take_over, platform, browser)
+            try:
+                return await asyncio.to_thread(self.web.take_over, platform, browser)
+            except NotLoggedIn as e:
+                self._error = str(e)
+                raise
 
-        self.win.run(read(), then=lambda _name: self._show(), on_error=self._show,
+        self.win.run(read(), then=lambda _name: self._show(), on_error=self._failed,
                      label=_("{platform} login taken over").format(platform=NAMES[platform]))
+
+    def _failed(self) -> None:
+        self._show()
+        if self._error:  # what to do (e.g. the Flatpak command) – selectable, the status bar can't be copied
+            box = QMessageBox(QMessageBox.Icon.Warning, _("Take over login"), self._error,
+                              QMessageBox.StandardButton.Ok, self)
+            box.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+            box.open()
+            self.error_box = box
 
     def forget(self, platform: str) -> None:
         self.web.forget(platform)

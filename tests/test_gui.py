@@ -1198,3 +1198,26 @@ def test_poll_box_says_why_your_own_twitch_prediction_takes_no_bets(window, monk
     bet, poll = box.cards[("twitch:corrganx", "prediction", "prediction1")], box.cards[("twitch:corrganx", "poll", "poll1")]
     assert not bet.buttons[0].isEnabled() and "own channel" in bet.buttons[0].toolTip()
     assert poll.buttons[0].isEnabled()  # a poll in your own channel: you may vote
+
+
+def test_vote_dialog_shows_a_failed_take_over_as_copyable_text(window, app, monkeypatch):
+    """The Flatpak hint carries a command – the status bar shows it 12 s and can't be copied."""
+    from PyQt6.QtCore import Qt
+
+    from multichat.accounts.web import NotLoggedIn
+    from multichat.ui.vote import WebVoteDialog
+
+    def refuse(platform, browser):
+        raise NotLoggedIn("Allow it once:\n\nflatpak override --user --filesystem=~/.mozilla/firefox:ro x")
+
+    monkeypatch.setattr(window.web, "take_over", refuse)
+    dlg = WebVoteDialog(window, window.web, True)
+    dlg.show()
+    dlg.take_over("twitch")
+    _wait_for(app, lambda: getattr(dlg, "error_box", None) is not None)
+    box = dlg.error_box
+    assert "flatpak override" in box.text()
+    assert box.textInteractionFlags() & Qt.TextInteractionFlag.TextSelectableByMouse
+    assert dlg.status["twitch"].text() != "reading …"
+    box.close()
+    dlg.close()

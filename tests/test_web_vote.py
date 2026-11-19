@@ -222,3 +222,25 @@ def test_the_vote_setting_survives_a_restart(tmp_path, monkeypatch):
     assert config.load_config()["web_vote"] is True
     (tmp_path / "config.json").write_text('{"web_vote": "yes"}')
     assert config.load_config()["web_vote"] is False  # wrong type: the default
+
+
+def test_a_missing_browser_profile_says_what_to_do(monkeypatch):
+    """In the Flatpak the sandbox hides the browser profiles: yt-dlp only says "could not find … database"."""
+    import yt_dlp.cookies
+
+    def missing(browser):
+        raise FileNotFoundError(f"could not find {browser} cookies database in '/home/x/.mozilla/firefox'")
+
+    monkeypatch.setattr(yt_dlp.cookies, "extract_cookies_from_browser", missing)
+    monkeypatch.setenv("FLATPAK_ID", "io.github.Corrgan.MultiChat")
+    with pytest.raises(webmod.NotLoggedIn) as e:
+        webmod.read_browser_cookies("firefox", "twitch")
+    assert ("flatpak override --user --filesystem=~/.mozilla/firefox:ro "
+            "--filesystem=~/.var/app/org.mozilla.firefox:ro io.github.Corrgan.MultiChat") in str(e.value)
+    with pytest.raises(webmod.NotLoggedIn) as e:
+        webmod.read_browser_cookies("chrome", "twitch")  # a permission alone doesn't help there
+    assert "AppImage" in str(e.value) and "flatpak override" not in str(e.value)
+    monkeypatch.delenv("FLATPAK_ID")
+    with pytest.raises(webmod.NotLoggedIn) as e:
+        webmod.read_browser_cookies("firefox", "twitch")
+    assert "Firefox" in str(e.value) and "flatpak" not in str(e.value).lower()
