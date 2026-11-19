@@ -48,7 +48,7 @@ def notice(item: dict, video_id: str) -> ChatMessage | None:
     return ChatMessage(
         platform="youtube", channel=video_id, user=author or "YouTube", text=body,
         parts=[("text", body, "")] if body else [], msg_id=r.get("id") if isinstance(r.get("id"), str) else None,
-        user_id=r.get("authorExternalChannelId") if author else None,
+        user_id=r.get("authorExternalChannelId") if author and isinstance(r.get("authorExternalChannelId"), str) else None,
         event="notice", event_text=f"{author} {headline}" if author else headline,
     )
 

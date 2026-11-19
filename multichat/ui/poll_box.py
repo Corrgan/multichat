@@ -17,6 +17,7 @@ from ..core.constants import NAMES
 from ..core.i18n import _
 
 ENDED_SHOWN_S = 20  # how long a result stays
+STALE_S = 30 * 60  # a running/locked card without any update for this long has missed its end (reconnect)
 BAR = {"twitch": "#9146FF", "kick": "#53FC18", "youtube": "#FF0000"}
 
 
@@ -39,6 +40,7 @@ class PollCard(QFrame):
         self.state = state
         self.chosen: int | None = None
         self._vote, self.ended_at = vote, 0.0
+        self.updated_at = time.time()
         self.setFrameShape(QFrame.Shape.StyledPanel)
         lay = QVBoxLayout(self)
         lay.setContentsMargins(6, 4, 6, 6)
@@ -63,6 +65,7 @@ class PollCard(QFrame):
         self.buttons: list[QPushButton] = []
 
     def update_state(self, state: PollState, can_vote: bool, why: str) -> None:
+        self.updated_at = time.time()
         if not state.options:  # YouTube's "closed": keeps the last counts
             state.options, state.title = self.state.options, self.state.title
         self.state = state
@@ -150,6 +153,8 @@ class PollBox(QWidget):
                 self._remove(key)
             elif card.state.status == "active" and card.state.ends_at and now > card.state.ends_at + 60:
                 self._remove(key)  # its end never came (connection lost)
+            elif not card.ended_at and now - card.updated_at > STALE_S:
+                self._remove(key)  # no end time (YouTube) or locked bets, and nothing heard for long: its end was missed
             else:
                 card.tick()
         self.setVisible(bool(self.cards))

@@ -80,7 +80,9 @@ def read_browser_cookies(browser: str, platform: str) -> dict[str, str]:
     now = time.time()
     found = {}
     for c in jar:
-        if (c.domain == domain.lstrip(".") or c.domain.endswith(domain)) and (names is None or c.name in names) \
+        host = c.domain.lstrip(".")
+        site = domain.lstrip(".")  # "kick.com" must not take "sidekick.com"
+        if (host == site or host.endswith("." + site)) and (names is None or c.name in names) \
                 and not (c.expires and c.expires < now):
             found[c.name] = c.value
     return found

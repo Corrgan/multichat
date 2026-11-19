@@ -14,6 +14,7 @@ chat stay as they are; these are pure functions over the event data, the readers
 from __future__ import annotations
 
 import datetime
+import math
 import time
 
 from .models import PollState
@@ -25,9 +26,10 @@ def _str(v) -> str:
 
 def _num(v) -> float:
     try:
-        return float(v or 0)
+        f = float(v or 0)
     except (TypeError, ValueError):
         return 0.0
+    return f if math.isfinite(f) else 0.0  # json reads 1e400 as inf and accepts NaN
 
 
 def _dict(v) -> dict:
