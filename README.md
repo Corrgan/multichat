@@ -232,6 +232,13 @@ person and platform, a later vote replaces the earlier one. A bar above the inpu
 OBS overlay a box at the top; it ends after the chosen time or with **End poll**. If you are logged in,
 MultiChat can announce the poll and its result in the chats.
 
+With your own channel in the group, the poll can also run as a **Twitch poll** (affiliates and partners,
+up to 5 options) and a **YouTube poll** (your live stream, up to 4 options) at the same time: viewers
+click there, MultiChat adds those votes (Twitch every 5 s, YouTube every 20 s – 5 quota units each),
+and the chat's `!1` … don't count on that platform, so nobody votes twice. **View → Twitch prediction …**
+starts a prediction in your channel; lock the bets, pick the winner or cancel it in the bar above the input.
+For both, log in to Twitch again once (two new permissions, see [docs/LOGIN.md](docs/LOGIN.md)).
+
 With several channel groups, the overlay shows all of them; add one browser source per group with `group=` to keep them apart. The number is the group's position in the tabs, so it changes when a group in front of it is removed or the tabs are put in another order.
 
 The overlay only answers requests from this computer (`127.0.0.1` / `localhost`); other websites open in your browser cannot read the chat through it. Use the URL as copied – addresses such as the machine's LAN IP are rejected.

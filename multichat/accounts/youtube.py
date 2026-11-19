@@ -115,3 +115,38 @@ class YouTubeAccount(Account):
 
     async def ban(self, msg: ChatMessage) -> None:
         await self._ban(msg, None)
+
+    # ---- polls in your own live chat (Data API: insert 20, list 5, transition 20 units) ---- #
+    async def create_poll(self, channel: str, question: str, options: list[str]) -> tuple[str, str]:
+        """Starts a YouTube poll (2–4 options) in the live chat of `channel` → (chat ID, message ID)."""
+        chat_id = await self.live_chat_id(channel)
+        res = await self.request("POST", f"{self.API}/liveChat/messages", params={"part": "snippet"}, json={
+            "snippet": {"liveChatId": chat_id, "type": "pollEvent", "pollDetails": {"metadata": {
+                "questionText": question, "options": [{"optionText": o} for o in options]}}}})
+        return chat_id, res["id"]
+
+    async def poll_votes(self, chat_id: str, message_id: str) -> tuple[str, list[int]]:
+        """(status, votes per option) of the running poll – the tally is only given to the channel owner."""
+        res = await self.request("GET", f"{self.API}/liveChat/messages",
+                                 params={"liveChatId": chat_id, "part": "snippet", "maxResults": "200"})
+        item = res.get("activePollItem") if isinstance(res.get("activePollItem"), dict) else {}
+        if item.get("id") != message_id:
+            return "closed", []  # no longer the active poll
+        return _yt_poll_state(item)
+
+    async def end_poll(self, message_id: str) -> tuple[str, list[int]]:
+        """Closes it → (status, final votes)."""
+        res = await self.request("POST", f"{self.API}/liveChat/messages/transition",
+                                 params={"id": message_id, "status": "closed", "part": "snippet"})
+        return _yt_poll_state(res or {})
+
+
+def _yt_poll_state(item: dict) -> tuple[str, list[int]]:
+    meta = ((item.get("snippet") or {}).get("pollDetails") or {}).get("metadata") or {}
+    votes = []
+    for o in meta.get("options") or []:
+        try:
+            votes.append(int(o.get("tally") or 0) if isinstance(o, dict) else 0)
+        except (TypeError, ValueError):
+            votes.append(0)
+    return str(meta.get("status") or ""), votes

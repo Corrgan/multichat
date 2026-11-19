@@ -27,10 +27,12 @@ class TwitchAccount(Account):
     # user:read:emotes → emote suggestions with all emotes you can use,
     # moderator:read:chatters → who is in the chat, to send "@" mentions to the right platform,
     # channel:read:redemptions/polls/predictions/hype_train/ads → EventSub lines in your own channel (older logins lack these)
+    # channel:manage:polls/predictions → start and end Twitch polls and predictions from MultiChat (older logins lack these)
     scopes = (
         "user:write:chat moderator:manage:banned_users moderator:manage:chat_messages "
         "moderator:read:followers user:read:moderated_channels user:read:emotes moderator:read:chatters "
-        "channel:read:redemptions channel:read:polls channel:read:predictions channel:read:hype_train channel:read:ads"
+        "channel:read:redemptions channel:read:polls channel:read:predictions channel:read:hype_train channel:read:ads "
+        "channel:manage:polls channel:manage:predictions"
     )
     pkce = False
     API = "https://api.twitch.tv/helix"
@@ -206,3 +208,47 @@ class TwitchAccount(Account):
         except ApiError as e:  # not a moderator there, or login without the scope
             log.debug("Twitch followage unavailable: %s", e)
         return info
+
+    # ---- polls and predictions in your own channel (Helix; only the broadcaster's token) ---- #
+    def owns(self, channel: str) -> bool:
+        return bool(self.user_name) and twitch_channel(channel) == self.user_name.lower()
+
+    async def create_poll(self, title: str, choices: list[str], seconds: int) -> str:
+        """Starts a Twitch poll (affiliates and partners; 2–5 choices, 15–1800 s) → its ID."""
+        body = {"broadcaster_id": self.user_id, "title": title[:POLL_TITLE], "duration": max(15, min(1800, seconds)),
+                "choices": [{"title": c[:CHOICE_TITLE]} for c in choices]}
+        return (await self.request("POST", f"{self.API}/polls", json=body))["data"][0]["id"]
+
+    async def poll_votes(self, poll_id: str) -> tuple[str, list[int]]:
+        """(status, votes per choice in the order they were created)."""
+        res = await self.request("GET", f"{self.API}/polls", params={"broadcaster_id": self.user_id, "id": poll_id})
+        return _poll_state((res.get("data") or [{}])[0])
+
+    async def end_poll(self, poll_id: str) -> tuple[str, list[int]]:
+        """Ends it now (TERMINATED: the result stays visible) → (status, final votes)."""
+        res = await self.request("PATCH", f"{self.API}/polls",
+                                 json={"broadcaster_id": self.user_id, "id": poll_id, "status": "TERMINATED"})
+        return _poll_state((res.get("data") or [{}])[0])
+
+    async def create_prediction(self, title: str, outcomes: list[str], seconds: int) -> tuple[str, list[str]]:
+        """Starts a prediction (channel points must be on; 2–10 outcomes, 1–1800 s to bet)
+        → (its ID, the outcome IDs in order)."""
+        body = {"broadcaster_id": self.user_id, "title": title[:PREDICTION_TITLE],
+                "prediction_window": max(1, min(1800, seconds)), "outcomes": [{"title": o[:CHOICE_TITLE]} for o in outcomes]}
+        data = (await self.request("POST", f"{self.API}/predictions", json=body))["data"][0]
+        return data["id"], [o["id"] for o in data.get("outcomes") or []]
+
+    async def end_prediction(self, prediction_id: str, status: str, winner: str | None = None) -> None:
+        """status: LOCKED (no more bets), RESOLVED (with the winning outcome ID) or CANCELED (points back)."""
+        body = {"broadcaster_id": self.user_id, "id": prediction_id, "status": status,
+                **({"winning_outcome_id": winner} if winner else {})}
+        await self.request("PATCH", f"{self.API}/predictions", json=body)
+
+
+POLL_TITLE, PREDICTION_TITLE, CHOICE_TITLE = 60, 45, 25  # Twitch's limits
+
+
+def _poll_state(data: dict) -> tuple[str, list[int]]:
+    choices = data.get("choices") if isinstance(data, dict) else None
+    votes = [int(c.get("votes") or 0) if isinstance(c, dict) else 0 for c in choices or []]
+    return str(data.get("status") or "") if isinstance(data, dict) else "", votes
