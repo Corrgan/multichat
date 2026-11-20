@@ -296,7 +296,7 @@ def test_several_channels_and_groups(window, app):
 
     # side by side (chat and videos of each group next to each other) and back
     w.side_action.setChecked(True)
-    assert all(pn.isVisibleTo(w) for pn in w.panels) and not w.tabs.isVisibleTo(w)
+    assert all(pn.isVisibleTo(w) for pn in w.panels) and w.tabs.isVisibleTo(w)  # tabs stay: tick boxes pick the groups
     assert [w.side.widget(i) for i in range(w.side.count())] == w.panels
     w.side_action.setChecked(False)
     assert w.tabs.count() == 3 and [pn.isVisibleTo(w) for pn in w.panels] == [False, True, False]
@@ -326,7 +326,7 @@ def test_old_settings_become_the_first_group(tmp_path):
     assert groups == [{"name": "", "channels": [
         {"platform": "twitch", "channel": "a", "video": True},
         {"platform": "kick", "channel": "", "video": True},
-        {"platform": "youtube", "channel": "@b", "video": True}]}]
+        {"platform": "youtube", "channel": "@b", "video": True}], "side": True}]
     bad = clean_groups([{"name": 5, "channels": [{"platform": "twitch", "channel": f"c{i}"} for i in range(9)]
                          + [{"platform": "nope"}, "junk"]}, "junk"], {})
     assert len(bad) == 1 and len(bad[0]["channels"]) == 1 and bad[0]["name"] == ""  # one per platform
@@ -1221,3 +1221,63 @@ def test_vote_dialog_shows_a_failed_take_over_as_copyable_text(window, app, monk
     assert dlg.status["twitch"].text() != "reading …"
     box.close()
     dlg.close()
+
+
+def test_side_by_side_shows_only_ticked_groups(window):
+    from PyQt6.QtWidgets import QTabBar
+    w = window
+    for _ in range(3):
+        w.add_group()
+    w.toggle_side_by_side(True)
+    ticks = [w.tabs.tabButton(i, QTabBar.ButtonPosition.LeftSide) for i in range(4)]
+    assert all(t.isChecked() and not t.isHidden() for t in ticks)
+    assert w._visible_panels() == w.panels
+    ticks[1].setChecked(False)
+    ticks[2].setChecked(False)
+    assert w._visible_panels() == [w.panels[0], w.panels[3]]
+    assert [pn.isHidden() for pn in w.panels] == [False, True, True, False]
+    assert w.active_panel() in (w.panels[0], w.panels[3])
+    assert [g["side"] for g in (pn.to_config() for pn in w.panels)] == [True, False, False, True]
+    ticks[0].setChecked(False)
+    ticks[3].setChecked(False)  # the last one stays
+    assert ticks[3].isChecked() and w._visible_panels() == [w.panels[3]]
+    w.tabs.setCurrentIndex(3)
+    assert w.active_panel() is w.panels[3]
+    w.toggle_side_by_side(False)  # tabs again: the ticks are hidden, one group on screen
+    assert all(t.isHidden() for t in ticks)
+    assert sum(not pn.isHidden() for pn in w.panels) == 1
+    w.remove_group(w.panels[1])  # removed and reused: shown side by side again
+    again = w.add_group()
+    assert again.side and w.tabs.tabButton(3, QTabBar.ButtonPosition.LeftSide).isChecked()
+
+
+def test_side_flag_survives_config_cleaning():
+    from multichat.core.config import clean_groups
+    groups = clean_groups([{"name": "a", "channels": [], "side": False}, {"name": "b", "channels": []},
+                           {"name": "c", "channels": [], "side": "x"}], {})
+    assert [g["side"] for g in groups] == [False, True, True]
+
+
+def test_side_by_side_from_menu_starts_with_selected_tab(window):
+    from PyQt6.QtWidgets import QTabBar
+    w = window
+    for _ in range(4):
+        w.add_group()
+    w.tabs.setCurrentIndex(2)
+    resized = []
+    w.resize = lambda *a: resized.append(a)
+    w.isMaximized = lambda: True  # a maximized window is never resized
+    w.side_action.trigger()
+    ticks = [w.tabs.tabButton(i, QTabBar.ButtonPosition.LeftSide) for i in range(5)]
+    assert [t.isChecked() for t in ticks] == [False, False, True, False, False]
+    assert w._visible_panels() == [w.panels[2]] and w.active_panel() is w.panels[2]
+    ticks[4].setChecked(True)
+    ticks[0].setChecked(True)
+    assert w._visible_panels() == [w.panels[0], w.panels[2], w.panels[4]]
+    from PyQt6.QtTest import QTest
+    QTest.qWait(20)
+    assert resized == []
+    w.side_action.trigger()  # off and on again: the selected tab only, again
+    w.tabs.setCurrentIndex(4)
+    w.side_action.trigger()
+    assert w._visible_panels() == [w.panels[4]]

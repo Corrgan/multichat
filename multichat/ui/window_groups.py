@@ -8,7 +8,7 @@ import logging
 
 from PyQt6.QtCore import QTimer
 from PyQt6.QtGui import QColor, QIcon, QPainter, QPixmap
-from PyQt6.QtWidgets import QMessageBox
+from PyQt6.QtWidgets import QCheckBox, QMessageBox, QTabBar
 
 from ..core.config import MAX_GROUPS
 from ..core.constants import NAMES
@@ -54,13 +54,62 @@ class GroupsMixin:
         return self.active_panel().view
 
     def active_panel(self) -> GroupPanel:
-        if self.side_by_side and self._side_active in self.panels:
-            return self._side_active
+        if self.side_by_side:
+            shown = self._side_panels()
+            return self._side_active if self._side_active in shown else shown[0]
         i = self.tabs.currentIndex()
         return self.panels[i] if 0 <= i < len(self.panels) else self.panels[0]
 
     def _visible_panels(self) -> list[GroupPanel]:
-        return list(self.panels) if self.side_by_side else [self.active_panel()]
+        return self._side_panels() if self.side_by_side else [self.active_panel()]
+
+    def _side_panels(self) -> list[GroupPanel]:
+        """The groups ticked on their tab – those are shown side by side (all, if none is)."""
+        return [pn for pn in self.panels if pn.side] or list(self.panels)
+
+    def _add_tab(self, panel: GroupPanel) -> None:
+        """A tab for the group, with a tick box: show it side by side or not."""
+        self.tabs.addTab(panel.title())  # may switch the tab → _tab_changed shows the right panel
+        tick = QCheckBox()
+        tick.setChecked(panel.side)
+        tick.setToolTip(_("Show this group side by side"))
+        tick.setVisible(self.side_by_side)
+        tick.toggled.connect(lambda on, pn=panel, t=tick: self._side_ticked(pn, t, on))
+        self.tabs.setTabButton(self.tabs.count() - 1, QTabBar.ButtonPosition.LeftSide, tick)
+
+    def _tab_ticks(self) -> list[QCheckBox]:
+        return [b for i in range(self.tabs.count())
+                if isinstance(b := self.tabs.tabButton(i, QTabBar.ButtonPosition.LeftSide), QCheckBox)]
+
+    def _side_ticked(self, panel: GroupPanel, tick: QCheckBox, on: bool) -> None:
+        if not on and panel.side and sum(pn.side for pn in self.panels) <= 1:
+            tick.setChecked(True)  # at least one group stays on screen
+            self.statusBar().showMessage(_("At least one group is shown side by side"), 5000)
+            return
+        panel.side = on
+        if self.side_by_side:
+            if on:
+                self._side_active = panel
+            self._show_panels()  # the window keeps its size: the shown groups share it
+        self._schedule_save()
+
+    def side_by_side_chosen(self, on: bool) -> None:
+        """Side by side switched on in the menu: it starts with the active group only, more
+        are added with the tick boxes on the tabs. (Not on start: the saved choice stays.)"""
+        if not on or not self.side_by_side:
+            return
+        i = self.tabs.currentIndex()  # the tab that was selected
+        active = self.panels[i] if 0 <= i < len(self.panels) else self.panels[0]
+        for i, panel in enumerate(self.panels):
+            panel.side = panel is active
+            tick = self.tabs.tabButton(i, QTabBar.ButtonPosition.LeftSide)
+            if isinstance(tick, QCheckBox):
+                tick.blockSignals(True)
+                tick.setChecked(panel.side)
+                tick.blockSignals(False)
+        self._side_active = active
+        self._show_panels()
+        self._schedule_save()
 
     def _add_panel(self, cfg: dict) -> GroupPanel:
         video = None
@@ -100,7 +149,7 @@ class GroupsMixin:
         self.panels.append(panel)
         self.side.addWidget(panel)
         panel.setVisible(self.side_by_side)
-        self.tabs.addTab(panel.title())  # may switch the tab → _tab_changed shows the right panel
+        self._add_tab(panel)
         self._rows_changed()
         self._update_titles()
         return panel
@@ -121,7 +170,7 @@ class GroupsMixin:
         self.panels.append(panel)
         self.side.addWidget(panel)  # already in the splitter: only moves to the end (same parent)
         panel.setVisible(self.side_by_side)
-        self.tabs.addTab(panel.title())
+        self._add_tab(panel)
         self._rows_changed()
         self._update_titles()
         return panel
@@ -182,32 +231,43 @@ class GroupsMixin:
         """Groups next to each other (chat 1 | videos 1 | chat 2 | videos 2 …), or as tabs."""
         active = self.active_panel() if self.panels else None
         self.side_by_side = bool(on and len(self.panels) > 1)
-        self._side_active = active
+        self._side_active = active if active is not None and active.side else None
         if not self.side_by_side and active in self.panels:
             self.tabs.setCurrentIndex(self.panels.index(active))
         self._show_panels()
         if self.side_by_side:
-            self._fit_width()
+            QTimer.singleShot(0, self._fit_width)  # after side_by_side_chosen has picked the groups
 
     def _fit_width(self) -> None:
+        """Side by side switched on: a small window grows a little for the shown groups.
+        A maximized or full-screen window is left alone (resizing it made it jump)."""
+        if not self.side_by_side or self.isMaximized() or self.isFullScreen():
+            return
         per = 900 if self.video_ok and self.video_action.isChecked() else 420
         screen = self.screen().availableGeometry().width() if self.screen() else 1920
-        want = min(screen, per * len(self.panels))
+        want = min(screen, per * len(self._side_panels()))
         if self.width() < want:
             self.resize(want, self.height())
 
     def _tab_changed(self) -> None:
         if not self.side_by_side:
             self._show_panels()
+            return
+        i = self.tabs.currentIndex()  # side by side: a click on a shown group's tab makes it the active one
+        if 0 <= i < len(self.panels) and self.panels[i].side and self.panels[i] is not self._side_active:
+            self._side_active = self.panels[i]
+            self._active_changed()
 
     def _show_panels(self) -> None:
-        """Tabs: only the active group. Side by side: all groups."""
+        """Tabs: only the active group. Side by side: the groups ticked on their tab."""
         if not self.panels:
             return
-        self.tabs.setVisible(not self.side_by_side)
+        for tick in self._tab_ticks():
+            tick.setVisible(self.side_by_side)
         active = self.active_panel()
+        shown = self._side_panels()
         for panel in self.panels:
-            panel.setVisible(self.side_by_side or panel is active)
+            panel.setVisible(panel in shown if self.side_by_side else panel is active)
         self._active_changed()
 
     def _focus_changed(self, _old, new) -> None:

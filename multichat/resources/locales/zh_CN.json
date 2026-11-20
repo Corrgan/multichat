@@ -352,5 +352,7 @@
   "accept the predictions terms on the Twitch website once first": "请先在 Twitch 网站上接受一次预测条款",
   "too many at once – try again in a moment": "操作过多——请稍后再试",
   "not available in your region": "你所在的地区不可用",
-  "not allowed in this channel": "此频道不允许"
+  "not allowed in this channel": "此频道不允许",
+  "Show this group side by side": "并排显示此分组",
+  "At least one group is shown side by side": "至少保留一个分组并排显示"
 }

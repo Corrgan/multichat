@@ -66,7 +66,7 @@ def load_config() -> dict:
         "chat_font": 14,
         "usercard_docked": False,
         "web_vote": False,  # vote buttons in the poll box with the website login (ui/vote.py)
-        "groups": clean_groups(None, {}),  # [{"name": str, "channels": [{"platform", "channel", "video"}]}]
+        "groups": clean_groups(None, {}),  # [{"name": str, "channels": [{"platform", "channel", "video"}], "side": bool}]
         "active_group": 0,
         "side_by_side": False,
         "alerts": dict(DEFAULT_ALERTS),
@@ -172,12 +172,14 @@ def clean_groups(raw, old_channels: dict) -> list[dict]:
             count[c["platform"]] += 1
             channels.append({"platform": c["platform"], "channel": value,
                              "video": c.get("video") if isinstance(c.get("video"), bool) else True})
-        groups.append({"name": name.strip()[:40], "channels": channels})  # "" → "Group N" in the UI language
+        side = g.get("side") if isinstance(g.get("side"), bool) else True  # shown side by side
+        groups.append({"name": name.strip()[:40], "channels": channels, "side": side})  # "" → "Group N" in the UI language
     if not groups:  # first start or settings from before groups existed
         groups.append({
             "name": "",
             "channels": [{"platform": p, "channel": (old_channels.get(p) or "").strip()[:MAX_CHANNEL_LEN], "video": True}
                          for p in PLATFORMS],
+            "side": True,
         })
     return groups
 

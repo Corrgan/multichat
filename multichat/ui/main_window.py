@@ -303,6 +303,7 @@ class MainWindow(GroupsMixin, ConnectionsMixin, MessagesMixin, SendMixin, PollMi
         self.side_action.setCheckable(True)
         self.side_action.setEnabled(len(self.config["groups"]) > 1)
         self.side_action.toggled.connect(self.toggle_side_by_side)
+        self.side_action.triggered.connect(self.side_by_side_chosen)  # only from the menu, not on start
         view.addAction(_("Connect all groups")).triggered.connect(self.connect_all)
         view.addAction(_("Disconnect everything")).triggered.connect(self.disconnect_all)
         view.addSeparator()

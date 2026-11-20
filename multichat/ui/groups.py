@@ -116,6 +116,7 @@ class GroupPanel(QWidget):
     def __init__(self, config: dict, index: int, video: QWidget | None = None) -> None:
         super().__init__()
         self.index = index
+        self.side = bool(config.get("side", True))  # one of the groups shown side by side (tick on its tab)
         self.unread = 0
         self.mentions = 0
         # Twitch shared chat: shared_id → uid of the copy this group shows (see panels_for)
@@ -239,6 +240,7 @@ class GroupPanel(QWidget):
         self.view.reset_history()
         self.unread = self.mentions = 0
         self.fold.setChecked(True)
+        self.side = True
         self.set_index(index)
 
     def set_index(self, index: int) -> None:
@@ -246,4 +248,5 @@ class GroupPanel(QWidget):
         self._update_placeholder()
 
     def to_config(self) -> dict:
-        return {"name": self.name.text().strip(), "channels": [r.to_config() for r in self.all_rows() if r.edit.text().strip()]}
+        return {"name": self.name.text().strip(), "channels": [r.to_config() for r in self.all_rows() if r.edit.text().strip()],
+                "side": self.side}

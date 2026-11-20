@@ -352,5 +352,7 @@
   "accept the predictions terms on the Twitch website once first": "まず Twitch のウェブサイトで予想の規約に一度同意してください",
   "too many at once – try again in a moment": "一度に多すぎます。少ししてからもう一度",
   "not available in your region": "お住まいの地域では利用できません",
-  "not allowed in this channel": "このチャンネルでは許可されていません"
+  "not allowed in this channel": "このチャンネルでは許可されていません",
+  "Show this group side by side": "このグループを並べて表示",
+  "At least one group is shown side by side": "少なくとも1つのグループは並べて表示されます"
 }
