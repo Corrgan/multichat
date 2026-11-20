@@ -371,6 +371,8 @@ def test_youtube_live_page_viewers():
     live_block = ('"viewCount":{"videoViewCountRenderer":{"viewCount":{"runs":[{"text":"5,418"},{"text":" watching now"}]},'
                   '"isLive":true,"extraShortViewCount":{"simpleText":"5.4K"},"originalViewCount":"5418"}}')
     assert live_viewers("x" * 50 + live_block) == 5418
+    # the page also lists the renderer names (without a value) before the real block
+    assert live_viewers('"videoViewCountRenderer","menuRenderer",' + "x" * 900 + live_block) == 5418
     assert live_viewers(live_block.replace('"isLive":true', '"isLive":false')) is None  # a replay's total views
     assert live_viewers('"originalViewCount":"99"') is None  # not in the counter block
     assert live_viewers("") is None

@@ -90,10 +90,14 @@ LIVE_VIEWERS: dict[str, int] = {}  # channel URL → people watching its live st
 def live_viewers(page: str) -> int | None:
     """"5,418 watching now" of the live video on a /live page (the counter block marked
     isLive); None if the page doesn't show one."""
-    i = page.find('"videoViewCountRenderer"')
-    block = page[i:i + 800] if i >= 0 else ""
-    m = _YT_VIEWERS_RE.search(block) if '"isLive":true' in block else None
-    return int(m.group(1)) if m else None
+    start = 0
+    while (i := page.find('"videoViewCountRenderer":{', start)) >= 0:  # not the bare name in renderer lists
+        block = page[i:i + 800]
+        m = _YT_VIEWERS_RE.search(block) if '"isLive":true' in block else None
+        if m:
+            return int(m.group(1))
+        start = i + 1
+    return None
 
 
 def live_now(channel_url: str) -> tuple[str, str] | None:
