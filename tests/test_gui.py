@@ -1256,3 +1256,28 @@ def test_side_flag_survives_config_cleaning():
     groups = clean_groups([{"name": "a", "channels": [], "side": False}, {"name": "b", "channels": []},
                            {"name": "c", "channels": [], "side": "x"}], {})
     assert [g["side"] for g in groups] == [False, True, True]
+
+
+def test_side_by_side_from_menu_starts_with_selected_tab(window):
+    from PyQt6.QtWidgets import QTabBar
+    w = window
+    for _ in range(4):
+        w.add_group()
+    w.tabs.setCurrentIndex(2)
+    resized = []
+    w.resize = lambda *a: resized.append(a)
+    w.isMaximized = lambda: True  # a maximized window is never resized
+    w.side_action.trigger()
+    ticks = [w.tabs.tabButton(i, QTabBar.ButtonPosition.LeftSide) for i in range(5)]
+    assert [t.isChecked() for t in ticks] == [False, False, True, False, False]
+    assert w._visible_panels() == [w.panels[2]] and w.active_panel() is w.panels[2]
+    ticks[4].setChecked(True)
+    ticks[0].setChecked(True)
+    assert w._visible_panels() == [w.panels[0], w.panels[2], w.panels[4]]
+    from PyQt6.QtTest import QTest
+    QTest.qWait(20)
+    assert resized == []
+    w.side_action.trigger()  # off and on again: the selected tab only, again
+    w.tabs.setCurrentIndex(4)
+    w.side_action.trigger()
+    assert w._visible_panels() == [w.panels[4]]

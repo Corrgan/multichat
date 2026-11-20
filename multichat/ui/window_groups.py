@@ -90,8 +90,25 @@ class GroupsMixin:
         if self.side_by_side:
             if on:
                 self._side_active = panel
-            self._show_panels()
-            self._fit_width()
+            self._show_panels()  # the window keeps its size: the shown groups share it
+        self._schedule_save()
+
+    def side_by_side_chosen(self, on: bool) -> None:
+        """Side by side switched on in the menu: it starts with the active group only, more
+        are added with the tick boxes on the tabs. (Not on start: the saved choice stays.)"""
+        if not on or not self.side_by_side:
+            return
+        i = self.tabs.currentIndex()  # the tab that was selected
+        active = self.panels[i] if 0 <= i < len(self.panels) else self.panels[0]
+        for i, panel in enumerate(self.panels):
+            panel.side = panel is active
+            tick = self.tabs.tabButton(i, QTabBar.ButtonPosition.LeftSide)
+            if isinstance(tick, QCheckBox):
+                tick.blockSignals(True)
+                tick.setChecked(panel.side)
+                tick.blockSignals(False)
+        self._side_active = active
+        self._show_panels()
         self._schedule_save()
 
     def _add_panel(self, cfg: dict) -> GroupPanel:
@@ -219,9 +236,13 @@ class GroupsMixin:
             self.tabs.setCurrentIndex(self.panels.index(active))
         self._show_panels()
         if self.side_by_side:
-            self._fit_width()
+            QTimer.singleShot(0, self._fit_width)  # after side_by_side_chosen has picked the groups
 
     def _fit_width(self) -> None:
+        """Side by side switched on: a small window grows a little for the shown groups.
+        A maximized or full-screen window is left alone (resizing it made it jump)."""
+        if not self.side_by_side or self.isMaximized() or self.isFullScreen():
+            return
         per = 900 if self.video_ok and self.video_action.isChecked() else 420
         screen = self.screen().availableGeometry().width() if self.screen() else 1920
         want = min(screen, per * len(self._side_panels()))
