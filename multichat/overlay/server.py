@@ -30,6 +30,7 @@ log = logging.getLogger("multichat.overlay")
 
 MAX_CLIENTS = 16
 MAX_BACKLOG = 500  # messages queued for a slow client before it is disconnected
+WS_CLOSE_TIMEOUT = 0.5  # seconds a client gets to answer the close frame on stop()
 
 
 
@@ -87,8 +88,10 @@ class OverlayServer:
         self.runner, self.port = runner, port
 
     async def stop(self) -> None:
-        for ws in list(self.clients):
-            await ws.close()
+        # a frozen browser source never answers the close frame: don't let it use up the
+        # window's shutdown time (aiohttp would wait 10 s per client)
+        await asyncio.gather(*(asyncio.wait_for(ws.close(), WS_CLOSE_TIMEOUT) for ws in list(self.clients)),
+                             return_exceptions=True)
         self.clients.clear()
         if self.runner:
             await self.runner.cleanup()
