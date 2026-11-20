@@ -352,5 +352,7 @@
   "accept the predictions terms on the Twitch website once first": "accepte d'abord une fois les conditions des prédictions sur le site Twitch",
   "too many at once – try again in a moment": "trop à la fois – réessaie dans un instant",
   "not available in your region": "non disponible dans ta région",
-  "not allowed in this channel": "non autorisé dans cette chaîne"
+  "not allowed in this channel": "non autorisé dans cette chaîne",
+  "Show this group side by side": "Afficher ce groupe côte à côte",
+  "At least one group is shown side by side": "Au moins un groupe reste affiché côte à côte"
 }
