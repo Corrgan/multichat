@@ -355,6 +355,7 @@ class GroupsMixin:
                 self._route.setdefault(key, []).append(panel)
             if panel.video is not None:
                 panel.video.forget(panel.keys())  # tiles of channels the group doesn't have any more
+        self.message_log.regroup(self.panels_for)  # history counted under the new routing
         for key in [k for k in self.readers if k not in self._route]:
             # the channel was changed or its group removed: its chat would run on unseen
             self._stop_reader(key)

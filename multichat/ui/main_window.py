@@ -9,7 +9,6 @@ import os
 import re
 import sys
 import threading
-from collections import OrderedDict
 from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
 
@@ -26,7 +25,8 @@ from PyQt6.QtWidgets import (
 from ..accounts import KickAccount, SecretStore, TwitchAccount, YouTubeAccount
 from ..accounts.store import choose_backend
 from ..accounts.web import WebLogins
-from ..chat import ChatMessage, EmoteStore
+from ..chat import EmoteStore
+from ..chat.message_log import MessageLog
 from ..core import i18n
 from ..core.config import CONF_DIR, OVERLAY_PORT, clean_groups, load_config, load_config_apps, save_config
 from .. import __version__ as APP_VERSION
@@ -123,8 +123,8 @@ class MainWindow(GroupsMixin, ConnectionsMixin, MessagesMixin, SendMixin, PollMi
         self.panels: list[GroupPanel] = []
         self._spare: list[GroupPanel] = []  # removed groups, hidden – reused by add_group()
         self._route: dict[str, list[GroupPanel]] = {}  # source key → groups that show it
-        self.messages: OrderedDict[int, ChatMessage] = OrderedDict()
-        self._trim_at = MAX_MESSAGES  # message count that triggers the next _trim_messages()
+        self.message_log = MessageLog(MAX_MESSAGES)  # each group's newest messages, indexed
+        self.messages = self.message_log.messages  # the same OrderedDict (uid → message, oldest first)
         self._incoming = IncomingEvents(MAX_MESSAGES, MAX_MESSAGES * MAX_GROUPS, MAX_GROUPS * len(PLATFORMS))
         self._reported_drops = 0
         self._loss_report_at = 0.0

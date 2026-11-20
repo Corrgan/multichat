@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import logging
 import time
-from collections import OrderedDict
 
 from ..chat import ChatMessage, Deletion
 from ..chat.models import PollState
@@ -19,7 +18,6 @@ from .window_groups import MAX_MESSAGES
 
 log = logging.getLogger("multichat")
 
-TRIM_STEP = 100  # new messages between two trims of the message list
 FLUSH_MS = 100  # incoming messages are shown in batches – busy chats send hundreds per second
 
 
@@ -101,15 +99,14 @@ class MessagesMixin:
             if msg.shared_id and not self.panels_for(msg):
                 continue  # a copy of a shared chat message every group of it shows already
             batch.append(msg)
-            self.messages[msg.uid] = msg
+            panels = self.panels_for(msg)
+            self.message_log.add(msg, panels)  # also drops what no group counts among its newest
             if self.overlay.running:
-                groups = [i + 1 for i, pn in enumerate(self.panels) if pn in self.panels_for(msg)]
+                groups = [i + 1 for i, pn in enumerate(self.panels) if pn in panels]
                 self.overlay.publish(message_payload(msg, self.view.alerts_cfg, groups))
             self.mod.observe(msg)
         self._msg_count += len(batch)
         self.count_votes(batch)
-        if len(self.messages) > self._trim_at:
-            self._trim_messages()
         visible = self._visible_panels()
         for panel in self.panels:
             shown = [m for m in batch if self.filters[m.platform].isChecked() and panel in self.panels_for(m)]
@@ -133,25 +130,6 @@ class MessagesMixin:
                 self.render_all(panel)  # empties Qt's per-image format list (see COMPACT_AFTER)
         if any(p not in visible for p in self.panels):
             self._update_titles()
-
-    def _trim_messages(self) -> None:
-        """Keeps the union of every group's last MAX_MESSAGES messages – what a full re-render
-        (filter, font size) shows. A message stays as long as one of its groups still counts
-        it among its newest; groups sharing a channel never cost each other newer lines.
-        Runs every TRIM_STEP new messages."""
-        left = {id(pn): MAX_MESSAGES for pn in self.panels}
-        keep = set()
-        for uid in reversed(self.messages):  # newest first
-            m = self.messages[uid]
-            for pn in self.panels_for(m):
-                if left.get(id(pn), 0) > 0:
-                    left[id(pn)] -= 1
-                    keep.add(uid)
-            if not any(left.values()):
-                break
-        if len(keep) < len(self.messages):  # also drops messages no group shows any more
-            self.messages = OrderedDict((u, m) for u, m in self.messages.items() if u in keep)
-        self._trim_at = len(self.messages) + TRIM_STEP
 
     def render_all(self, panel: GroupPanel | None = None) -> None:
         """Requests a full re-render (filters, deletions, failed images) of all groups or of
@@ -210,9 +188,18 @@ class MessagesMixin:
         self._incoming.put(ev)
         self._flush_messages()  # queued messages/deletions retain per-source order
 
+    def _retained_only(self):
+        """Messages only a paused group still shows (no longer in the live history)."""
+        seen = set(self.messages)
+        for v in self.views():
+            for uid, m in v.retained_messages.items():
+                if uid not in seen:
+                    seen.add(uid)
+                    yield m
+
     def _apply_deletion(self, ev: Deletion) -> None:
         changed = []
-        for m in self.known_messages():
+        for m in (*self.message_log.for_deletion(ev), *self._retained_only()):
             if m.platform != ev.platform or m.deleted:
                 continue
             if ev.source and m.source and m.source != ev.source:
@@ -231,7 +218,8 @@ class MessagesMixin:
         if any(key in urls for urls in FAVICONS.values()):  # platform icon: every line shows it
             self.render_all()
         else:
-            self.update_lines([m for m in self.known_messages() if any(p[1] == key for p in m.parts)])
+            retained = [m for m in self._retained_only() if any(p[1] == key for p in m.parts)]
+            self.update_lines([*self.message_log.with_image(key), *retained])
 
     def update_lines(self, msgs) -> None:
         """Re-renders just these messages' lines (busy chats delete and time out all the time –
@@ -259,7 +247,6 @@ class MessagesMixin:
 
     def clear_chat(self) -> None:
         self._incoming.clear()
-        self.messages.clear()
-        self._trim_at = MAX_MESSAGES
+        self.message_log.clear()
         for v in self.views():
             v.reset_history()
