@@ -340,3 +340,91 @@ def test_a_playing_video_shows_live_at_once(window, app, monkeypatch):  # noqa: 
     watch.check()
     assert spin(app, lambda: watch.live.get("twitch:examplechan") is False)
     assert w.tabs.tabIcon(0).isNull()
+
+
+# ---- how many are watching ----------------------------------------------------- #
+def test_viewer_numbers_from_every_platform(monkeypatch):
+    from multichat.chat.models import viewer_count
+
+    assert [viewer_count(v) for v in (12, "345", " 7 ", True, -1, "1e3", None, 10**9, "9" * 12)] == \
+        [12, 345, 7, None, None, None, None, None, None]
+    monkeypatch.setattr(live, "fetch_kick_json", lambda slug: {
+        "examplekick": {"livestream": {"id": 1, "viewer_count": 812}},
+        "oddkick": {"livestream": {"id": 2, "viewer_count": "lots"}}}[slug])
+    monkeypatch.setattr(live, "live_now", lambda url: ("vid12345678", "title"))
+    monkeypatch.setitem(live.LIVE_VIEWERS, "https://www.youtube.com/@examplelive", 5418)
+
+    class Twitch(FakeTwitch):
+        async def live_info(self, logins):
+            return {"examplechan": ("", 1234), "noviewers": ("", None)}
+
+    targets = [("twitch:examplechan", "twitch", "examplechan"), ("twitch:noviewers", "twitch", "noviewers"),
+               ("kick:examplekick", "kick", "examplekick"), ("kick:oddkick", "kick", "oddkick"),
+               ("youtube:@examplelive", "youtube", "@examplelive")]
+    result = asyncio.run(live.check(targets, Twitch(live={})))
+    assert result.viewers == {"twitch:examplechan": 1234, "kick:examplekick": 812, "youtube:@examplelive": 5418}
+
+
+def test_youtube_live_page_viewers():
+    from multichat.chat.youtube import live_viewers
+
+    live_block = ('"viewCount":{"videoViewCountRenderer":{"viewCount":{"runs":[{"text":"5,418"},{"text":" watching now"}]},'
+                  '"isLive":true,"extraShortViewCount":{"simpleText":"5.4K"},"originalViewCount":"5418"}}')
+    assert live_viewers("x" * 50 + live_block) == 5418
+    assert live_viewers(live_block.replace('"isLive":true', '"isLive":false')) is None  # a replay's total views
+    assert live_viewers('"originalViewCount":"99"') is None  # not in the counter block
+    assert live_viewers("") is None
+
+
+def test_twitch_live_info_carries_viewers(tmp_path):
+    from multichat.accounts import FileBackend, SecretStore, TwitchAccount
+
+    store = SecretStore("tokens", FileBackend(tmp_path))
+    acc = TwitchAccount(store, lambda p: ("CID", "SECRET"), lambda: None)
+    store.replace("twitch", {"access_token": "x", "expires_at": 9e12, "user_id": "42", "user_name": "Me"})
+
+    async def fake_request(method, url, params=None, **kw):
+        return {"data": [{"user_login": "ExampleChan", "type": "live", "started_at": "", "viewer_count": 4321},
+                         {"user_login": "odd", "type": "live", "viewer_count": "?"}]}
+
+    acc.request = fake_request
+    assert asyncio.run(acc.live_info(["examplechan", "odd"])) == {"examplechan": ("", 4321), "odd": ("", None)}
+
+
+def test_tab_shows_the_audience_over_all_platforms(window, app, monkeypatch):  # noqa: F811
+    from multichat.ui.groups import viewers_text
+
+    assert [viewers_text(n) for n in (0, 999, 1000, 1234, 45678, 999_600, 1_234_567)] == \
+        ["0", "999", "1k", "1.2k", "46k", "1M", "1.2M"]
+    w = window
+    watch = w.live_watch
+    panel = w.panels[0]
+    panel.name.setText("Main")
+    panel.rows["twitch"].edit.setText("examplechan")
+    panel.rows["kick"].edit.setText("examplekick")
+    panel.rows["youtube"].edit.setText("@examplelive")
+
+    async def check(targets, twitch):
+        result = live.Result()
+        result.update({key: True for key, _p, _v in targets})
+        result.viewers.update({"twitch:examplechan": 1000, "kick:examplekick": 234})  # YouTube doesn't say
+        return result
+
+    monkeypatch.setattr(live_watch.live, "check", check)
+    watch.check()
+    assert spin(app, lambda: len(watch.live) == 3)
+    assert w.tabs.tabText(0) == "Main · 👥 1.2k"
+    tip = w.tabs.tabToolTip(0)
+    assert "Twitch · examplechan · 1 000 watching" in tip and "Kick · examplekick · 234 watching" in tip
+    assert "YouTube · @examplelive," not in tip and "watching" not in tip.split("YouTube")[1]
+
+    async def offline(targets, twitch):
+        result = live.Result()
+        result.update({key: False for key, _p, _v in targets})
+        return result
+
+    monkeypatch.setattr(live_watch.live, "check", offline)
+    watch._due.clear()
+    watch.check()
+    assert spin(app, lambda: not any(watch.live.values()) and not watch._busy)
+    assert w.tabs.tabText(0) == "Main" and not watch.viewers

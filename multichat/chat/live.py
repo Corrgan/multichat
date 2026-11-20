@@ -16,8 +16,8 @@ import logging
 from datetime import datetime, timezone
 
 from .kick import fetch_kick_json
-from .models import twitch_channel
-from .youtube import LIVE_STARTED, live_now, youtube_target
+from .models import twitch_channel, viewer_count
+from .youtube import LIVE_STARTED, LIVE_VIEWERS, live_now, youtube_target
 
 log = logging.getLogger("multichat.chat")
 
@@ -28,11 +28,13 @@ TIMEOUT = 25  # seconds for one lookup – none may hold up the next round
 class Result(dict):
     """{source key: True live / False not live / None unknown (no login, lookup failed)};
     .since: {key: start of the stream, seconds since the epoch} for the live ones whose
-    platform says when."""
+    platform says when; .viewers: {key: people watching} where the platform says."""
 
     def __init__(self) -> None:
         super().__init__()
         self.since: dict[str, float] = {}
+        self.viewers: dict[str, int] = {}
+
 
 
 def started(text) -> float | None:
@@ -57,43 +59,53 @@ async def check(targets: list[tuple[str, str, str]], twitch) -> Result:
     out = Result()
     tw = [(key, value) for key, platform, value in targets if platform == "twitch"]
     if tw:
-        live: dict[str, str] | None = None
+        live: dict[str, tuple[str, int | None]] | None = None
         if twitch is not None and twitch.logged_in:
+            logins = [twitch_channel(value) for _key, value in tw]
             try:
-                live = dict(await asyncio.wait_for(
-                    twitch.live_streams([twitch_channel(value) for _key, value in tw]), TIMEOUT))
+                if hasattr(twitch, "live_info"):
+                    live = dict(await asyncio.wait_for(twitch.live_info(logins), TIMEOUT))
+                else:
+                    live = {k: (v, None) for k, v in (await asyncio.wait_for(twitch.live_streams(logins), TIMEOUT)).items()}
             except Exception as e:  # noqa: BLE001
                 log.debug("Live check Twitch failed: %s", e)
         for key, value in tw:
             out[key] = None if live is None else twitch_channel(value) in live
-            at = started(live.get(twitch_channel(value))) if live else None
-            if at is not None:
-                out.since[key] = at
+            at, viewers = live.get(twitch_channel(value), ("", None)) if live else ("", None)
+            if started(at) is not None:
+                out.since[key] = started(at)
+            if viewers is not None:
+                out.viewers[key] = viewers
 
     gate = asyncio.Semaphore(PARALLEL)
 
-    async def one(key: str, platform: str, value: str) -> tuple[str, bool | None, float | None]:
+    async def one(key: str, platform: str, value: str) -> tuple[str, bool | None, float | None, int | None]:
         async with gate:
             try:
                 if platform == "kick":
                     data = await asyncio.wait_for(asyncio.to_thread(fetch_kick_json, value), TIMEOUT)
                     stream = data.get("livestream")
                     info = stream if isinstance(stream, dict) else {}
-                    return key, bool(stream), started(info.get("start_time") or info.get("created_at"))
+                    return (key, bool(stream), started(info.get("start_time") or info.get("created_at")),
+                            viewer_count(info.get("viewer_count")))
                 kind, target = youtube_target(value)
                 if kind != "channel":
-                    return key, None, None
+                    return key, None, None, None
                 found = await asyncio.wait_for(asyncio.to_thread(live_now, target), TIMEOUT)
-                return key, found is not None, started(LIVE_STARTED.get(target)) if found else None
+                if not found:
+                    return key, False, None, None
+                return key, True, started(LIVE_STARTED.get(target)), LIVE_VIEWERS.get(target)
             except ValueError:
-                return key, False, None  # no such channel
+                return key, False, None, None  # no such channel
             except Exception as e:  # noqa: BLE001
                 log.debug("Live check %s failed: %s", key, e)
-                return key, None, None
+                return key, None, None, None
 
     others = [one(key, platform, value) for key, platform, value in targets if platform in ("kick", "youtube")]
-    for key, state, at in await asyncio.gather(*others):
+    for key, state, at, viewers in await asyncio.gather(*others):
         out[key] = state
         if state and at is not None:
             out.since[key] = at
+        if state and viewers is not None:
+            out.viewers[key] = viewers
     return out
