@@ -47,6 +47,17 @@ def uptime_text(seconds: float) -> str:
     return f"{minutes // 60}:{minutes % 60:02d}"
 
 
+def viewers_text(n: int) -> str:
+    """980 → "980", 1234 → "1.2k", 45678 → "46k", 1234567 → "1.2M" (short enough for a tab)."""
+    if n < 1000:
+        return str(n)
+    for size, unit in ((1_000_000, "M"), (1000, "k")):
+        if n >= size - size // 2000:  # 999,600 is "1M", not "1000k"
+            value = n / size
+            return (f"{value:.1f}".rstrip("0").rstrip(".") if value < 10 else f"{value:.0f}") + unit
+    return str(n)
+
+
 class ChannelRow(QWidget):
     """One channel: name field, status, video checkbox, connect button."""
 

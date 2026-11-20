@@ -6,7 +6,7 @@ from __future__ import annotations
 import logging
 import time
 
-from ..chat.models import ChatMessage, twitch_channel
+from ..chat.models import ChatMessage, twitch_channel, viewer_count
 from ..core.i18n import _
 from .oauth import Account, ApiError
 
@@ -54,18 +54,22 @@ class TwitchAccount(Account):
             self._cache[login] = data[0]["id"]
         return self._cache[login]
 
-    async def live_streams(self, logins: list[str]) -> dict[str, str]:
-        """Which of these channels (logins) are live right now → {login: start of the stream
-        as Twitch states it ("" if it doesn't)}. One request per 100."""
+    async def live_info(self, logins: list[str]) -> dict[str, tuple[str, int | None]]:
+        """Which of these channels (logins) are live right now → {login: (start of the stream
+        as Twitch states it or "", viewers or None)}. One request per 100."""
         logins = sorted({login.lower() for login in logins})
-        live: dict[str, str] = {}
+        live: dict[str, tuple[str, int | None]] = {}
         for i in range(0, len(logins), 100):
             params = [("user_login", login) for login in logins[i:i + 100]] + [("first", "100")]
             res = await self.request("GET", f"{self.API}/streams", params=params)
             for s in (res or {}).get("data") or []:
                 if isinstance(s, dict) and s.get("type", "live") == "live" and s.get("user_login"):
-                    live[str(s["user_login"]).lower()] = str(s.get("started_at") or "")
+                    live[str(s["user_login"]).lower()] = (str(s.get("started_at") or ""), viewer_count(s.get("viewer_count")))
         return live
+
+    async def live_streams(self, logins: list[str]) -> dict[str, str]:
+        """{login: start of the stream ("" if unknown)} of the live ones (see live_info)."""
+        return {login: at for login, (at, _viewers) in (await self.live_info(logins)).items()}
 
     async def live_channels(self, logins: list[str]) -> set[str]:
         return set(await self.live_streams(logins))

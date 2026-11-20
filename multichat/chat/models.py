@@ -297,3 +297,14 @@ def kick_channel(value: str) -> str:
 def with_extra_emotes(emotes, platform: str, channel: str, parts: list[Part]) -> list[Part]:
     """Insert 7TV/BTTV/FFZ emotes if an EmoteStore was given."""
     return emotes.apply(platform, channel, parts) if emotes else parts
+
+
+def viewer_count(value) -> int | None:
+    """A platform's viewer number (int or digit string) → int; None if it is none."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value if 0 <= value < 10**9 else None
+    if isinstance(value, str) and value.strip().isdigit() and len(value.strip()) < 10:
+        return int(value.strip())
+    return None

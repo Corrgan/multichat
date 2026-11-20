@@ -354,5 +354,6 @@
   "not available in your region": "お住まいの地域では利用できません",
   "not allowed in this channel": "このチャンネルでは許可されていません",
   "Show this group side by side": "このグループを並べて表示",
-  "At least one group is shown side by side": "少なくとも1つのグループは並べて表示されます"
+  "At least one group is shown side by side": "少なくとも1つのグループは並べて表示されます",
+  "{n} watching": "{n} 人が視聴中"
 }

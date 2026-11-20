@@ -35,6 +35,7 @@ class LiveWatch(QObject):
         self.win = win
         self.live: dict[str, bool] = {}  # source key → live (missing: unknown)
         self.since: dict[str, float] = {}  # source key → start of the stream (epoch), where known
+        self.viewers: dict[str, int] = {}  # source key → people watching, where the platform says
         self._due: dict[str, float] = {}
         self._errors: dict[str, int] = {}
         self._hold: dict[str, float] = {}  # source key → until when a playing video vouches for "live"
@@ -63,6 +64,10 @@ class LiveWatch(QObject):
         at = self.since.get(key) if self.live.get(key) else None
         return max(0.0, time.time() - at) if at is not None else None
 
+    def viewer_count(self, key: str) -> int | None:
+        """People watching the channel right now; None if it is not live or nobody says."""
+        return self.viewers.get(key) if self.live.get(key) else None
+
     def targets(self) -> dict[str, tuple[str, str]]:
         """{source key: (platform, channel)} of every channel entered in any group."""
         out: dict[str, tuple[str, str]] = {}
@@ -81,6 +86,7 @@ class LiveWatch(QObject):
         for key in gone:
             self.live.pop(key, None)
             self.since.pop(key, None)
+            self.viewers.pop(key, None)
             self._due.pop(key, None)
             self._errors.pop(key, None)
             self._hold.pop(key, None)
@@ -136,8 +142,9 @@ class LiveWatch(QObject):
         self._busy.pop(platform, None)
         now = time.monotonic()
         present = self.targets().keys()
-        before, since_before = dict(self.live), dict(self.since)
+        before, since_before, viewers_before = dict(self.live), dict(self.since), dict(self.viewers)
         since = getattr(results, "since", {})
+        viewers = getattr(results, "viewers", {})
         for key, state in results.items():
             if key not in present:
                 continue  # the field was changed while the lookup ran
@@ -148,6 +155,7 @@ class LiveWatch(QObject):
                 if errors >= FORGET_AFTER and self._hold.get(key, 0) <= now:
                     self.live.pop(key, None)
                     self.since.pop(key, None)
+                    self.viewers.pop(key, None)
             else:
                 self._errors.pop(key, None)
                 self._due[key] = now + every
@@ -157,10 +165,15 @@ class LiveWatch(QObject):
                     self.since[key] = since[key]
                 elif not self.live.get(key):
                     self.since.pop(key, None)
-        self._announce(before, since_before)
+                if state and key in viewers:
+                    self.viewers[key] = viewers[key]
+                elif not self.live.get(key):
+                    self.viewers.pop(key, None)
+        self._announce(before, since_before, viewers_before)
 
-    def _announce(self, before: dict, since_before: dict | None = None) -> None:
-        if self.live != before or (since_before is not None and self.since != since_before):
+    def _announce(self, before: dict, since_before: dict | None = None, viewers_before: dict | None = None) -> None:
+        if self.live != before or (since_before is not None and self.since != since_before) \
+                or (viewers_before is not None and self.viewers != viewers_before):
             went_live = sorted(k for k, v in self.live.items() if v and not before.get(k))
             if went_live:
                 log.info("Live now: %s", ", ".join(went_live))

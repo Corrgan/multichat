@@ -81,8 +81,23 @@ def _get(url: str):
         return requests.get(url, timeout=20, headers=YT_HEADERS, cookies=YT_COOKIES)
 
 
+_YT_VIEWERS_RE = re.compile(r'"originalViewCount"\s*:\s*"(\d{1,9})"')
 _YT_START_RE = re.compile(r'"startTimestamp"\s*:\s*"([^"]{10,40})"')
 LIVE_STARTED: dict[str, str] = {}  # channel URL → start of its live stream as the page states it
+LIVE_VIEWERS: dict[str, int] = {}  # channel URL → people watching its live stream ("… watching now")
+
+
+def live_viewers(page: str) -> int | None:
+    """"5,418 watching now" of the live video on a /live page (the counter block marked
+    isLive); None if the page doesn't show one."""
+    start = 0
+    while (i := page.find('"videoViewCountRenderer":{', start)) >= 0:  # not the bare name in renderer lists
+        block = page[i:i + 800]
+        m = _YT_VIEWERS_RE.search(block) if '"isLive":true' in block else None
+        if m:
+            return int(m.group(1))
+        start = i + 1
+    return None
 
 
 def live_now(channel_url: str) -> tuple[str, str] | None:
@@ -103,6 +118,11 @@ def live_now(channel_url: str) -> tuple[str, str] | None:
             LIVE_STARTED[channel_url] = started.group(1)
         else:
             LIVE_STARTED.pop(channel_url, None)
+        viewers = live_viewers(r.text) if found else None
+        if viewers is not None:
+            LIVE_VIEWERS[channel_url] = viewers
+        else:
+            LIVE_VIEWERS.pop(channel_url, None)
         return found
 
     return LIVE_CACHE.fetch(channel_url, load)
