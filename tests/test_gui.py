@@ -1281,3 +1281,18 @@ def test_side_by_side_from_menu_starts_with_selected_tab(window):
     w.tabs.setCurrentIndex(4)
     w.side_action.trigger()
     assert w._visible_panels() == [w.panels[4]]
+
+
+# second Fable review (20.11.2026)
+def test_s1_window_session_keeps_no_cookies(window):
+    # the web votes send the browser cookies themselves; a jar would attach the cookies
+    # their answers set to every later anonymous request to the same site
+    import aiohttp
+    assert isinstance(window.session.cookie_jar, aiohttp.DummyCookieJar)
+
+
+def test_p3_resolves_get_a_larger_thread_pool(window):
+    async def workers():
+        return await asyncio.get_running_loop().run_in_executor(None, lambda: None)
+    asyncio.run_coroutine_threadsafe(workers(), window.loop).result(5)
+    assert window.loop._default_executor._max_workers == 32

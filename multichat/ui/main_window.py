@@ -10,7 +10,7 @@ import re
 import sys
 import threading
 from collections import OrderedDict
-from concurrent.futures import Future
+from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
 
 import aiohttp
@@ -93,6 +93,9 @@ class MainWindow(GroupsMixin, ConnectionsMixin, MessagesMixin, SendMixin, PollMi
 
         self.loop = asyncio.new_event_loop()
         self.loop.set_exception_handler(asyncio_exception_handler)
+        # Streamlink/yt-dlp resolves take seconds each: with 10 groups × 3 tiles plus live checks the
+        # default pool (cpu + 4 threads) filled up and timeouts cascaded
+        self.loop.set_default_executor(ThreadPoolExecutor(max_workers=32, thread_name_prefix="multichat-io"))
         self._loop_thread = threading.Thread(target=self.loop.run_forever, daemon=True)
         self._loop_thread.start()
         self._closing = False
@@ -206,7 +209,11 @@ class MainWindow(GroupsMixin, ConnectionsMixin, MessagesMixin, SendMixin, PollMi
         return app.get("client_id", ""), app.get("client_secret", "")
 
     async def _make_session(self) -> aiohttp.ClientSession:
-        return aiohttp.ClientSession(trust_env=True, timeout=aiohttp.ClientTimeout(total=20))
+        # No cookie jar: the web votes send the browser login's cookies themselves – a shared jar
+        # would keep the cookies their answers set and attach them to every later (anonymous)
+        # request to the same sites.
+        return aiohttp.ClientSession(trust_env=True, timeout=aiohttp.ClientTimeout(total=20),
+                                     cookie_jar=aiohttp.DummyCookieJar())
 
     # ---- Layout ---------------------------------------------------------- #
     def _build_ui(self) -> None:
