@@ -599,9 +599,8 @@ def test_busy_group_does_not_push_out_a_quiet_one(window, app, monkeypatch):
     from multichat.ui import window_messages as mw
 
     monkeypatch.setattr(mw, "MAX_MESSAGES", 50)
-    monkeypatch.setattr(mw, "TRIM_STEP", 10)
     w = window
-    w._trim_at = 50
+    w.message_log.per_group = 50
     w.panels[0].rows["twitch"].edit.setText("quietchan")
     busy = w.add_group()
     busy.rows["twitch"].edit.setText("busychan")
@@ -677,9 +676,8 @@ def test_overlapping_groups_keep_each_groups_newest(window, monkeypatch):
     from multichat.ui import window_messages as mw
 
     monkeypatch.setattr(mw, "MAX_MESSAGES", 50)
-    monkeypatch.setattr(mw, "TRIM_STEP", 10)
     w = window
-    w._trim_at = 50
+    w.message_log.per_group = 50
     a = w.panels[0]
     a.rows["twitch"].edit.setText("sharedchan")
     a.rows["kick"].edit.setText("busykick")
