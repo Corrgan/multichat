@@ -15,7 +15,7 @@ from ..core.constants import NAMES
 from ..core.i18n import _
 from ..video.tiles import VideoPanel
 from .chat_view import ChatView
-from .groups import GroupPanel, normalize_channel, uptime_text
+from .groups import GroupPanel, normalize_channel, uptime_text, viewers_text
 from .moderation import ActionBar
 from .poll_box import PollBox
 
@@ -301,6 +301,9 @@ class GroupsMixin:
             running = next((up for _r, up in live if up is not None), None)
             if running is not None:
                 text += f" · {uptime_text(running)}"
+            counts = [n for r, _up in live if (n := self._viewers(r.key())) is not None]
+            if counts:  # the streamer's audience over all platforms that say
+                text += f" · 👥 {viewers_text(sum(counts))}"
             if panel.unread:
                 text += f" ({'@' if panel.mentions else ''}{min(panel.unread, 999)})"
             if i < self.tabs.count():
@@ -308,6 +311,8 @@ class GroupsMixin:
                 self.tabs.setTabTextColor(i, QColor("#ff9a3c") if panel.mentions else QColor())
                 names = [f"{NAMES[r.platform]} · {r.value()}"
                          + (" (" + _("{duration} h").format(duration=uptime_text(up)) + ")" if up is not None else "")
+                         + (" · " + _("{n} watching").format(n=f"{n:,}".replace(",", "\u202f"))
+                            if (n := self._viewers(r.key())) is not None else "")
                          for r, up in live]
                 self.tabs.setTabIcon(i, live_icon() if live else QIcon())
                 self.tabs.setTabToolTip(i, _("Live: {channels}").format(channels=", ".join(names)) if live else "")
@@ -320,6 +325,10 @@ class GroupsMixin:
     def _uptime(self, key: str) -> float | None:
         watch = getattr(self, "live_watch", None)
         return watch.uptime(key) if watch is not None and key else None
+
+    def _viewers(self, key: str) -> int | None:
+        watch = getattr(self, "live_watch", None)
+        return watch.viewer_count(key) if watch is not None and key else None
 
     def _live_changed(self) -> None:
         """A channel went live or offline, or a minute has passed: the dots next to the
