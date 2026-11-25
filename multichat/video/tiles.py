@@ -311,10 +311,7 @@ class VideoTile(QFrame):
                 self.set_status(ad_text)
             elif self.status.full == ad_text:
                 self.set_status(_("live: {title}").format(title=self._title) if self._title else _("live"))
-        try:
-            idle = self.video.player.idle_active
-        except Exception:  # noqa: BLE001
-            idle = True
+        idle = self.video.idle  # reported by mpv (never ask the player directly on the UI thread)
         if idle and self.video._pending:
             return  # loads once the tile is first shown (needs its OpenGL context) – not ended
         if idle:
